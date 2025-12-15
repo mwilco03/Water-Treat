@@ -1,4 +1,4 @@
-# PROFINET Monitor
+# PROFINET 
 
 A comprehensive PROFINET I/O device for Raspberry Pi with sensor integration, data logging, and alarm management.
 
