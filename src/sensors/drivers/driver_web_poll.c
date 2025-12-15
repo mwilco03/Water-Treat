@@ -2,7 +2,16 @@
 #include "utils/logger.h"
 #include <string.h>
 #include <stdlib.h>
+
+#if defined(HAVE_CURL) && defined(HAVE_CJSON)
+#include <curl/curl.h>
 #include <cjson/cJSON.h>
+#define WEB_POLL_ENABLED 1
+#else
+#define WEB_POLL_ENABLED 0
+#endif
+
+#if WEB_POLL_ENABLED
 
 // Callback for curl to write response data
 struct memory_struct {
@@ -179,3 +188,34 @@ result_t web_poll_fetch(web_poll_device_t *dev, float *value) {
     
     return result;
 }
+
+#else /* WEB_POLL_ENABLED == 0 */
+
+/* Stub implementations when CURL/cJSON are not available */
+
+result_t web_poll_init(web_poll_device_t *dev, const char *url, const char *method) {
+    (void)dev; (void)url; (void)method;
+    LOG_WARNING("Web poll not available: CURL and/or cJSON not installed");
+    return RESULT_NOT_SUPPORTED;
+}
+
+void web_poll_destroy(web_poll_device_t *dev) {
+    (void)dev;
+}
+
+result_t web_poll_set_headers(web_poll_device_t *dev, const char *headers) {
+    (void)dev; (void)headers;
+    return RESULT_NOT_SUPPORTED;
+}
+
+result_t web_poll_set_json_path(web_poll_device_t *dev, const char *json_path) {
+    (void)dev; (void)json_path;
+    return RESULT_NOT_SUPPORTED;
+}
+
+result_t web_poll_fetch(web_poll_device_t *dev, float *value) {
+    (void)dev; (void)value;
+    return RESULT_NOT_SUPPORTED;
+}
+
+#endif /* WEB_POLL_ENABLED */

@@ -33,6 +33,7 @@ typedef struct {
     size_t output_size;
     bool input_valid;
     bool output_valid;
+    uint8_t input_iops;
 } profinet_slot_t;
 
 typedef struct {
@@ -477,4 +478,47 @@ const char* profinet_state_to_string(profinet_state_t state) {
         case PROFINET_STATE_ERROR: return "Error";
         default: return "Unknown";
     }
+}
+
+/* Wrapper functions for sensor_manager integration */
+result_t profinet_manager_write_input_data(void *mgr, int slot, int subslot,
+                                           const uint8_t *data, size_t len) {
+    UNUSED(mgr);
+    return profinet_manager_update_input(slot, subslot, data, len);
+}
+
+result_t profinet_manager_set_input_iops(void *mgr, int slot, int subslot, uint8_t iops) {
+    UNUSED(mgr);
+    profinet_slot_t *s = find_slot(slot, subslot);
+    if (!s) return RESULT_NOT_FOUND;
+
+    s->input_iops = iops;
+    return RESULT_OK;
+}
+
+result_t profinet_manager_add_module(void *mgr, int slot, uint32_t module_ident,
+                                     int subslot, uint32_t submodule_ident,
+                                     size_t input_len, size_t output_len) {
+    UNUSED(mgr);
+
+    if (g_pn.slot_count >= MAX_PROFINET_SLOTS) {
+        LOG_ERROR("Maximum slots exceeded");
+        return RESULT_ERROR;
+    }
+
+    profinet_slot_t *s = &g_pn.slots[g_pn.slot_count++];
+    memset(s, 0, sizeof(*s));
+
+    s->slot = slot;
+    s->subslot = subslot;
+    s->module_ident = module_ident;
+    s->submodule_ident = submodule_ident;
+    s->input_size = input_len;
+    s->output_size = output_len;
+    s->input_iops = PNET_IOXS_BAD;
+
+    LOG_INFO("Added PROFINET module: slot=%d, subslot=%d, ident=0x%08X",
+             slot, subslot, module_ident);
+
+    return RESULT_OK;
 }
