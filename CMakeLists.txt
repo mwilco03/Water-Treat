@@ -21,12 +21,14 @@ set(SOURCES_CORE
     src/db/db_events.c
     src/db/db_alarms.c
     src/utils/logger.c
+    src/platform/board_detect.c
 )
 
 # New unified driver architecture (following Linux IIO / Zephyr patterns)
 set(SOURCES_DRIVERS_NEW
     src/sensors/analog/analog_sensor.c      # Replaces driver_ph, driver_tds, driver_turbidity
     src/drivers/digital/relay_output.c      # Replaces driver_pump, driver_solenoid
+    src/drivers/bus/gpio_hal.c              # Modern GPIO HAL (libgpiod or sysfs fallback)
 )
 
 # Legacy drivers (to be migrated to new architecture)
@@ -101,6 +103,17 @@ pkg_check_modules(NCURSES REQUIRED ncurses)
 pkg_check_modules(SQLITE3 REQUIRED sqlite3)
 pkg_check_modules(CJSON libcjson)
 
+# libgpiod - modern GPIO interface (preferred over deprecated sysfs)
+pkg_check_modules(GPIOD libgpiod)
+if(GPIOD_FOUND)
+    message(STATUS "libgpiod found - using modern GPIO interface")
+else()
+    message(WARNING "libgpiod not found - falling back to deprecated sysfs GPIO")
+endif()
+
+# systemd integration for sd_notify and watchdog
+pkg_check_modules(SYSTEMD libsystemd)
+
 find_library(PNET_LIBRARY pnet HINTS /usr/local/lib)
 find_path(PNET_INCLUDE_DIR pnet_api.h HINTS /usr/local/include)
 
@@ -130,6 +143,20 @@ if(CJSON_FOUND)
     target_compile_definitions(profinet-monitor PRIVATE HAVE_CJSON=1)
     target_include_directories(profinet-monitor PRIVATE ${CJSON_INCLUDE_DIRS})
     target_link_libraries(profinet-monitor ${CJSON_LIBRARIES})
+endif()
+
+# libgpiod for modern GPIO support
+if(GPIOD_FOUND)
+    target_compile_definitions(profinet-monitor PRIVATE HAVE_GPIOD=1)
+    target_include_directories(profinet-monitor PRIVATE ${GPIOD_INCLUDE_DIRS})
+    target_link_libraries(profinet-monitor ${GPIOD_LIBRARIES})
+endif()
+
+# systemd for sd_notify and watchdog support
+if(SYSTEMD_FOUND)
+    target_compile_definitions(profinet-monitor PRIVATE HAVE_SYSTEMD=1)
+    target_include_directories(profinet-monitor PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+    target_link_libraries(profinet-monitor ${SYSTEMD_LIBRARIES})
 endif()
 
 target_include_directories(profinet-monitor PRIVATE

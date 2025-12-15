@@ -4,8 +4,25 @@
 #include "common.h"
 #include <stdarg.h>
 
+/* Log destination flags (can be combined) */
 #define LOG_DEST_CONSOLE  0x01
 #define LOG_DEST_FILE     0x02
+#define LOG_DEST_SYSLOG   0x04  /* Forward to syslog for centralized logging */
+#define LOG_DEST_JOURNAL  0x08  /* Direct systemd journal integration */
+
+/* Syslog facility selection */
+typedef enum {
+    LOG_FACILITY_DAEMON = 0,   /* LOG_DAEMON - system daemons */
+    LOG_FACILITY_LOCAL0,       /* LOG_LOCAL0 - custom use */
+    LOG_FACILITY_LOCAL1,
+    LOG_FACILITY_LOCAL2,
+    LOG_FACILITY_LOCAL3,
+    LOG_FACILITY_LOCAL4,
+    LOG_FACILITY_LOCAL5,
+    LOG_FACILITY_LOCAL6,
+    LOG_FACILITY_LOCAL7,
+    LOG_FACILITY_USER          /* LOG_USER - user-level messages */
+} log_facility_t;
 
 typedef struct {
     log_level_t level;
@@ -13,6 +30,9 @@ typedef struct {
     char log_file_path[MAX_PATH_LEN];
     bool include_timestamp;
     bool include_source;
+    /* Syslog options */
+    log_facility_t syslog_facility;
+    char syslog_ident[64];     /* Application identifier for syslog */
 } logger_config_t;
 
 result_t logger_init(const logger_config_t *config);

@@ -1,14 +1,56 @@
 [Unit]
-Description=PROFINET Monitor - Raspberry Pi Sensor Hub
-After=network.target
+Description=PROFINET Monitor - Industrial Sensor Hub
+Documentation=https://github.com/mwilco03/Water-Treat
+After=network.target local-fs.target
+Wants=network.target
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/profinet-monitor
+# Type=notify means systemctl start will wait until app signals READY=1
+# This ensures dependencies don't start until the app is fully initialized
+Type=notify
+NotifyAccess=main
+
+ExecStart=/usr/local/bin/profinet-monitor --daemon
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
+
+# User/Group - root needed for GPIO/I2C/SPI hardware access
 User=root
+Group=root
 WorkingDirectory=/var/lib/profinet-monitor
+
+# Watchdog - set to 0 to disable, or set interval (e.g., 30s)
+# Application must call sd_notify("WATCHDOG=1") periodically
+# Set WatchdogSec=0 to disable watchdog entirely
+WatchdogSec=30
+
+# Logging - send stdout/stderr to journald for centralized logging
+# View with: journalctl -u profinet-monitor -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=profinet-monitor
+
+# Resource limits (prevent runaway processes)
+MemoryMax=256M
+CPUQuota=80%
+
+# Security hardening (optional - comment out if causing issues)
+ProtectSystem=strict
+ReadWritePaths=/var/lib/profinet-monitor /var/log/profinet-monitor
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# Hardware access
+DeviceAllow=/dev/i2c-* rw
+DeviceAllow=/dev/spidev* rw
+DeviceAllow=/dev/gpiochip* rw
+DeviceAllow=/dev/gpiomem rw
+DeviceAllow=/dev/mem rw
+
+# Environment file for configuration overrides (optional)
+EnvironmentFile=-/etc/profinet-monitor/environment
 
 [Install]
 WantedBy=multi-user.target
