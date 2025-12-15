@@ -22,6 +22,10 @@
 #include <getopt.h>
 #include <sys/stat.h>
 
+#ifdef HAVE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+
 /* ============================================================================
  * Global State
  * ========================================================================== */
@@ -400,19 +404,59 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Device: %s", g_app_config.system.device_name);
     LOG_INFO("PROFINET Station: %s", g_app_config.profinet.station_name);
 
+#ifdef HAVE_SYSTEMD
+    /* Notify systemd that we're ready - this unblocks "systemctl start"
+     * Without this, Type=notify services would hang indefinitely */
+    sd_notify(0, "READY=1\n"
+                 "STATUS=All subsystems initialized");
+    LOG_INFO("Notified systemd: service ready");
+
+    /* Check if watchdog is enabled */
+    uint64_t watchdog_usec = 0;
+    int wd_enabled = sd_watchdog_enabled(0, &watchdog_usec);
+    if (wd_enabled > 0) {
+        LOG_INFO("Systemd watchdog enabled (interval: %lu ms)", watchdog_usec / 1000);
+    }
+#endif
+
     // Run TUI or daemon mode
     if (g_app_config.system.daemon_mode) {
         LOG_INFO("Running in daemon mode");
+
+#ifdef HAVE_SYSTEMD
+        int watchdog_interval_sec = (wd_enabled > 0) ? (watchdog_usec / 2000000) : 0;
+        if (watchdog_interval_sec < 1) watchdog_interval_sec = 1;
+        int loop_counter = 0;
+#endif
 
         // Main daemon loop
         while (g_running) {
             // Check for config reload signal
             if (g_reload_config) {
                 LOG_INFO("Reloading configuration...");
+#ifdef HAVE_SYSTEMD
+                sd_notify(0, "RELOADING=1");
+#endif
                 load_configuration(config_path);
                 sensor_manager_reload_sensors(&g_sensor_mgr);
                 g_reload_config = 0;
+#ifdef HAVE_SYSTEMD
+                sd_notify(0, "READY=1\n"
+                             "STATUS=Configuration reloaded");
+#endif
             }
+
+#ifdef HAVE_SYSTEMD
+            /* Pet the watchdog at half the configured interval
+             * If we don't call this, systemd will restart the service */
+            if (wd_enabled > 0) {
+                loop_counter++;
+                if (loop_counter >= watchdog_interval_sec) {
+                    sd_notify(0, "WATCHDOG=1");
+                    loop_counter = 0;
+                }
+            }
+#endif
 
             // Sleep for a bit
             sleep(1);
@@ -434,6 +478,10 @@ int main(int argc, char *argv[]) {
 
     // Shutdown all subsystems
     LOG_INFO("Initiating shutdown...");
+#ifdef HAVE_SYSTEMD
+    sd_notify(0, "STOPPING=1\n"
+                 "STATUS=Shutting down subsystems");
+#endif
     shutdown_subsystems();
 
     logger_shutdown();
