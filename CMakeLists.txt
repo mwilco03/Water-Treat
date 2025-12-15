@@ -12,13 +12,25 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-parameter")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0 -DDEBUG")
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 
-set(SOURCES
+# Core sources
+set(SOURCES_CORE
     src/main.c
     src/config/config.c
     src/db/database.c
     src/db/db_modules.c
     src/db/db_events.c
     src/db/db_alarms.c
+    src/utils/logger.c
+)
+
+# New unified driver architecture (following Linux IIO / Zephyr patterns)
+set(SOURCES_DRIVERS_NEW
+    src/sensors/analog/analog_sensor.c      # Replaces driver_ph, driver_tds, driver_turbidity
+    src/drivers/digital/relay_output.c      # Replaces driver_pump, driver_solenoid
+)
+
+# Legacy drivers (to be migrated to new architecture)
+set(SOURCES_DRIVERS_LEGACY
     src/sensors/hardware/hw_interface.c
     src/sensors/drivers/driver_ads1115.c
     src/sensors/drivers/driver_mcp3008.c
@@ -26,20 +38,34 @@ set(SOURCES
     src/sensors/drivers/driver_dht22.c
     src/sensors/drivers/driver_web_poll.c
     src/sensors/drivers/driver_tcs34725.c
-    src/sensors/drivers/driver_turbidity.c
-    src/sensors/drivers/driver_tds.c
-    src/sensors/drivers/driver_ph.c
+    src/sensors/drivers/driver_turbidity.c   # Deprecated: use analog_sensor.c
+    src/sensors/drivers/driver_tds.c         # Deprecated: use analog_sensor.c
+    src/sensors/drivers/driver_ph.c          # Deprecated: use analog_sensor.c
     src/sensors/drivers/driver_hx711.c
     src/sensors/drivers/driver_float_switch.c
-    src/sensors/drivers/driver_solenoid.c
-    src/sensors/drivers/driver_pump.c
+    src/sensors/drivers/driver_solenoid.c    # Deprecated: use relay_output.c
+    src/sensors/drivers/driver_pump.c        # Deprecated: use relay_output.c
     src/sensors/drivers/driver_bme280.c
     src/sensors/drivers/driver_jsn_sr04t.c
+)
+
+# Sensor manager
+set(SOURCES_SENSORS
     src/sensors/sensor_instance.c
     src/sensors/sensor_manager.c
     src/sensors/formula_evaluator.c
+)
+
+# Subsystems
+set(SOURCES_SUBSYSTEMS
     src/logging/data_logger.c
     src/alarms/alarm_manager.c
+    src/profinet/profinet_manager.c
+    src/profinet/profinet_callbacks.c
+)
+
+# TUI
+set(SOURCES_TUI
     src/tui/tui_common.c
     src/tui/tui_main.c
     src/tui/widgets/widget_dialog.c
@@ -52,9 +78,15 @@ set(SOURCES
     src/tui/pages/page_status.c
     src/tui/pages/page_alarms.c
     src/tui/pages/page_logging.c
-    src/profinet/profinet_manager.c
-    src/profinet/profinet_callbacks.c
-    src/utils/logger.c
+)
+
+set(SOURCES
+    ${SOURCES_CORE}
+    ${SOURCES_DRIVERS_NEW}
+    ${SOURCES_DRIVERS_LEGACY}
+    ${SOURCES_SENSORS}
+    ${SOURCES_SUBSYSTEMS}
+    ${SOURCES_TUI}
 )
 
 find_package(Threads REQUIRED)
@@ -103,6 +135,8 @@ endif()
 target_include_directories(profinet-monitor PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/drivers
+    ${CMAKE_SOURCE_DIR}/src/sensors
     ${NCURSES_INCLUDE_DIRS}
     ${SQLITE3_INCLUDE_DIRS}
 )
