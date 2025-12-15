@@ -209,7 +209,7 @@ result_t spi_set_speed(spi_device_t *dev, uint32_t speed) {
 // GPIO IMPLEMENTATION
 // ============================================================================
 
-result_t gpio_export(gpio_pin_t *pin, int pin_number) {
+result_t hwif_gpio_export(gpio_pin_t *pin, int pin_number) {
     char path[128];
     
     pin->pin = pin_number;
@@ -257,7 +257,7 @@ result_t gpio_export(gpio_pin_t *pin, int pin_number) {
     return RESULT_OK;
 }
 
-void gpio_unexport(gpio_pin_t *pin) {
+void hwif_gpio_unexport(gpio_pin_t *pin) {
     if (pin->value_fd >= 0) {
         close(pin->value_fd);
         pin->value_fd = -1;
@@ -275,7 +275,7 @@ void gpio_unexport(gpio_pin_t *pin) {
     }
 }
 
-result_t gpio_set_direction(gpio_pin_t *pin, gpio_direction_t dir) {
+result_t hwif_gpio_set_direction(gpio_pin_t *pin, gpio_direction_t dir) {
     char path[128];
     SAFE_SNPRINTF(path, sizeof(path), "/sys/class/gpio/gpio%d/direction", pin->pin);
     
@@ -296,7 +296,7 @@ result_t gpio_set_direction(gpio_pin_t *pin, gpio_direction_t dir) {
     return RESULT_OK;
 }
 
-result_t gpio_set_edge(gpio_pin_t *pin, gpio_edge_t edge) {
+result_t hwif_gpio_set_edge(gpio_pin_t *pin, gpio_edge_t edge) {
     char path[128];
     SAFE_SNPRINTF(path, sizeof(path), "/sys/class/gpio/gpio%d/edge", pin->pin);
     
@@ -324,7 +324,7 @@ result_t gpio_set_edge(gpio_pin_t *pin, gpio_edge_t edge) {
     return RESULT_OK;
 }
 
-result_t gpio_read(gpio_pin_t *pin, bool *value) {
+result_t hwif_gpio_read(gpio_pin_t *pin, bool *value) {
     char buf[4];
     
     if (lseek(pin->value_fd, 0, SEEK_SET) < 0) {
@@ -341,7 +341,7 @@ result_t gpio_read(gpio_pin_t *pin, bool *value) {
     return RESULT_OK;
 }
 
-result_t gpio_write(gpio_pin_t *pin, bool value) {
+result_t hwif_gpio_write(gpio_pin_t *pin, bool value) {
     const char *val_str = value ? "1" : "0";
     
     if (lseek(pin->value_fd, 0, SEEK_SET) < 0) {
@@ -357,7 +357,7 @@ result_t gpio_write(gpio_pin_t *pin, bool value) {
     return RESULT_OK;
 }
 
-result_t gpio_wait_for_edge(gpio_pin_t *pin, int timeout_ms) {
+result_t hwif_gpio_wait_for_edge(gpio_pin_t *pin, int timeout_ms) {
     struct pollfd pfd;
     char buf[4];
     

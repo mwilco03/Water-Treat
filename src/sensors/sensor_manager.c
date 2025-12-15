@@ -1,4 +1,5 @@
 #include "sensor_manager.h"
+#include "profinet/profinet_manager.h"
 #include "db/db_modules.h"
 #include "db/db_events.h"
 #include "utils/logger.h"

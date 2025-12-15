@@ -6,6 +6,7 @@
 #include "page_modbus.h"
 #include "../tui_common.h"
 #include "config/config.h"
+#include "db/db_modules.h"
 #include "utils/logger.h"
 #include <ncurses.h>
 #include <string.h>

@@ -9,12 +9,39 @@
 #include "db/db_events.h"
 #include "utils/logger.h"
 #include <pthread.h>
-#include <curl/curl.h>
 #include <string.h>
 #include <time.h>
 
+#ifdef HAVE_CURL
+#include <curl/curl.h>
+#else
+typedef void CURL;
+typedef int CURLcode;
+#define CURLE_OK 0
+#define curl_easy_init() NULL
+#define curl_easy_cleanup(x) (void)(x)
+#define curl_easy_setopt(...) (void)0
+#define curl_easy_perform(x) CURLE_OK
+#define curl_easy_getinfo(...) (void)0
+#define curl_easy_strerror(x) "CURL not available"
+#define curl_slist_append(x, y) NULL
+#define curl_slist_free_all(x) (void)(x)
+#define curl_global_init(x) (void)(x)
+#define curl_global_cleanup() (void)0
+#define CURLOPT_WRITEFUNCTION 0
+#define CURLOPT_TIMEOUT 0
+#define CURLOPT_CONNECTTIMEOUT 0
+#define CURLOPT_URL 0
+#define CURLOPT_HTTPHEADER 0
+#define CURLOPT_POSTFIELDS 0
+#define CURLOPT_POST 0
+#define CURLINFO_RESPONSE_CODE 0
+#define CURL_GLOBAL_DEFAULT 0
+struct curl_slist { void *next; };
+#endif
+
 #ifdef HAVE_CJSON
-#include <cJSON.h>
+#include <cjson/cJSON.h>
 #endif
 
 #define MAX_LOG_BATCH_SIZE      100
