@@ -58,8 +58,12 @@ set(SOURCES
 )
 
 find_package(Threads REQUIRED)
-find_package(CURL REQUIRED)
+find_package(CURL QUIET)
 find_package(PkgConfig REQUIRED)
+
+if(NOT CURL_FOUND)
+    message(WARNING "CURL not found - remote logging will be disabled")
+endif()
 
 pkg_check_modules(NCURSES REQUIRED ncurses)
 pkg_check_modules(SQLITE3 REQUIRED sqlite3)
@@ -99,15 +103,19 @@ endif()
 target_include_directories(profinet-monitor PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
-    ${CURL_INCLUDE_DIRS}
     ${NCURSES_INCLUDE_DIRS}
     ${SQLITE3_INCLUDE_DIRS}
 )
 
+if(CURL_FOUND)
+    target_compile_definitions(profinet-monitor PRIVATE HAVE_CURL=1)
+    target_include_directories(profinet-monitor PRIVATE ${CURL_INCLUDE_DIRS})
+    target_link_libraries(profinet-monitor ${CURL_LIBRARIES})
+endif()
+
 target_link_libraries(profinet-monitor
     ${NCURSES_LIBRARIES}
     ${SQLITE3_LIBRARIES}
-    ${CURL_LIBRARIES}
     Threads::Threads
     m
 )
