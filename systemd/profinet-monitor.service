@@ -1,0 +1,14 @@
+[Unit]
+Description=PROFINET Monitor - Raspberry Pi Sensor Hub
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/profinet-monitor
+Restart=always
+RestartSec=5
+User=root
+WorkingDirectory=/var/lib/profinet-monitor
+
+[Install]
+WantedBy=multi-user.target

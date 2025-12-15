@@ -1,0 +1,115 @@
+cmake_minimum_required(VERSION 3.10)
+project(profinet-monitor VERSION 1.0.0 LANGUAGES C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-parameter")
+set(CMAKE_C_FLAGS_DEBUG "-g -O0 -DDEBUG")
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
+
+set(SOURCES
+    src/main.c
+    src/config/config.c
+    src/db/database.c
+    src/db/db_modules.c
+    src/db/db_events.c
+    src/db/db_alarms.c
+    src/sensors/hardware/hw_interface.c
+    src/sensors/drivers/driver_ads1115.c
+    src/sensors/drivers/driver_mcp3008.c
+    src/sensors/drivers/driver_ds18b20.c
+    src/sensors/drivers/driver_dht22.c
+    src/sensors/drivers/driver_web_poll.c
+    src/sensors/drivers/driver_tcs34725.c
+    src/sensors/drivers/driver_turbidity.c
+    src/sensors/drivers/driver_tds.c
+    src/sensors/drivers/driver_ph.c
+    src/sensors/drivers/driver_hx711.c
+    src/sensors/drivers/driver_float_switch.c
+    src/sensors/drivers/driver_solenoid.c
+    src/sensors/drivers/driver_pump.c
+    src/sensors/drivers/driver_bme280.c
+    src/sensors/drivers/driver_jsn_sr04t.c
+    src/sensors/sensor_instance.c
+    src/sensors/sensor_manager.c
+    src/sensors/formula_evaluator.c
+    src/logging/data_logger.c
+    src/alarms/alarm_manager.c
+    src/tui/tui_common.c
+    src/tui/tui_main.c
+    src/tui/widgets/widget_dialog.c
+    src/tui/dialogs/dialog_helpers.c
+    src/tui/dialogs/dialog_sensor.c
+    src/tui/pages/page_system.c
+    src/tui/pages/page_sensors.c
+    src/tui/pages/page_network.c
+    src/tui/pages/page_modbus.c
+    src/tui/pages/page_status.c
+    src/tui/pages/page_alarms.c
+    src/tui/pages/page_logging.c
+    src/profinet/profinet_manager.c
+    src/profinet/profinet_callbacks.c
+    src/utils/logger.c
+)
+
+find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(NCURSES REQUIRED ncurses)
+pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+pkg_check_modules(CJSON libcjson)
+
+find_library(PNET_LIBRARY pnet HINTS /usr/local/lib)
+find_path(PNET_INCLUDE_DIR pnet_api.h HINTS /usr/local/include)
+
+if(PNET_LIBRARY AND PNET_INCLUDE_DIR)
+    set(HAVE_PNET TRUE)
+else()
+    set(HAVE_PNET FALSE)
+    message(WARNING "p-net not found")
+endif()
+
+find_library(TINYEXPR_LIBRARY tinyexpr HINTS /usr/local/lib)
+
+add_executable(profinet-monitor ${SOURCES})
+
+if(HAVE_PNET)
+    target_compile_definitions(profinet-monitor PRIVATE HAVE_PNET=1)
+    target_include_directories(profinet-monitor PRIVATE ${PNET_INCLUDE_DIR})
+    target_link_libraries(profinet-monitor ${PNET_LIBRARY})
+endif()
+
+if(TINYEXPR_LIBRARY)
+    target_compile_definitions(profinet-monitor PRIVATE HAVE_TINYEXPR=1)
+    target_link_libraries(profinet-monitor ${TINYEXPR_LIBRARY})
+endif()
+
+if(CJSON_FOUND)
+    target_compile_definitions(profinet-monitor PRIVATE HAVE_CJSON=1)
+    target_include_directories(profinet-monitor PRIVATE ${CJSON_INCLUDE_DIRS})
+    target_link_libraries(profinet-monitor ${CJSON_LIBRARIES})
+endif()
+
+target_include_directories(profinet-monitor PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+    ${CURL_INCLUDE_DIRS}
+    ${NCURSES_INCLUDE_DIRS}
+    ${SQLITE3_INCLUDE_DIRS}
+)
+
+target_link_libraries(profinet-monitor
+    ${NCURSES_LIBRARIES}
+    ${SQLITE3_LIBRARIES}
+    ${CURL_LIBRARIES}
+    Threads::Threads
+    m
+)
+
+install(TARGETS profinet-monitor DESTINATION bin)
