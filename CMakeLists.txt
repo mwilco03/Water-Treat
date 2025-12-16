@@ -62,6 +62,7 @@ set(SOURCES_SENSORS
 set(SOURCES_SUBSYSTEMS
     src/logging/data_logger.c
     src/alarms/alarm_manager.c
+    src/actuators/actuator_manager.c
     src/profinet/profinet_manager.c
     src/profinet/profinet_callbacks.c
 )

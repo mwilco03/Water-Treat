@@ -59,13 +59,13 @@ typedef struct {
 typedef struct {
     database_t *db;
     data_logger_config_t config;
-    
+
     // Log queue
     log_entry_t queue[LOG_QUEUE_SIZE];
     int queue_head;
     int queue_tail;
     int queue_count;
-    
+
     // Remote logging state
     CURL *curl;
     char *remote_url;
@@ -73,18 +73,26 @@ typedef struct {
     bool remote_available;
     uint64_t last_remote_attempt;
     int remote_failures;
-    
+
+    // Store & Forward state
+    bool network_connected;         // External connection state (from PROFINET)
+    bool queue_when_offline;        // Queue entries when remote unavailable
+    bool flush_on_reconnect;        // Flush queue when connection restored
+    bool flush_pending;             // Flag to trigger immediate flush
+    int max_queue_age_seconds;
+
     // Threading
     pthread_t log_thread;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
     volatile bool running;
     bool initialized;
-    
+
     // Statistics
     uint64_t total_logged;
     uint64_t total_remote_sent;
     uint64_t total_remote_failed;
+    uint64_t total_dropped_age;     // Entries dropped due to age
 } data_logger_t;
 
 static data_logger_t g_logger = {0};
@@ -190,45 +198,90 @@ static result_t send_to_remote(log_entry_t *entries, int count) {
 #endif
 }
 
+static void drop_old_entries(void) {
+    if (g_logger.max_queue_age_seconds <= 0) return;
+
+    time_t now = time(NULL);
+    time_t cutoff = now - g_logger.max_queue_age_seconds;
+    int dropped = 0;
+
+    while (g_logger.queue_count > 0) {
+        log_entry_t *entry = &g_logger.queue[g_logger.queue_tail];
+        if (entry->timestamp >= cutoff) break;  // Entry is fresh enough
+
+        // Drop old entry
+        g_logger.queue_tail = (g_logger.queue_tail + 1) % LOG_QUEUE_SIZE;
+        g_logger.queue_count--;
+        dropped++;
+    }
+
+    if (dropped > 0) {
+        g_logger.total_dropped_age += dropped;
+        LOG_WARNING("Dropped %d entries older than %d seconds (total dropped: %lu)",
+                    dropped, g_logger.max_queue_age_seconds, g_logger.total_dropped_age);
+    }
+}
+
 static void process_queue(void) {
     if (g_logger.queue_count == 0) return;
-    
+
+    // Drop entries that are too old
+    drop_old_entries();
+
+    if (g_logger.queue_count == 0) return;
+
     log_entry_t batch[MAX_LOG_BATCH_SIZE];
     int batch_count = 0;
-    
+
     // Extract batch from queue
     while (g_logger.queue_count > 0 && batch_count < MAX_LOG_BATCH_SIZE) {
         batch[batch_count++] = g_logger.queue[g_logger.queue_tail];
         g_logger.queue_tail = (g_logger.queue_tail + 1) % LOG_QUEUE_SIZE;
         g_logger.queue_count--;
     }
-    
+
     // Log to local database
     if (g_logger.config.local_enabled && g_logger.db) {
         for (int i = 0; i < batch_count; i++) {
-            db_sensor_log_insert(g_logger.db, batch[i].module_id, 
+            db_sensor_log_insert(g_logger.db, batch[i].module_id,
                                  batch[i].value, batch[i].status);
         }
         g_logger.total_logged += batch_count;
     }
-    
-    // Send to remote if enabled
-    if (g_logger.config.remote_enabled && g_logger.remote_available) {
+
+    // Send to remote if enabled and network is connected
+    bool should_send_remote = g_logger.config.remote_enabled &&
+                              g_logger.remote_available &&
+                              g_logger.network_connected;
+
+    // If offline and queue_when_offline is false, we already processed locally
+    // If offline and queue_when_offline is true, entries stay in queue (but we already extracted them)
+    // So we need to handle this differently...
+
+    if (should_send_remote || g_logger.flush_pending) {
         uint64_t now = get_time_ms();
-        
-        // Check if we should retry after failures
-        if (g_logger.remote_failures > 0) {
+
+        // Check if we should retry after failures (unless flush is pending)
+        if (!g_logger.flush_pending && g_logger.remote_failures > 0) {
             if (now - g_logger.last_remote_attempt < REMOTE_RETRY_INTERVAL) {
                 return;
             }
         }
-        
+
         g_logger.last_remote_attempt = now;
-        
+        g_logger.flush_pending = false;
+
         // Send in smaller batches for remote
+        int sent_ok = 0;
         for (int i = 0; i < batch_count; i += REMOTE_BATCH_SIZE) {
             int send_count = MIN(REMOTE_BATCH_SIZE, batch_count - i);
-            send_to_remote(&batch[i], send_count);
+            if (send_to_remote(&batch[i], send_count) == RESULT_OK) {
+                sent_ok += send_count;
+            }
+        }
+
+        if (sent_ok > 0) {
+            LOG_DEBUG("Flushed %d entries to remote", sent_ok);
         }
     }
 }
@@ -285,10 +338,17 @@ result_t data_logger_init(database_t *db, const data_logger_config_t *config) {
         g_logger.remote_available = true;
         curl_global_init(CURL_GLOBAL_DEFAULT);
     }
-    
+
+    // Store & Forward defaults (can be overridden by config)
+    g_logger.queue_when_offline = config->queue_when_offline ? config->queue_when_offline : true;
+    g_logger.flush_on_reconnect = config->flush_on_reconnect ? config->flush_on_reconnect : true;
+    g_logger.max_queue_age_seconds = config->max_queue_age_seconds > 0 ? config->max_queue_age_seconds : 3600;
+    g_logger.network_connected = true;  // Assume connected initially
+
     g_logger.initialized = true;
-    LOG_INFO("Data logger initialized (local=%d, remote=%d, interval=%ds)",
-             config->local_enabled, config->remote_enabled, config->interval_seconds);
+    LOG_INFO("Data logger initialized (local=%d, remote=%d, interval=%ds, queue_offline=%d, flush_reconnect=%d)",
+             config->local_enabled, config->remote_enabled, config->interval_seconds,
+             g_logger.queue_when_offline, g_logger.flush_on_reconnect);
     
     return RESULT_OK;
 }
@@ -473,4 +533,63 @@ result_t data_logger_set_interval(int seconds) {
 
 bool data_logger_is_running(void) {
     return g_logger.running;
+}
+
+/* ============================================================================
+ * Store & Forward Control
+ * ========================================================================== */
+
+result_t data_logger_set_queue_mode(bool queue_when_offline, bool flush_on_reconnect) {
+    pthread_mutex_lock(&g_logger.mutex);
+
+    g_logger.queue_when_offline = queue_when_offline;
+    g_logger.flush_on_reconnect = flush_on_reconnect;
+
+    pthread_mutex_unlock(&g_logger.mutex);
+
+    LOG_INFO("Store & forward mode: queue_offline=%d, flush_reconnect=%d",
+             queue_when_offline, flush_on_reconnect);
+
+    return RESULT_OK;
+}
+
+result_t data_logger_force_flush(void) {
+    if (!g_logger.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_logger.mutex);
+
+    g_logger.flush_pending = true;
+    g_logger.remote_failures = 0;  // Reset failures to allow immediate retry
+    pthread_cond_signal(&g_logger.cond);
+
+    pthread_mutex_unlock(&g_logger.mutex);
+
+    LOG_INFO("Forced flush requested (%d entries in queue)", g_logger.queue_count);
+
+    return RESULT_OK;
+}
+
+result_t data_logger_notify_connection(bool connected) {
+    if (!g_logger.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_logger.mutex);
+
+    bool was_connected = g_logger.network_connected;
+    g_logger.network_connected = connected;
+
+    // If we just reconnected and flush_on_reconnect is enabled, trigger flush
+    if (connected && !was_connected && g_logger.flush_on_reconnect) {
+        g_logger.flush_pending = true;
+        g_logger.remote_failures = 0;  // Reset failures to allow immediate retry
+        pthread_cond_signal(&g_logger.cond);
+
+        LOG_INFO("Network reconnected - triggering queue flush (%d entries)",
+                 g_logger.queue_count);
+    } else if (!connected && was_connected) {
+        LOG_WARNING("Network disconnected - entries will be queued locally");
+    }
+
+    pthread_mutex_unlock(&g_logger.mutex);
+
+    return RESULT_OK;
 }
