@@ -1,0 +1,520 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    GSDML Device Description File
+    Water Treatment RTU / Field I/O Device
+
+    This describes a PROFINET I/O Device that:
+    - Publishes sensor data as input modules (RTU -> Controller)
+    - Receives actuator commands as output modules (Controller -> RTU)
+
+    For use with p-net stack on SBC #2 communicating with SBC #1 (OpenPLC)
+
+    Vendor ID: 0x0493 (example - should be registered with PI)
+    Device ID: 0x0001
+-->
+<ISO15745Profile xmlns="http://www.profibus.com/GSDML/2003/11/DeviceProfile"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xsi:schemaLocation="http://www.profibus.com/GSDML/2003/11/DeviceProfile">
+
+    <ProfileHeader>
+        <ProfileIdentification>PROFINET Device Profile</ProfileIdentification>
+        <ProfileRevision>1.00</ProfileRevision>
+        <ProfileName>Device Profile for PROFINET Devices</ProfileName>
+        <ProfileSource>PROFIBUS Nutzerorganisation e.V. (PNO)</ProfileSource>
+        <ProfileClassID>Device</ProfileClassID>
+        <ISO15745Reference>
+            <ISO15745Part>4</ISO15745Part>
+            <ISO15745Edition>1</ISO15745Edition>
+            <ProfileTechnology>GSDML</ProfileTechnology>
+        </ISO15745Reference>
+    </ProfileHeader>
+
+    <ProfileBody>
+        <DeviceIdentity VendorID="0x0493" DeviceID="0x0001">
+            <InfoText TextId="IDT_DeviceInfo"/>
+            <VendorName Value="Water Treatment Training"/>
+        </DeviceIdentity>
+
+        <DeviceFunction>
+            <Family MainFamily="I/O" ProductFamily="Water Treatment RTU"/>
+        </DeviceFunction>
+
+        <ApplicationProcess>
+            <DeviceAccessPointList>
+                <DeviceAccessPointItem ID="DAP_1"
+                                       PNIO_Version="V2.4"
+                                       PhysicalSlots="0..15"
+                                       MinDeviceInterval="32"
+                                       DNS_CompatibleName="water-treat-rtu"
+                                       FixedInSlots="0"
+                                       ObjectUUID_LocalIndex="1"
+                                       MultipleWriteSupported="true"
+                                       RequiredSchemaVersion="V2.4"
+                                       DeviceAccessSupported="false"
+                                       LLDP_NoD_Supported="true"
+                                       ResetToFactoryModes="2">
+
+                    <ModuleInfo>
+                        <Name TextId="IDT_DAP_Name"/>
+                        <InfoText TextId="IDT_DAP_Info"/>
+                        <VendorName Value="Water Treatment Training"/>
+                        <OrderNumber Value="WT-RTU-001"/>
+                        <HardwareRelease Value="1.0"/>
+                        <SoftwareRelease Value="V1.0"/>
+                    </ModuleInfo>
+
+                    <CertificationInfo ConformanceClass="B" ApplicationClass=""/>
+
+                    <IOConfigData MaxInputLength="512" MaxOutputLength="512"/>
+
+                    <UseableModules>
+                        <!-- Sensor Input Modules (Slot 1-8) -->
+                        <ModuleItemRef ModuleItemTarget="MOD_pH_Sensor" AllowedInSlots="1..8"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_TDS_Sensor" AllowedInSlots="1..8"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Turbidity_Sensor" AllowedInSlots="1..8"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Temperature_Sensor" AllowedInSlots="1..8"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Flow_Sensor" AllowedInSlots="1..8"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Level_Sensor" AllowedInSlots="1..8"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Generic_Analog_Input" AllowedInSlots="1..8"/>
+
+                        <!-- Actuator Output Modules (Slot 9-15) -->
+                        <ModuleItemRef ModuleItemTarget="MOD_Pump_Control" AllowedInSlots="9..15"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Valve_Control" AllowedInSlots="9..15"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Generic_Digital_Output" AllowedInSlots="9..15"/>
+                    </UseableModules>
+
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_DAP" SubmoduleIdentNumber="0x00000001"
+                                             MayIssueProcessAlarm="false">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_DAP"/>
+                                <InfoText TextId="IDT_VSM_DAP_Info"/>
+                            </ModuleInfo>
+                            <IOData/>
+                        </VirtualSubmoduleItem>
+
+                        <!-- Port Submodules -->
+                        <VirtualSubmoduleItem ID="VSM_Port1" SubmoduleIdentNumber="0x00008000"
+                                             MayIssueProcessAlarm="false">
+                            <ModuleInfo>
+                                <Name TextId="IDT_Port1"/>
+                                <InfoText TextId="IDT_Port_Info"/>
+                            </ModuleInfo>
+                            <IOData/>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+
+                    <SystemDefinedSubmoduleList>
+                        <InterfaceSubmoduleItem ID="ISM_1" SubmoduleIdentNumber="0x00000100"
+                                               SubslotNumber="32768"
+                                               TextId="IDT_Interface"
+                                               SupportedRT_Classes="RT_CLASS_1"
+                                               SupportedProtocols="SNMP;LLDP"
+                                               NetworkComponentDiagnosisSupported="false"
+                                               DCP_BoundarySupported="false"
+                                               PTP_BoundarySupported="false"
+                                               DCP_HelloSupported="false">
+                            <ApplicationRelations>
+                                <TimingProperties SendClock="32" ReductionRatio="1 2 4 8 16 32 64 128 256 512"/>
+                            </ApplicationRelations>
+                        </InterfaceSubmoduleItem>
+
+                        <PortSubmoduleItem ID="PSM_1" SubmoduleIdentNumber="0x00000200"
+                                          SubslotNumber="32769"
+                                          TextId="IDT_Port1"
+                                          MaxPortRxDelay="350"
+                                          MaxPortTxDelay="160">
+                        </PortSubmoduleItem>
+                    </SystemDefinedSubmoduleList>
+
+                    <Graphics>
+                        <GraphicItemRef Type="DeviceSymbol" GraphicItemTarget="GFX_Device"/>
+                    </Graphics>
+
+                </DeviceAccessPointItem>
+            </DeviceAccessPointList>
+
+            <!-- ================================================================
+                 SENSOR INPUT MODULES (RTU publishes to Controller)
+                 Each module provides 4 bytes of float data
+                 ================================================================ -->
+
+            <ModuleList>
+                <!-- pH Sensor Module -->
+                <ModuleItem ID="MOD_pH_Sensor" ModuleIdentNumber="0x00000010">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_pH"/>
+                        <InfoText TextId="IDT_MOD_pH_Info"/>
+                        <OrderNumber Value="WT-SENS-PH"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_pH" SubmoduleIdentNumber="0x00000011"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_pH"/>
+                                <InfoText TextId="IDT_VSM_pH_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Input>
+                                    <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_pH_Value">
+                                        <BitDataItem BitOffset="0" TextId="IDT_pH_Value"/>
+                                    </DataItem>
+                                </Input>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- TDS Sensor Module -->
+                <ModuleItem ID="MOD_TDS_Sensor" ModuleIdentNumber="0x00000020">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_TDS"/>
+                        <InfoText TextId="IDT_MOD_TDS_Info"/>
+                        <OrderNumber Value="WT-SENS-TDS"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_TDS" SubmoduleIdentNumber="0x00000021"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_TDS"/>
+                                <InfoText TextId="IDT_VSM_TDS_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Input>
+                                    <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_TDS_Value">
+                                        <BitDataItem BitOffset="0" TextId="IDT_TDS_Value"/>
+                                    </DataItem>
+                                </Input>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- Turbidity Sensor Module -->
+                <ModuleItem ID="MOD_Turbidity_Sensor" ModuleIdentNumber="0x00000030">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_Turb"/>
+                        <InfoText TextId="IDT_MOD_Turb_Info"/>
+                        <OrderNumber Value="WT-SENS-TURB"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_Turb" SubmoduleIdentNumber="0x00000031"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_Turb"/>
+                                <InfoText TextId="IDT_VSM_Turb_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Input>
+                                    <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Turb_Value">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Turb_Value"/>
+                                    </DataItem>
+                                </Input>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- Temperature Sensor Module -->
+                <ModuleItem ID="MOD_Temperature_Sensor" ModuleIdentNumber="0x00000040">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_Temp"/>
+                        <InfoText TextId="IDT_MOD_Temp_Info"/>
+                        <OrderNumber Value="WT-SENS-TEMP"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_Temp" SubmoduleIdentNumber="0x00000041"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_Temp"/>
+                                <InfoText TextId="IDT_VSM_Temp_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Input>
+                                    <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Temp_Value">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Temp_Value"/>
+                                    </DataItem>
+                                </Input>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- Flow Sensor Module -->
+                <ModuleItem ID="MOD_Flow_Sensor" ModuleIdentNumber="0x00000050">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_Flow"/>
+                        <InfoText TextId="IDT_MOD_Flow_Info"/>
+                        <OrderNumber Value="WT-SENS-FLOW"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_Flow" SubmoduleIdentNumber="0x00000051"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_Flow"/>
+                                <InfoText TextId="IDT_VSM_Flow_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Input>
+                                    <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Flow_Value">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Flow_Value"/>
+                                    </DataItem>
+                                </Input>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- Level Sensor Module (Ultrasonic) -->
+                <ModuleItem ID="MOD_Level_Sensor" ModuleIdentNumber="0x00000060">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_Level"/>
+                        <InfoText TextId="IDT_MOD_Level_Info"/>
+                        <OrderNumber Value="WT-SENS-LVL"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_Level" SubmoduleIdentNumber="0x00000061"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_Level"/>
+                                <InfoText TextId="IDT_VSM_Level_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Input>
+                                    <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Level_Value">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Level_Value"/>
+                                    </DataItem>
+                                </Input>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- Generic Analog Input Module -->
+                <ModuleItem ID="MOD_Generic_Analog_Input" ModuleIdentNumber="0x00000070">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_GenAI"/>
+                        <InfoText TextId="IDT_MOD_GenAI_Info"/>
+                        <OrderNumber Value="WT-SENS-GEN"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_GenAI" SubmoduleIdentNumber="0x00000071"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_GenAI"/>
+                                <InfoText TextId="IDT_VSM_GenAI_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Input>
+                                    <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_GenAI_Value">
+                                        <BitDataItem BitOffset="0" TextId="IDT_GenAI_Value"/>
+                                    </DataItem>
+                                </Input>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- ================================================================
+                     ACTUATOR OUTPUT MODULES (Controller commands to RTU)
+                     Each module receives 4 bytes:
+                       Byte 0: Command (0=OFF, 1=ON, 2=PWM)
+                       Byte 1: PWM duty cycle (0-100)
+                       Byte 2-3: Reserved
+                     ================================================================ -->
+
+                <!-- Pump Control Module -->
+                <ModuleItem ID="MOD_Pump_Control" ModuleIdentNumber="0x00000100">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_Pump"/>
+                        <InfoText TextId="IDT_MOD_Pump_Info"/>
+                        <OrderNumber Value="WT-ACT-PUMP"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_Pump" SubmoduleIdentNumber="0x00000101"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_Pump"/>
+                                <InfoText TextId="IDT_VSM_Pump_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Output>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Pump_Cmd">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Pump_Cmd"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Pump_PWM">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Pump_PWM"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Reserved">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Reserved"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Reserved">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Reserved"/>
+                                    </DataItem>
+                                </Output>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- Valve Control Module -->
+                <ModuleItem ID="MOD_Valve_Control" ModuleIdentNumber="0x00000110">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_Valve"/>
+                        <InfoText TextId="IDT_MOD_Valve_Info"/>
+                        <OrderNumber Value="WT-ACT-VALVE"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_Valve" SubmoduleIdentNumber="0x00000111"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_Valve"/>
+                                <InfoText TextId="IDT_VSM_Valve_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Output>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Valve_Cmd">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Valve_Cmd"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Reserved">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Reserved"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Reserved">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Reserved"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Reserved">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Reserved"/>
+                                    </DataItem>
+                                </Output>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+                <!-- Generic Digital Output Module -->
+                <ModuleItem ID="MOD_Generic_Digital_Output" ModuleIdentNumber="0x00000120">
+                    <ModuleInfo>
+                        <Name TextId="IDT_MOD_GenDO"/>
+                        <InfoText TextId="IDT_MOD_GenDO_Info"/>
+                        <OrderNumber Value="WT-ACT-GEN"/>
+                    </ModuleInfo>
+                    <VirtualSubmoduleList>
+                        <VirtualSubmoduleItem ID="VSM_GenDO" SubmoduleIdentNumber="0x00000121"
+                                             MayIssueProcessAlarm="true">
+                            <ModuleInfo>
+                                <Name TextId="IDT_VSM_GenDO"/>
+                                <InfoText TextId="IDT_VSM_GenDO_Info"/>
+                            </ModuleInfo>
+                            <IOData>
+                                <Output>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_DO_Cmd">
+                                        <BitDataItem BitOffset="0" TextId="IDT_DO_Cmd"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_DO_PWM">
+                                        <BitDataItem BitOffset="0" TextId="IDT_DO_PWM"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Reserved">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Reserved"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Reserved">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Reserved"/>
+                                    </DataItem>
+                                </Output>
+                            </IOData>
+                        </VirtualSubmoduleItem>
+                    </VirtualSubmoduleList>
+                </ModuleItem>
+
+            </ModuleList>
+
+            <!-- Graphics -->
+            <GraphicsList>
+                <GraphicItem ID="GFX_Device" GraphicFile="water-treat-rtu.bmp"/>
+            </GraphicsList>
+
+            <!-- Text Definitions -->
+            <ExternalTextList>
+                <PrimaryLanguage>
+                    <Text TextId="IDT_DeviceInfo" Value="Water Treatment RTU - Field I/O Device for SCADA Training"/>
+
+                    <Text TextId="IDT_DAP_Name" Value="Water Treatment RTU"/>
+                    <Text TextId="IDT_DAP_Info" Value="PROFINET I/O Device for water treatment sensor/actuator interface"/>
+
+                    <Text TextId="IDT_VSM_DAP" Value="Device Access Point"/>
+                    <Text TextId="IDT_VSM_DAP_Info" Value="Main device access point"/>
+
+                    <Text TextId="IDT_Interface" Value="PROFINET Interface"/>
+                    <Text TextId="IDT_Port1" Value="Port 1"/>
+                    <Text TextId="IDT_Port_Info" Value="Ethernet port"/>
+
+                    <!-- Sensor Module Texts -->
+                    <Text TextId="IDT_MOD_pH" Value="pH Sensor Module"/>
+                    <Text TextId="IDT_MOD_pH_Info" Value="Analog pH sensor (0-14 scale)"/>
+                    <Text TextId="IDT_VSM_pH" Value="pH Input"/>
+                    <Text TextId="IDT_VSM_pH_Info" Value="pH value as 32-bit float"/>
+                    <Text TextId="IDT_pH_Value" Value="pH Value"/>
+
+                    <Text TextId="IDT_MOD_TDS" Value="TDS Sensor Module"/>
+                    <Text TextId="IDT_MOD_TDS_Info" Value="Total Dissolved Solids sensor (ppm)"/>
+                    <Text TextId="IDT_VSM_TDS" Value="TDS Input"/>
+                    <Text TextId="IDT_VSM_TDS_Info" Value="TDS value as 32-bit float"/>
+                    <Text TextId="IDT_TDS_Value" Value="TDS Value (ppm)"/>
+
+                    <Text TextId="IDT_MOD_Turb" Value="Turbidity Sensor Module"/>
+                    <Text TextId="IDT_MOD_Turb_Info" Value="Water turbidity sensor (NTU)"/>
+                    <Text TextId="IDT_VSM_Turb" Value="Turbidity Input"/>
+                    <Text TextId="IDT_VSM_Turb_Info" Value="Turbidity value as 32-bit float"/>
+                    <Text TextId="IDT_Turb_Value" Value="Turbidity (NTU)"/>
+
+                    <Text TextId="IDT_MOD_Temp" Value="Temperature Sensor Module"/>
+                    <Text TextId="IDT_MOD_Temp_Info" Value="DS18B20 digital temperature sensor"/>
+                    <Text TextId="IDT_VSM_Temp" Value="Temperature Input"/>
+                    <Text TextId="IDT_VSM_Temp_Info" Value="Temperature value as 32-bit float (Celsius)"/>
+                    <Text TextId="IDT_Temp_Value" Value="Temperature (C)"/>
+
+                    <Text TextId="IDT_MOD_Flow" Value="Flow Sensor Module"/>
+                    <Text TextId="IDT_MOD_Flow_Info" Value="Hall effect flow sensor (L/min)"/>
+                    <Text TextId="IDT_VSM_Flow" Value="Flow Input"/>
+                    <Text TextId="IDT_VSM_Flow_Info" Value="Flow rate as 32-bit float"/>
+                    <Text TextId="IDT_Flow_Value" Value="Flow Rate (L/min)"/>
+
+                    <Text TextId="IDT_MOD_Level" Value="Level Sensor Module"/>
+                    <Text TextId="IDT_MOD_Level_Info" Value="Ultrasonic level sensor (%)"/>
+                    <Text TextId="IDT_VSM_Level" Value="Level Input"/>
+                    <Text TextId="IDT_VSM_Level_Info" Value="Tank level as 32-bit float (percentage)"/>
+                    <Text TextId="IDT_Level_Value" Value="Level (%)"/>
+
+                    <Text TextId="IDT_MOD_GenAI" Value="Generic Analog Input"/>
+                    <Text TextId="IDT_MOD_GenAI_Info" Value="Generic analog input module"/>
+                    <Text TextId="IDT_VSM_GenAI" Value="Analog Input"/>
+                    <Text TextId="IDT_VSM_GenAI_Info" Value="Generic analog value as 32-bit float"/>
+                    <Text TextId="IDT_GenAI_Value" Value="Analog Value"/>
+
+                    <!-- Actuator Module Texts -->
+                    <Text TextId="IDT_MOD_Pump" Value="Pump Control Module"/>
+                    <Text TextId="IDT_MOD_Pump_Info" Value="Peristaltic pump control (ON/OFF/PWM)"/>
+                    <Text TextId="IDT_VSM_Pump" Value="Pump Control"/>
+                    <Text TextId="IDT_VSM_Pump_Info" Value="Pump command output"/>
+                    <Text TextId="IDT_Pump_Cmd" Value="Command (0=OFF, 1=ON, 2=PWM)"/>
+                    <Text TextId="IDT_Pump_PWM" Value="PWM Duty Cycle (0-100)"/>
+
+                    <Text TextId="IDT_MOD_Valve" Value="Valve Control Module"/>
+                    <Text TextId="IDT_MOD_Valve_Info" Value="Solenoid valve control (ON/OFF)"/>
+                    <Text TextId="IDT_VSM_Valve" Value="Valve Control"/>
+                    <Text TextId="IDT_VSM_Valve_Info" Value="Valve command output"/>
+                    <Text TextId="IDT_Valve_Cmd" Value="Command (0=CLOSE, 1=OPEN)"/>
+
+                    <Text TextId="IDT_MOD_GenDO" Value="Generic Digital Output"/>
+                    <Text TextId="IDT_MOD_GenDO_Info" Value="Generic digital output module"/>
+                    <Text TextId="IDT_VSM_GenDO" Value="Digital Output"/>
+                    <Text TextId="IDT_VSM_GenDO_Info" Value="Generic digital output control"/>
+                    <Text TextId="IDT_DO_Cmd" Value="Command"/>
+                    <Text TextId="IDT_DO_PWM" Value="PWM Value"/>
+
+                    <Text TextId="IDT_Reserved" Value="Reserved"/>
+                </PrimaryLanguage>
+            </ExternalTextList>
+
+        </ApplicationProcess>
+    </ProfileBody>
+</ISO15745Profile>

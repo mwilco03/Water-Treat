@@ -12,6 +12,7 @@
 #include "db/database.h"
 #include "db/db_events.h"
 #include "sensors/sensor_manager.h"
+#include "actuators/actuator_manager.h"
 #include "alarms/alarm_manager.h"
 #include "logging/data_logger.h"
 #include "profinet/profinet_manager.h"
@@ -37,6 +38,7 @@ static database_t g_db;
 static config_manager_t g_config_mgr;
 static app_config_t g_app_config;
 static sensor_manager_t g_sensor_mgr;
+static actuator_manager_t g_actuator_mgr;
 
 /* ============================================================================
  * Signal Handlers
@@ -172,6 +174,65 @@ static result_t init_sensors(void) {
     return RESULT_OK;
 }
 
+/* Callback when actuator manager enters/exits degraded mode */
+static void on_degraded_mode(bool degraded, void *ctx) {
+    UNUSED(ctx);
+
+    // Notify data logger of connection state change
+    data_logger_notify_connection(!degraded);
+
+    if (degraded) {
+        LOG_WARNING("DEGRADED MODE: Controller disconnected - actuators maintaining last state");
+        DB_EVENT_WARNING(&g_db, "system", "Entered DEGRADED MODE - controller disconnected");
+    } else {
+        LOG_INFO("NORMAL MODE: Controller reconnected");
+        DB_EVENT_INFO(&g_db, "system", "Exited DEGRADED MODE - controller reconnected");
+    }
+}
+
+static result_t init_actuators(void) {
+    if (!g_app_config.profinet.enabled) {
+        LOG_INFO("Actuator manager disabled (PROFINET not enabled)");
+        return RESULT_OK;
+    }
+
+    result_t r = actuator_manager_init(&g_actuator_mgr, &g_db);
+    if (r != RESULT_OK) {
+        LOG_ERROR("Failed to initialize actuator manager");
+        return r;
+    }
+
+    // Set degraded mode callback to notify data logger
+    actuator_manager_set_callback(&g_actuator_mgr, on_degraded_mode, NULL);
+
+    // TODO: Load actuator configuration from database
+    // For now, actuators can be added via TUI or programmatically
+    // Example configuration for water treatment:
+    /*
+    actuator_config_t pump_acid = {
+        .id = 1,
+        .name = "Acid Pump",
+        .type = ACTUATOR_TYPE_PUMP,
+        .profinet_slot = 9,
+        .profinet_subslot = 0,
+        .gpio_pin = 17,
+        .active_low = false,
+        .pwm_capable = true,
+        .max_on_time_sec = 300,  // 5 minute safety limit
+    };
+    actuator_manager_add(&g_actuator_mgr, &pump_acid);
+    */
+
+    r = actuator_manager_start(&g_actuator_mgr);
+    if (r != RESULT_OK) {
+        LOG_ERROR("Failed to start actuator manager");
+        return r;
+    }
+
+    LOG_INFO("Actuator manager started");
+    return RESULT_OK;
+}
+
 static result_t init_alarms(void) {
     result_t r = alarm_manager_init(&g_db);
     if (r != RESULT_OK) {
@@ -249,6 +310,12 @@ static void shutdown_subsystems(void) {
         sensor_manager_stop(&g_sensor_mgr);
         sensor_manager_destroy(&g_sensor_mgr);
         LOG_INFO("Sensor manager stopped");
+    }
+
+    if (g_actuator_mgr.initialized) {
+        actuator_manager_stop(&g_actuator_mgr);
+        actuator_manager_destroy(&g_actuator_mgr);
+        LOG_INFO("Actuator manager stopped");
     }
 
     if (profinet_manager_is_running()) {
@@ -385,6 +452,11 @@ int main(int argc, char *argv[]) {
         shutdown_subsystems();
         logger_shutdown();
         return 1;
+    }
+
+    // Initialize actuators (PROFINET output -> pumps/valves)
+    if (init_actuators() != RESULT_OK) {
+        LOG_WARNING("Actuator manager initialization failed, continuing without it");
     }
 
     // Initialize alarm manager
