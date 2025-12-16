@@ -213,7 +213,7 @@ When communication with the controller is lost:
 
 ## License
 
-MIT License
+GPL v3
 
 ## Contributing
 
