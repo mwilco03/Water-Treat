@@ -1,7 +1,12 @@
 /**
  * @file driver_tds.c
  * @brief TDS (Total Dissolved Solids) Sensor driver (via ADC)
+ *
+ * @deprecated This driver is deprecated. Use analog_sensor.c with
+ *             SENSOR_CHAN_TDS and CAL_PRESET_TDS_GENERIC instead.
+ *             Migration: src/sensors/analog/analog_sensor.c
  */
+#warning "driver_tds.c is deprecated - use analog_sensor.c instead"
 
 #include "common.h"
 #include "utils/logger.h"

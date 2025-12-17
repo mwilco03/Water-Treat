@@ -16,7 +16,9 @@ static const char *SCHEMA_SQL =
 "CREATE INDEX IF NOT EXISTS idx_alarm_state ON alarm_history(state);"
 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, source TEXT, level TEXT DEFAULT 'info', message TEXT);"
 "CREATE TABLE IF NOT EXISTS logging_config (id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER DEFAULT 0, interval_seconds INTEGER DEFAULT 60, retention_days INTEGER DEFAULT 30, remote_url TEXT, remote_enabled INTEGER DEFAULT 0);"
-"INSERT OR IGNORE INTO logging_config (id) VALUES (1);";
+"INSERT OR IGNORE INTO logging_config (id) VALUES (1);"
+"CREATE TABLE IF NOT EXISTS actuators (id INTEGER PRIMARY KEY AUTOINCREMENT, slot INTEGER NOT NULL UNIQUE, subslot INTEGER DEFAULT 0, name TEXT NOT NULL, type TEXT DEFAULT 'relay', gpio_pin INTEGER NOT NULL, gpio_chip TEXT DEFAULT 'gpiochip0', active_low INTEGER DEFAULT 0, safe_state TEXT DEFAULT 'hold', min_on_time_ms INTEGER DEFAULT 0, max_on_time_ms INTEGER DEFAULT 0, pwm_frequency_hz INTEGER DEFAULT 1000, status TEXT DEFAULT 'inactive', enabled INTEGER DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);"
+"CREATE TABLE IF NOT EXISTS actuator_state (actuator_id INTEGER PRIMARY KEY, state INTEGER DEFAULT 0, pwm_duty INTEGER DEFAULT 0, last_state_change DATETIME DEFAULT CURRENT_TIMESTAMP, total_on_time_ms INTEGER DEFAULT 0, cycle_count INTEGER DEFAULT 0, FOREIGN KEY (actuator_id) REFERENCES actuators(id) ON DELETE CASCADE);";
 
 result_t database_init(database_t *db, const char *path) {
     CHECK_NULL(db); CHECK_NULL(path);

@@ -1,8 +1,15 @@
 #include "sensor_manager.h"
 #include "profinet/profinet_manager.h"
+#include "alarms/alarm_manager.h"
 #include "db/db_modules.h"
 #include "db/db_events.h"
 #include "utils/logger.h"
+
+#ifdef LED_SUPPORT
+#include "hal/led_status.h"
+extern led_status_manager_t g_led_mgr;
+#endif
+
 #include <unistd.h>
 #include <string.h>
 
@@ -24,11 +31,8 @@ static void* sensor_worker_thread(void *arg) {
             if (!instance) continue;
             
             // Check if it's time to poll this sensor
-            struct timespec now;
-            clock_gettime(CLOCK_MONOTONIC, &now);
-            
-            time_t elapsed_ms = (now.tv_sec - instance->last_read) * 1000 +
-                               (now.tv_nsec - instance->last_read * 1000000000) / 1000000;
+            uint64_t now_ms = get_time_ms();
+            uint64_t elapsed_ms = now_ms - instance->last_read_ms;
             
             if (elapsed_ms >= instance->poll_rate_ms) {
                 float value;
@@ -38,14 +42,37 @@ static void* sensor_worker_thread(void *arg) {
                 
                 if (result == RESULT_OK) {
                     mgr->successful_reads++;
-                    
+
+                    // Check alarm rules for this sensor value
+                    bool has_alarm = false;
+                    bool has_warning = false;
+                    if (alarm_manager_is_running()) {
+                        // Check alarms (module_id is sensor database ID)
+                        alarm_manager_check_value(instance->module_id, value);
+
+                        // Check if there are active alarms for this sensor
+                        int critical_count = 0, high_count = 0;
+                        alarm_manager_get_active_by_severity(ALARM_SEVERITY_CRITICAL, &critical_count);
+                        alarm_manager_get_active_by_severity(ALARM_SEVERITY_HIGH, &high_count);
+                        has_alarm = (critical_count > 0);
+                        has_warning = (high_count > 0);
+                    }
+
+#ifdef LED_SUPPORT
+                    // Update LED status for this sensor slot (slots 1-4 map to sensor LEDs 0-3)
+                    if (g_led_mgr.initialized && instance->slot >= 1 && instance->slot <= 4) {
+                        int led_index = instance->slot - 1;
+                        led_set_sensor_status(&g_led_mgr, led_index, has_alarm, has_warning, false);
+                    }
+#endif
+
                     // Write to PROFINET
                     if (mgr->profinet_mgr) {
                         uint8_t data[4];
-                        
+
                         // Convert float to bytes (little-endian)
                         memcpy(data, &value, sizeof(float));
-                        
+
                         profinet_manager_write_input_data(
                             mgr->profinet_mgr,
                             instance->slot,
@@ -53,25 +80,33 @@ static void* sensor_worker_thread(void *arg) {
                             data,
                             sizeof(float)
                         );
-                        
+
                         // Set IOPS to GOOD
-                        profinet_manager_set_input_iops(mgr->profinet_mgr, 
-                                                       instance->slot, 0, 
+                        profinet_manager_set_input_iops(mgr->profinet_mgr,
+                                                       instance->slot, 0,
                                                        PNET_IOXS_GOOD);
                     }
-                    
+
                     LOG_DEBUG("Read sensor slot=%d: %.2f", instance->slot, value);
-                    
+
                 } else {
                     mgr->failed_reads++;
-                    
+
+#ifdef LED_SUPPORT
+                    // Set LED to fault status for failed sensor read
+                    if (g_led_mgr.initialized && instance->slot >= 1 && instance->slot <= 4) {
+                        int led_index = instance->slot - 1;
+                        led_set_status(&g_led_mgr, LED_FUNC_SENSOR_1 + led_index, LED_STATUS_FAULT);
+                    }
+#endif
+
                     // Set IOPS to BAD on error
                     if (mgr->profinet_mgr) {
-                        profinet_manager_set_input_iops(mgr->profinet_mgr, 
-                                                       instance->slot, 0, 
+                        profinet_manager_set_input_iops(mgr->profinet_mgr,
+                                                       instance->slot, 0,
                                                        PNET_IOXS_BAD);
                     }
-                    
+
                     LOG_WARNING("Failed to read sensor slot=%d", instance->slot);
                 }
             }

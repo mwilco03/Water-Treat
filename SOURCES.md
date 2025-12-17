@@ -45,7 +45,7 @@ This document describes the software architecture of the Water Treatment RTU, a 
 | File | Description |
 |------|-------------|
 | `main.c` | Application entry, subsystem orchestration, signal handling |
-| `config/config.c` | JSON configuration parsing and persistence |
+| `config/config.c` | INI configuration parsing and persistence |
 | `db/database.c` | SQLite connection pool and schema management |
 | `db/db_modules.c` | Module configuration CRUD operations |
 | `db/db_events.c` | Event log storage and retrieval |
@@ -148,6 +148,25 @@ Alarm priorities:
 | `data_logger.c` | Local SQLite + remote HTTP with store & forward |
 
 Store & forward behavior:
+
+### Health Check (`src/health/`)
+
+| File | Description |
+|------|-------------|
+| `health_check.c` | System health monitoring with HTTP API and file output |
+
+**HTTP Endpoints:**
+- `GET /health` - JSON health status (returns 503 if critical)
+- `GET /metrics` - Prometheus-compatible metrics
+- `GET /ready` - Kubernetes readiness probe
+- `GET /live` - Kubernetes liveness probe
+
+**File Output:**
+- Writes Prometheus metrics format to configured path
+- Atomic writes via temp file + rename
+- Compatible with Prometheus node_exporter textfile collector
+
+Store & forward behavior:
 1. Log entries written to local SQLite immediately
 2. Background thread attempts remote HTTP POST
 3. On network failure, entries queued locally
@@ -171,7 +190,7 @@ Store & forward behavior:
 | F1 | `page_system.c` | System configuration, device info |
 | F2 | `page_sensors.c` | Sensor CRUD, calibration |
 | F3 | `page_network.c` | PROFINET network settings |
-| F4 | `page_modbus.c` | Protocol status display |
+| F4 | `page_profinet.c` | PROFINET I/O device status and diagnostics |
 | F5 | `page_status.c` | Live sensor readings |
 | F6 | `page_alarms.c` | Alarm configuration, active alarms |
 | F7 | `page_logging.c` | Data logging settings |
@@ -226,6 +245,51 @@ When PROFINET connection is lost:
 - Timeout triggers safe state for actuators
 - Configurable per-actuator safe state (ON/OFF)
 
+## Unit Tests (`tests/`)
+
+| File | Description |
+|------|-------------|
+| `test_main.c` | Test runner and result summary |
+| `test_framework.h` | Minimal assertion macros |
+| `test_formula.c` | Formula evaluator tests |
+| `test_calibration.c` | Sensor calibration/scaling tests |
+| `test_alarms.c` | Alarm threshold logic tests |
+| `test_profinet_data.c` | PROFINET data encoding tests |
+| `test_config.c` | Configuration parsing tests |
+
+**Building Tests:**
+```bash
+cmake -DBUILD_TESTS=ON ..
+make run_tests
+./run_tests
+```
+
+## Configuration (`src/config/`)
+
+| File | Description |
+|------|-------------|
+| `config.c` | INI file parsing and config management |
+| `config_validate.c` | Configuration validation and remote loading |
+
+**Remote Configuration:**
+- `config_load_from_url()` - Fetch config from HTTP URL (requires libcurl)
+- `config_bootstrap()` - Load from URL, local file, or defaults (in priority order)
+
+**Validation Features:**
+- Warns on default station/device names
+- Validates port numbers and intervals
+- Detects first-run state for setup wizard
+
+## Setup Wizard (`src/tui/pages/page_wizard.c`)
+
+First-run setup wizard with guided configuration:
+1. Hardware detection (auto-detect SBC type)
+2. Network configuration (DHCP or static IP)
+3. PROFINET setup (station name, device name)
+4. Sensor overview (pointer to F2 page)
+5. Actuator overview (pointer to F1 page)
+6. Confirmation and save
+
 ## Dependencies
 
 ### Required
@@ -235,7 +299,7 @@ When PROFINET connection is lost:
 
 ### Optional
 - `p-net` - PROFINET I/O Device stack
-- `libcurl` - Remote HTTP logging
+- `libcurl` - Remote HTTP logging and remote config
 - `libcjson` - JSON parsing
 - `libgpiod` - Modern GPIO interface
 - `libsystemd` - Service integration

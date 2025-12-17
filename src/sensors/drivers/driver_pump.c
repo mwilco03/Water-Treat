@@ -1,3 +1,13 @@
+/**
+ * @file driver_pump.c
+ * @brief Water pump driver
+ *
+ * @deprecated This driver is deprecated. Use relay_output.c with
+ *             OUTPUT_TYPE_RELAY or OUTPUT_TYPE_PWM instead.
+ *             Migration: src/drivers/digital/relay_output.c
+ */
+#warning "driver_pump.c is deprecated - use relay_output.c instead"
+
 #include "driver_pump.h"
 #include "utils/logger.h"
 #include <fcntl.h>

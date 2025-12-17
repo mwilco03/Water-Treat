@@ -11,6 +11,53 @@
 #ifdef HAVE_PNET
 #include <pnet_api.h>
 
+/* I&M0 (Identification & Maintenance) data - mandatory for PROFINET compliance */
+#pragma pack(push, 1)
+typedef struct {
+    uint16_t block_header_type;     // 0x0020 for I&M0
+    uint16_t block_header_length;   // 54
+    uint8_t  block_header_version;  // 1.0
+    uint8_t  block_header_reserved;
+    uint16_t vendor_id;             // 0x0493 (matches GSD)
+    char     order_id[20];          // Order number (ASCII)
+    char     serial_number[16];     // Serial number (ASCII)
+    uint16_t hardware_revision;     // HW revision
+    struct {
+        uint8_t prefix;             // 'V' for release
+        uint8_t functional;         // Major version
+        uint8_t bugfix;             // Minor version
+        uint8_t internal;           // Patch
+    } software_revision;
+    uint16_t revision_counter;      // Parameter changes counter
+    uint16_t profile_id;            // Profile identifier
+    uint16_t profile_specific_type; // Profile specific type
+    uint16_t im_version;            // 0x0101 = I&M v1.1
+    uint16_t im_supported;          // Bit field: I&M0-4 supported
+} im0_data_t;
+#pragma pack(pop)
+
+static im0_data_t g_im0_data = {
+    .block_header_type = 0x0020,
+    .block_header_length = 54,
+    .block_header_version = 0x01,
+    .block_header_reserved = 0,
+    .vendor_id = 0x0493,            // Water Treatment Systems vendor ID
+    .order_id = "WaterTreat-RTU   ",// 20 chars padded with spaces
+    .serial_number = "RTU-000000001   ",// 16 chars
+    .hardware_revision = 0x0001,
+    .software_revision = {
+        .prefix = 'V',
+        .functional = 1,            // Major: 1
+        .bugfix = 0,                // Minor: 0
+        .internal = 0               // Patch: 0
+    },
+    .revision_counter = 0,
+    .profile_id = 0,                // No profile
+    .profile_specific_type = 0,
+    .im_version = 0x0101,           // I&M v1.1
+    .im_supported = 0x001F          // I&M0-4 supported (bits 0-4)
+};
+
 /* ============================================================================
  * State and Connection Callbacks
  * ========================================================================== */
@@ -98,16 +145,22 @@ int profinet_read_callback(pnet_t *net, void *arg,
     
     // Handle standard indices
     switch (idx) {
-        case 0x8000:  // Identification & Maintenance 0
-        case 0x8001:  // Identification & Maintenance 1
-        case 0x8002:  // Identification & Maintenance 2
-        case 0x8003:  // Identification & Maintenance 3
-        case 0x8004:  // Identification & Maintenance 4
-            // I&M data would be provided here
+        case 0x8000:  // Identification & Maintenance 0 (mandatory)
+            *data = (uint8_t *)&g_im0_data;
+            *length = sizeof(im0_data_t);
+            LOG_DEBUG("I&M0 read: providing %u bytes", *length);
+            break;
+
+        case 0x8001:  // Identification & Maintenance 1 (optional - function tag)
+        case 0x8002:  // Identification & Maintenance 2 (optional - date)
+        case 0x8003:  // Identification & Maintenance 3 (optional - descriptor)
+        case 0x8004:  // Identification & Maintenance 4 (optional - signature)
+            // Optional I&M records not implemented
+            LOG_DEBUG("I&M%d read: not implemented", idx - 0x8000);
             *data = NULL;
             *length = 0;
             break;
-            
+
         default:
             // Application-specific read
             *data = NULL;

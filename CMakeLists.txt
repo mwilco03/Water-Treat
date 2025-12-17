@@ -16,10 +16,12 @@ set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(SOURCES_CORE
     src/main.c
     src/config/config.c
+    src/config/config_validate.c
     src/db/database.c
     src/db/db_modules.c
     src/db/db_events.c
     src/db/db_alarms.c
+    src/db/db_actuators.c
     src/utils/logger.c
     src/platform/board_detect.c
 )
@@ -65,6 +67,7 @@ set(SOURCES_SUBSYSTEMS
     src/actuators/actuator_manager.c
     src/profinet/profinet_manager.c
     src/profinet/profinet_callbacks.c
+    src/health/health_check.c
 )
 
 # TUI
@@ -77,11 +80,16 @@ set(SOURCES_TUI
     src/tui/pages/page_system.c
     src/tui/pages/page_sensors.c
     src/tui/pages/page_network.c
-    src/tui/pages/page_modbus.c
+    src/tui/pages/page_profinet.c
     src/tui/pages/page_status.c
     src/tui/pages/page_alarms.c
     src/tui/pages/page_logging.c
+    src/tui/pages/page_wizard.c
+    src/tui/pages/page_actuators.c
 )
+
+# HAL (conditionally included based on features)
+set(SOURCES_HAL)
 
 set(SOURCES
     ${SOURCES_CORE}
@@ -90,6 +98,7 @@ set(SOURCES
     ${SOURCES_SENSORS}
     ${SOURCES_SUBSYSTEMS}
     ${SOURCES_TUI}
+    ${SOURCES_HAL}
 )
 
 find_package(Threads REQUIRED)
@@ -114,6 +123,52 @@ endif()
 
 # systemd integration for sd_notify and watchdog
 pkg_check_modules(SYSTEMD libsystemd)
+
+# ============================================================================
+# Optional LED Status Indicator Support (WS2812B/WS2811)
+# ============================================================================
+option(ENABLE_LED_SUPPORT "Enable WS2812B LED status indicator support" OFF)
+
+if(ENABLE_LED_SUPPORT)
+    # Check for rpi_ws281x library (Raspberry Pi specific)
+    find_library(WS2811_LIBRARY ws2811 HINTS /usr/local/lib)
+    find_path(WS2811_INCLUDE_DIR ws2811/ws2811.h HINTS /usr/local/include)
+
+    if(WS2811_LIBRARY AND WS2811_INCLUDE_DIR)
+        set(HAVE_RPI_WS281X TRUE)
+        message(STATUS "rpi_ws281x found - enabling Pi-optimized LED backend")
+    else()
+        set(HAVE_RPI_WS281X FALSE)
+        message(STATUS "rpi_ws281x not found - using SPI-only LED backend")
+    endif()
+
+    # Add LED HAL sources
+    list(APPEND SOURCES_HAL
+        src/hal/led_ws2812.c
+        src/hal/led_backend_spi.c
+        src/hal/led_status.c
+    )
+
+    # Add rpi_ws281x backend if available
+    if(HAVE_RPI_WS281X)
+        list(APPEND SOURCES_HAL src/hal/led_backend_rpi.c)
+    endif()
+
+    message(STATUS "LED status indicator support enabled")
+else()
+    message(STATUS "LED status indicator support disabled (use -DENABLE_LED_SUPPORT=ON to enable)")
+endif()
+
+# Re-assemble SOURCES with HAL (after optional LED files added)
+set(SOURCES
+    ${SOURCES_CORE}
+    ${SOURCES_DRIVERS_NEW}
+    ${SOURCES_DRIVERS_LEGACY}
+    ${SOURCES_SENSORS}
+    ${SOURCES_SUBSYSTEMS}
+    ${SOURCES_TUI}
+    ${SOURCES_HAL}
+)
 
 find_library(PNET_LIBRARY pnet HINTS /usr/local/lib)
 find_path(PNET_INCLUDE_DIR pnet_api.h HINTS /usr/local/include)
@@ -160,11 +215,23 @@ if(SYSTEMD_FOUND)
     target_link_libraries(profinet-monitor ${SYSTEMD_LIBRARIES})
 endif()
 
+# LED status indicator support
+if(ENABLE_LED_SUPPORT)
+    target_compile_definitions(profinet-monitor PRIVATE LED_SUPPORT=1)
+    if(HAVE_RPI_WS281X)
+        target_compile_definitions(profinet-monitor PRIVATE HAVE_RPI_WS281X=1)
+        target_include_directories(profinet-monitor PRIVATE ${WS2811_INCLUDE_DIR})
+        target_link_libraries(profinet-monitor ${WS2811_LIBRARY})
+    endif()
+endif()
+
 target_include_directories(profinet-monitor PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/drivers
     ${CMAKE_SOURCE_DIR}/src/sensors
+    ${CMAKE_SOURCE_DIR}/src/hal
+    ${CMAKE_SOURCE_DIR}/src/platform
     ${NCURSES_INCLUDE_DIRS}
     ${SQLITE3_INCLUDE_DIRS}
 )
@@ -183,3 +250,44 @@ target_link_libraries(profinet-monitor
 )
 
 install(TARGETS profinet-monitor DESTINATION bin)
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+option(BUILD_TESTS "Build unit tests" OFF)
+
+if(BUILD_TESTS)
+    enable_testing()
+
+    set(TEST_SOURCES
+        tests/test_main.c
+        tests/test_formula.c
+        tests/test_calibration.c
+        tests/test_alarms.c
+        tests/test_profinet_data.c
+        tests/test_config.c
+    )
+
+    # Tests that need formula evaluator
+    set(TEST_DEPS
+        src/sensors/formula_evaluator.c
+        src/utils/logger.c
+    )
+
+    add_executable(run_tests ${TEST_SOURCES} ${TEST_DEPS})
+
+    target_include_directories(run_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests
+    )
+
+    target_link_libraries(run_tests m)
+
+    if(TINYEXPR_LIBRARY)
+        target_compile_definitions(run_tests PRIVATE HAVE_TINYEXPR=1)
+        target_link_libraries(run_tests ${TINYEXPR_LIBRARY})
+    endif()
+
+    add_test(NAME unit_tests COMMAND run_tests)
+endif()

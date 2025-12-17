@@ -1,7 +1,12 @@
 /**
  * @file driver_ph.c
  * @brief pH Sensor driver (via ADC)
+ *
+ * @deprecated This driver is deprecated. Use analog_sensor.c with
+ *             SENSOR_CHAN_PH and CAL_PRESET_PH_GENERIC instead.
+ *             Migration: src/sensors/analog/analog_sensor.c
  */
+#warning "driver_ph.c is deprecated - use analog_sensor.c instead"
 
 #include "common.h"
 #include "utils/logger.h"
