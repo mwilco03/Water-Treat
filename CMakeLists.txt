@@ -20,6 +20,7 @@ set(SOURCES_CORE
     src/db/db_modules.c
     src/db/db_events.c
     src/db/db_alarms.c
+    src/db/db_actuators.c
     src/utils/logger.c
     src/platform/board_detect.c
 )
@@ -77,7 +78,7 @@ set(SOURCES_TUI
     src/tui/pages/page_system.c
     src/tui/pages/page_sensors.c
     src/tui/pages/page_network.c
-    src/tui/pages/page_modbus.c
+    src/tui/pages/page_profinet.c
     src/tui/pages/page_status.c
     src/tui/pages/page_alarms.c
     src/tui/pages/page_logging.c

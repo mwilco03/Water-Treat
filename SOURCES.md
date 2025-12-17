@@ -45,7 +45,7 @@ This document describes the software architecture of the Water Treatment RTU, a 
 | File | Description |
 |------|-------------|
 | `main.c` | Application entry, subsystem orchestration, signal handling |
-| `config/config.c` | JSON configuration parsing and persistence |
+| `config/config.c` | INI configuration parsing and persistence |
 | `db/database.c` | SQLite connection pool and schema management |
 | `db/db_modules.c` | Module configuration CRUD operations |
 | `db/db_events.c` | Event log storage and retrieval |
@@ -171,7 +171,7 @@ Store & forward behavior:
 | F1 | `page_system.c` | System configuration, device info |
 | F2 | `page_sensors.c` | Sensor CRUD, calibration |
 | F3 | `page_network.c` | PROFINET network settings |
-| F4 | `page_modbus.c` | Protocol status display |
+| F4 | `page_profinet.c` | PROFINET I/O device status and diagnostics |
 | F5 | `page_status.c` | Live sensor readings |
 | F6 | `page_alarms.c` | Alarm configuration, active alarms |
 | F7 | `page_logging.c` | Data logging settings |

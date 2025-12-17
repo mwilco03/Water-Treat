@@ -44,6 +44,7 @@ This RTU operates as **SBC #2** in a two-tier SCADA architecture:
 - GSD/GSDML device description files for PLC configuration
 - Cyclic I/O data exchange (sensor inputs, actuator outputs)
 - Supports standard PROFINET diagnostic and alarm services
+- **Clear-text protocol** for network traffic analysis (training/educational use)
 
 ### Sensor Abstraction Layer
 Multi-protocol sensor support with unified data interface:
@@ -156,7 +157,7 @@ Byte 2-3: Reserved
 | F1 | System Configuration |
 | F2 | Sensor Management |
 | F3 | Network Settings |
-| F4 | Protocol Status |
+| F4 | PROFINET Status |
 | F5 | Live Status |
 | F6 | Alarm Configuration |
 | F7 | Logging Settings |

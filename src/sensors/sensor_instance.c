@@ -99,9 +99,11 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
 
         // Initialize driver based on hardware type
         if (strcmp(sensor.sensor_type, "DS18B20") == 0) {
+            instance->driver_type = PHYSICAL_DRIVER_DS18B20;
             result = driver_ds18b20_init(&instance->driver_handle, sensor.address);
         } else if (strcmp(sensor.sensor_type, "DHT22") == 0 ||
                    strcmp(sensor.sensor_type, "DHT11") == 0) {
+            instance->driver_type = PHYSICAL_DRIVER_DHT22;
             int gpio_pin = atoi(sensor.address);
             result = driver_dht22_init(&instance->driver_handle, gpio_pin, false);
         } else {
@@ -127,13 +129,14 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
         // Initialize driver based on hardware (use adc_type field)
         if (strcmp(sensor.adc_type, "ADS1115") == 0 ||
             strcmp(sensor.adc_type, "ADS1015") == 0) {
-
+            instance->driver_type = ADC_DRIVER_ADS1115;
             if (strcmp(sensor.interface, "i2c") == 0) {
                 uint8_t addr = parse_i2c_address(sensor.address);
                 result = driver_ads1115_init(&instance->driver_handle, sensor.address,
                                             sensor.bus, sensor.channel, sensor.gain);
             }
         } else if (strcmp(sensor.adc_type, "MCP3008") == 0) {
+            instance->driver_type = ADC_DRIVER_MCP3008;
             int spi_bus, spi_device;
             parse_spi_device(sensor.address, &spi_bus, &spi_device);
             result = driver_mcp3008_init(&instance->driver_handle, spi_bus, spi_device,
@@ -192,27 +195,30 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
 void sensor_instance_destroy(sensor_instance_t *instance) {
     pthread_mutex_lock(&instance->mutex);
 
-    switch (instance->type) {
-        case SENSOR_INSTANCE_PHYSICAL:
-            if (instance->driver_handle) {
+    // Clean up driver based on specific driver type
+    if (instance->driver_handle) {
+        switch (instance->driver_type) {
+            case PHYSICAL_DRIVER_DS18B20:
                 driver_ds18b20_close(instance->driver_handle);
-                instance->driver_handle = NULL;
-            }
-            break;
-
-        case SENSOR_INSTANCE_ADC:
-            if (instance->driver_handle) {
+                break;
+            case PHYSICAL_DRIVER_DHT22:
+                driver_dht22_close(instance->driver_handle);
+                break;
+            case ADC_DRIVER_ADS1115:
                 driver_ads1115_close(instance->driver_handle);
-                instance->driver_handle = NULL;
-            }
-            break;
+                break;
+            case ADC_DRIVER_MCP3008:
+                driver_mcp3008_close(instance->driver_handle);
+                break;
+            default:
+                break;
+        }
+        instance->driver_handle = NULL;
+    }
 
-        case SENSOR_INSTANCE_WEB_POLL:
-            web_poll_destroy(&instance->driver.web_poll);
-            break;
-
-        default:
-            break;
+    // Clean up web_poll context separately
+    if (instance->type == SENSOR_INSTANCE_WEB_POLL) {
+        web_poll_destroy(&instance->driver.web_poll);
     }
 
     if (instance->avg_buffer) {
@@ -275,7 +281,7 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
         raw_value = apply_moving_average(instance, raw_value);
 
         instance->current_value = raw_value;
-        instance->last_read = time(NULL);
+        instance->last_read_ms = get_time_ms();
         instance->consecutive_successes++;
         instance->consecutive_failures = 0;
         instance->connected = true;

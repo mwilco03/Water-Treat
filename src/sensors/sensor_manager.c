@@ -24,11 +24,8 @@ static void* sensor_worker_thread(void *arg) {
             if (!instance) continue;
             
             // Check if it's time to poll this sensor
-            struct timespec now;
-            clock_gettime(CLOCK_MONOTONIC, &now);
-            
-            time_t elapsed_ms = (now.tv_sec - instance->last_read) * 1000 +
-                               (now.tv_nsec - instance->last_read * 1000000000) / 1000000;
+            uint64_t now_ms = get_time_ms();
+            uint64_t elapsed_ms = now_ms - instance->last_read_ms;
             
             if (elapsed_ms >= instance->poll_rate_ms) {
                 float value;
