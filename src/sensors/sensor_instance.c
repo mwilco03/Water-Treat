@@ -176,7 +176,48 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
 
     } else if (strcmp(module->module_type, "calculated") == 0) {
         instance->type = SENSOR_INSTANCE_CALCULATED;
-        // Calculated sensors are handled differently in sensor_manager
+
+        db_calculated_sensor_t sensor;
+        if (db_calculated_sensor_get(db, module->id, &sensor) != RESULT_OK) {
+            LOG_ERROR("Failed to load calculated sensor for module %d", module->id);
+            return RESULT_ERROR;
+        }
+
+        SAFE_STRNCPY(instance->formula, sensor.formula, sizeof(instance->formula));
+        instance->poll_rate_ms = sensor.update_rate_ms;
+
+        // Parse input_sensors to get slot references (format: "slot1,slot2,slot3")
+        instance->input_count = 0;
+        char input_copy[256];
+        SAFE_STRNCPY(input_copy, sensor.input_sensors, sizeof(input_copy));
+
+        char *saveptr;
+        char *token = strtok_r(input_copy, ",", &saveptr);
+        while (token && instance->input_count < 8) {
+            // Parse "slotN" format
+            int slot = 0;
+            if (sscanf(token, "slot%d", &slot) == 1 || sscanf(token, "%d", &slot) == 1) {
+                instance->input_slots[instance->input_count++] = slot;
+            }
+            token = strtok_r(NULL, ",", &saveptr);
+        }
+
+        // Initialize formula evaluator with variable names
+        if (instance->input_count > 0) {
+            const char *var_names[8];
+            char var_name_storage[8][16];
+            for (int i = 0; i < instance->input_count; i++) {
+                snprintf(var_name_storage[i], sizeof(var_name_storage[i]), "x%d", i);
+                var_names[i] = var_name_storage[i];
+            }
+
+            result = formula_evaluator_init(&instance->formula_eval, sensor.formula,
+                                           var_names, instance->input_count);
+            if (result != RESULT_OK) {
+                LOG_ERROR("Failed to compile formula for calculated sensor: %s", sensor.formula);
+            }
+        }
+
         instance->connected = true;
     }
 
@@ -219,6 +260,11 @@ void sensor_instance_destroy(sensor_instance_t *instance) {
     // Clean up web_poll context separately
     if (instance->type == SENSOR_INSTANCE_WEB_POLL) {
         web_poll_destroy(&instance->driver.web_poll);
+    }
+
+    // Clean up formula evaluator for calculated sensors
+    if (instance->type == SENSOR_INSTANCE_CALCULATED) {
+        formula_evaluator_destroy(&instance->formula_eval);
     }
 
     if (instance->avg_buffer) {
@@ -314,21 +360,34 @@ result_t sensor_instance_test(sensor_instance_t *instance) {
     return result;
 }
 
-// Simple formula evaluator for calculated sensors
+/**
+ * @brief Evaluate a formula for calculated sensors
+ *
+ * Uses TinyExpr library when available for full expression support,
+ * otherwise falls back to simple pattern matching.
+ */
 result_t sensor_instance_evaluate_formula(const char *formula,
                                          const float *input_values,
                                          int input_count,
                                          float *result) {
-    // Very simple evaluator - supports basic arithmetic and slot references
-    // Format: (slot1 + slot2) / 2
-    // This is a simplified version - production code should use a proper parser
-
     if (!formula || !input_values || !result || input_count <= 0) {
         return RESULT_INVALID_PARAM;
     }
 
-    // For now, just average the inputs if formula is "(slot1 + slot2) / 2" pattern
-    if (strstr(formula, "+") && strstr(formula, "/")) {
+    // Create temporary evaluator for this formula
+    formula_evaluator_t eval;
+    const char *var_names[8];
+    char var_name_storage[8][16];
+
+    for (int i = 0; i < input_count && i < 8; i++) {
+        snprintf(var_name_storage[i], sizeof(var_name_storage[i]), "x%d", i);
+        var_names[i] = var_name_storage[i];
+    }
+
+    result_t res = formula_evaluator_init(&eval, formula, var_names, input_count);
+    if (res != RESULT_OK) {
+        LOG_WARNING("Failed to compile formula: %s", formula);
+        // Fallback: return average
         float sum = 0.0f;
         for (int i = 0; i < input_count; i++) {
             sum += input_values[i];
@@ -337,8 +396,21 @@ result_t sensor_instance_evaluate_formula(const char *formula,
         return RESULT_OK;
     }
 
-    // Default: return first input
-    *result = input_values[0];
-    LOG_WARNING("Formula evaluation not fully implemented for: %s", formula);
-    return RESULT_OK;
+    res = formula_evaluator_evaluate(&eval, input_values, result);
+    formula_evaluator_destroy(&eval);
+
+    return res;
+}
+
+/**
+ * @brief Evaluate a calculated sensor using its pre-compiled formula
+ */
+result_t sensor_instance_evaluate_calculated(sensor_instance_t *instance,
+                                             const float *input_values,
+                                             float *result) {
+    if (!instance || instance->type != SENSOR_INSTANCE_CALCULATED) {
+        return RESULT_INVALID_PARAM;
+    }
+
+    return formula_evaluator_evaluate(&instance->formula_eval, input_values, result);
 }

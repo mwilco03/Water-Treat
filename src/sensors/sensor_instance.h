@@ -4,6 +4,7 @@
 #include "common.h"
 #include "db/database.h"
 #include "db/db_modules.h"
+#include "formula_evaluator.h"
 #include <pthread.h>
 
 typedef enum {
@@ -108,9 +109,11 @@ typedef struct {
     int consecutive_successes;
     int consecutive_failures;
 
+    /* Calculated sensor support */
     char formula[MAX_CONFIG_VALUE_LEN];
     int input_slots[8];
     int input_count;
+    formula_evaluator_t formula_eval;  // Compiled formula evaluator
 } sensor_instance_t;
 
 result_t sensor_instance_create_from_db(sensor_instance_t *instance, db_module_t *module, database_t *db);
@@ -121,5 +124,8 @@ result_t sensor_instance_evaluate_formula(const char *formula,
                                          const float *input_values,
                                          int input_count,
                                          float *result);
+result_t sensor_instance_evaluate_calculated(sensor_instance_t *instance,
+                                             const float *input_values,
+                                             float *result);
 
 #endif
