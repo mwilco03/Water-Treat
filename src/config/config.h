@@ -14,7 +14,8 @@ typedef struct { char station_name[MAX_NAME_LEN]; uint16_t vendor_id; uint16_t d
 typedef struct { char path[MAX_PATH_LEN]; bool create_if_missing; int busy_timeout_ms; } database_config_t;
 typedef struct { bool enabled; int interval_seconds; int retention_days; int destination; char remote_url[MAX_PATH_LEN]; bool remote_enabled; } logging_config_t;
 typedef struct { bool enabled; bool http_enabled; uint16_t http_port; char file_path[MAX_PATH_LEN]; int update_interval_seconds; } health_config_t;
-typedef struct { system_config_t system; network_config_t network; profinet_config_t profinet; database_config_t database; logging_config_t logging; health_config_t health; } app_config_t;
+typedef struct { bool enabled; int led_count; int brightness; char backend[16]; char spi_device[32]; uint32_t spi_speed_hz; int gpio_pin; int dma_channel; } led_config_app_t;
+typedef struct { system_config_t system; network_config_t network; profinet_config_t profinet; database_config_t database; logging_config_t logging; health_config_t health; led_config_app_t led; } app_config_t;
 
 result_t config_manager_init(config_manager_t *mgr);
 void config_manager_destroy(config_manager_t *mgr);

@@ -84,6 +84,16 @@ void config_get_defaults(app_config_t *c) {
     c->health.http_port=8080;
     SAFE_STRNCPY(c->health.file_path,"/var/lib/profinet-monitor/health.prom",sizeof(c->health.file_path));
     c->health.update_interval_seconds=10;
+
+    /* LED indicator defaults (disabled by default) */
+    c->led.enabled=false;
+    c->led.led_count=8;
+    c->led.brightness=64;  /* 25% - safe default */
+    SAFE_STRNCPY(c->led.backend,"auto",sizeof(c->led.backend));
+    SAFE_STRNCPY(c->led.spi_device,"/dev/spidev0.0",sizeof(c->led.spi_device));
+    c->led.spi_speed_hz=2400000;
+    c->led.gpio_pin=18;
+    c->led.dma_channel=10;
 }
 
 result_t config_load_app_config(config_manager_t *m, app_config_t *c) {
@@ -130,6 +140,16 @@ result_t config_load_app_config(config_manager_t *m, app_config_t *c) {
     if(config_get_int(m,"health","http_port",&iv)==RESULT_OK) c->health.http_port=(uint16_t)iv;
     if(config_get_string(m,"health","file_path",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->health.file_path,v,sizeof(c->health.file_path));
     if(config_get_int(m,"health","update_interval_seconds",&iv)==RESULT_OK) c->health.update_interval_seconds=iv;
+
+    /* LED indicator configuration */
+    if(config_get_bool(m,"led","enabled",&bv)==RESULT_OK) c->led.enabled=bv;
+    if(config_get_int(m,"led","led_count",&iv)==RESULT_OK) c->led.led_count=iv;
+    if(config_get_int(m,"led","brightness",&iv)==RESULT_OK) c->led.brightness=iv;
+    if(config_get_string(m,"led","backend",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->led.backend,v,sizeof(c->led.backend));
+    if(config_get_string(m,"led","spi_device",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->led.spi_device,v,sizeof(c->led.spi_device));
+    if(config_get_int(m,"led","spi_speed_hz",&iv)==RESULT_OK) c->led.spi_speed_hz=(uint32_t)iv;
+    if(config_get_int(m,"led","gpio_pin",&iv)==RESULT_OK) c->led.gpio_pin=iv;
+    if(config_get_int(m,"led","dma_channel",&iv)==RESULT_OK) c->led.dma_channel=iv;
 
     return RESULT_OK;
 }

@@ -87,6 +87,9 @@ set(SOURCES_TUI
     src/tui/pages/page_wizard.c
 )
 
+# HAL (conditionally included based on features)
+set(SOURCES_HAL)
+
 set(SOURCES
     ${SOURCES_CORE}
     ${SOURCES_DRIVERS_NEW}
@@ -94,6 +97,7 @@ set(SOURCES
     ${SOURCES_SENSORS}
     ${SOURCES_SUBSYSTEMS}
     ${SOURCES_TUI}
+    ${SOURCES_HAL}
 )
 
 find_package(Threads REQUIRED)
@@ -118,6 +122,41 @@ endif()
 
 # systemd integration for sd_notify and watchdog
 pkg_check_modules(SYSTEMD libsystemd)
+
+# ============================================================================
+# Optional LED Status Indicator Support (WS2812B/WS2811)
+# ============================================================================
+option(ENABLE_LED_SUPPORT "Enable WS2812B LED status indicator support" OFF)
+
+if(ENABLE_LED_SUPPORT)
+    # Check for rpi_ws281x library (Raspberry Pi specific)
+    find_library(WS2811_LIBRARY ws2811 HINTS /usr/local/lib)
+    find_path(WS2811_INCLUDE_DIR ws2811/ws2811.h HINTS /usr/local/include)
+
+    if(WS2811_LIBRARY AND WS2811_INCLUDE_DIR)
+        set(HAVE_RPI_WS281X TRUE)
+        message(STATUS "rpi_ws281x found - enabling Pi-optimized LED backend")
+    else()
+        set(HAVE_RPI_WS281X FALSE)
+        message(STATUS "rpi_ws281x not found - using SPI-only LED backend")
+    endif()
+
+    # Add LED HAL sources
+    list(APPEND SOURCES_HAL
+        src/hal/led_ws2812.c
+        src/hal/led_backend_spi.c
+        src/hal/led_status.c
+    )
+
+    # Add rpi_ws281x backend if available
+    if(HAVE_RPI_WS281X)
+        list(APPEND SOURCES_HAL src/hal/led_backend_rpi.c)
+    endif()
+
+    message(STATUS "LED status indicator support enabled")
+else()
+    message(STATUS "LED status indicator support disabled (use -DENABLE_LED_SUPPORT=ON to enable)")
+endif()
 
 find_library(PNET_LIBRARY pnet HINTS /usr/local/lib)
 find_path(PNET_INCLUDE_DIR pnet_api.h HINTS /usr/local/include)
@@ -164,11 +203,23 @@ if(SYSTEMD_FOUND)
     target_link_libraries(profinet-monitor ${SYSTEMD_LIBRARIES})
 endif()
 
+# LED status indicator support
+if(ENABLE_LED_SUPPORT)
+    target_compile_definitions(profinet-monitor PRIVATE LED_SUPPORT=1)
+    if(HAVE_RPI_WS281X)
+        target_compile_definitions(profinet-monitor PRIVATE HAVE_RPI_WS281X=1)
+        target_include_directories(profinet-monitor PRIVATE ${WS2811_INCLUDE_DIR})
+        target_link_libraries(profinet-monitor ${WS2811_LIBRARY})
+    endif()
+endif()
+
 target_include_directories(profinet-monitor PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/drivers
     ${CMAKE_SOURCE_DIR}/src/sensors
+    ${CMAKE_SOURCE_DIR}/src/hal
+    ${CMAKE_SOURCE_DIR}/src/platform
     ${NCURSES_INCLUDE_DIRS}
     ${SQLITE3_INCLUDE_DIRS}
 )

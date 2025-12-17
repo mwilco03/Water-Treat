@@ -18,6 +18,7 @@
 #include "logging/data_logger.h"
 #include "profinet/profinet_manager.h"
 #include "health/health_check.h"
+#include "hal/led_status.h"
 #include "tui/tui_main.h"
 #include "tui/pages/page_wizard.h"
 
@@ -44,6 +45,10 @@ static app_config_t g_app_config;
 /* These are non-static so health_check.c can access them */
 sensor_manager_t g_sensor_mgr;
 actuator_manager_t g_actuator_mgr;
+
+#ifdef LED_SUPPORT
+static led_status_manager_t g_led_mgr;
+#endif
 
 /* ============================================================================
  * Signal Handlers
@@ -195,6 +200,14 @@ static void on_degraded_mode(bool degraded, void *ctx) {
     // Notify data logger of connection state change
     data_logger_notify_connection(!degraded);
 
+#ifdef LED_SUPPORT
+    // Update LED status for PROFINET connection
+    if (g_led_mgr.initialized) {
+        led_set_profinet_status(&g_led_mgr, !degraded, !degraded);
+        led_set_system_status(&g_led_mgr, degraded ? LED_STATUS_WARNING : LED_STATUS_OK);
+    }
+#endif
+
     if (degraded) {
         LOG_WARNING("DEGRADED MODE: Controller disconnected - actuators maintaining last state");
         DB_EVENT_WARNING(&g_db, "system", "Entered DEGRADED MODE - controller disconnected");
@@ -331,6 +344,49 @@ static result_t init_health_check(void) {
     return RESULT_OK;
 }
 
+#ifdef LED_SUPPORT
+static result_t init_led_status(void) {
+    if (!g_app_config.led.enabled) {
+        LOG_INFO("LED status indicator is disabled in configuration");
+        return RESULT_OK;
+    }
+
+    /* Convert app config to LED config */
+    led_config_t led_cfg;
+    led_config_defaults(&led_cfg);
+    led_cfg.led_count = g_app_config.led.led_count;
+    led_cfg.brightness = g_app_config.led.brightness;
+    SAFE_STRNCPY(led_cfg.spi_device, g_app_config.led.spi_device, sizeof(led_cfg.spi_device));
+    led_cfg.spi_speed_hz = g_app_config.led.spi_speed_hz;
+    led_cfg.gpio_pin = g_app_config.led.gpio_pin;
+    led_cfg.dma_channel = g_app_config.led.dma_channel;
+
+    /* Determine backend */
+    if (strcmp(g_app_config.led.backend, "spi") == 0) {
+        led_cfg.backend = LED_BACKEND_SPI;
+    } else if (strcmp(g_app_config.led.backend, "rpi") == 0 ||
+               strcmp(g_app_config.led.backend, "rpi_ws281x") == 0) {
+        led_cfg.backend = LED_BACKEND_RPI_WS281X;
+    } else {
+        led_cfg.backend = LED_BACKEND_AUTO;
+    }
+
+    result_t r = led_status_init(&g_led_mgr, &led_cfg);
+    if (r != RESULT_OK) {
+        LOG_WARNING("Failed to initialize LED status indicator");
+        return r;
+    }
+
+    /* Set initial system status */
+    led_set_system_status(&g_led_mgr, LED_STATUS_INITIALIZING);
+    led_status_update(&g_led_mgr);
+
+    LOG_INFO("LED status indicator initialized (%d LEDs, backend=%s)",
+             led_cfg.led_count, led_backend_name(led_cfg.backend));
+    return RESULT_OK;
+}
+#endif /* LED_SUPPORT */
+
 /* ============================================================================
  * Shutdown
  * ========================================================================== */
@@ -339,6 +395,13 @@ static void shutdown_subsystems(void) {
     LOG_INFO("Shutting down subsystems...");
 
     // Stop in reverse order of initialization
+#ifdef LED_SUPPORT
+    if (g_led_mgr.initialized) {
+        led_status_cleanup(&g_led_mgr);
+        LOG_INFO("LED status indicator stopped");
+    }
+#endif
+
     if (health_check_is_running()) {
         health_check_stop();
         health_check_shutdown();
@@ -528,9 +591,25 @@ int main(int argc, char *argv[]) {
         LOG_WARNING("Health check initialization failed, continuing without it");
     }
 
+#ifdef LED_SUPPORT
+    // Initialize LED status indicator
+    if (init_led_status() != RESULT_OK) {
+        LOG_WARNING("LED status initialization failed, continuing without it");
+    }
+#endif
+
     LOG_INFO("All subsystems initialized successfully");
     LOG_INFO("Device: %s", g_app_config.system.device_name);
     LOG_INFO("PROFINET Station: %s", g_app_config.profinet.station_name);
+
+#ifdef LED_SUPPORT
+    // Set LED status to OK now that all subsystems are initialized
+    if (g_led_mgr.initialized) {
+        led_set_system_status(&g_led_mgr, LED_STATUS_OK);
+        led_set_profinet_status(&g_led_mgr, g_app_config.profinet.enabled, false);
+        led_status_update(&g_led_mgr);
+    }
+#endif
 
 #ifdef HAVE_SYSTEMD
     /* Notify systemd that we're ready - this unblocks "systemctl start"
@@ -583,6 +662,13 @@ int main(int argc, char *argv[]) {
                     sd_notify(0, "WATCHDOG=1");
                     loop_counter = 0;
                 }
+            }
+#endif
+
+#ifdef LED_SUPPORT
+            // Update LED animations (limited rate in daemon mode)
+            if (g_led_mgr.initialized) {
+                led_status_update(&g_led_mgr);
             }
 #endif
 
