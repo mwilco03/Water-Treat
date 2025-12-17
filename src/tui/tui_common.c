@@ -75,8 +75,25 @@ void tui_notify_sensor_changed(int sensor_slot) {
     /* Update LED status for sensor changes */
     if (g_ctx.led_mgr && g_ctx.led_mgr->initialized) {
         if (sensor_slot >= 0 && sensor_slot < 4) {
-            /* For specific sensor, update that LED */
-            led_set_sensor_status(g_ctx.led_mgr, sensor_slot, false, false, false);
+            /* Check if sensor still exists at this slot */
+            sensor_manager_t *mgr = g_ctx.sensor_mgr;
+            bool sensor_exists = false;
+            if (mgr) {
+                for (int i = 0; i < mgr->instance_count; i++) {
+                    if (mgr->instances[i] && mgr->instances[i]->slot == sensor_slot) {
+                        sensor_exists = true;
+                        break;
+                    }
+                }
+            }
+
+            if (sensor_exists) {
+                /* Sensor exists - set to OK (will be updated by alarm manager) */
+                led_set_sensor_status(g_ctx.led_mgr, sensor_slot, false, false, false);
+            } else {
+                /* Sensor deleted - turn LED OFF */
+                led_set_status(g_ctx.led_mgr, LED_FUNC_SENSOR_1 + sensor_slot, LED_STATUS_OFF);
+            }
         }
         led_status_update(g_ctx.led_mgr);
     }
