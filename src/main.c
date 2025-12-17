@@ -47,7 +47,7 @@ sensor_manager_t g_sensor_mgr;
 actuator_manager_t g_actuator_mgr;
 
 #ifdef LED_SUPPORT
-static led_status_manager_t g_led_mgr;
+led_status_manager_t g_led_mgr;  /* Non-static for health check access */
 #endif
 
 /* ============================================================================
@@ -218,11 +218,7 @@ static void on_degraded_mode(bool degraded, void *ctx) {
 }
 
 static result_t init_actuators(void) {
-    if (!g_app_config.profinet.enabled) {
-        LOG_INFO("Actuator manager disabled (PROFINET not enabled)");
-        return RESULT_OK;
-    }
-
+    /* Initialize actuator manager - works in standalone mode (no PROFINET) */
     result_t r = actuator_manager_init(&g_actuator_mgr, &g_db);
     if (r != RESULT_OK) {
         LOG_ERROR("Failed to initialize actuator manager");
@@ -232,23 +228,11 @@ static result_t init_actuators(void) {
     // Set degraded mode callback to notify data logger
     actuator_manager_set_callback(&g_actuator_mgr, on_degraded_mode, NULL);
 
-    // TODO: Load actuator configuration from database
-    // For now, actuators can be added via TUI or programmatically
-    // Example configuration for water treatment:
-    /*
-    actuator_config_t pump_acid = {
-        .id = 1,
-        .name = "Acid Pump",
-        .type = ACTUATOR_TYPE_PUMP,
-        .profinet_slot = 9,
-        .profinet_subslot = 0,
-        .gpio_pin = 17,
-        .active_low = false,
-        .pwm_capable = true,
-        .max_on_time_sec = 300,  // 5 minute safety limit
-    };
-    actuator_manager_add(&g_actuator_mgr, &pump_acid);
-    */
+    // Load actuators from database
+    r = actuator_manager_reload(&g_actuator_mgr);
+    if (r != RESULT_OK) {
+        LOG_WARNING("No actuators loaded from database (add via TUI)");
+    }
 
     r = actuator_manager_start(&g_actuator_mgr);
     if (r != RESULT_OK) {
@@ -256,7 +240,11 @@ static result_t init_actuators(void) {
         return r;
     }
 
-    LOG_INFO("Actuator manager started");
+    if (g_app_config.profinet.enabled) {
+        LOG_INFO("Actuator manager started (PROFINET mode)");
+    } else {
+        LOG_INFO("Actuator manager started (standalone mode - manual control only)");
+    }
     return RESULT_OK;
 }
 

@@ -9,6 +9,14 @@
 #include "actuators/actuator_manager.h"
 #include "alarms/alarm_manager.h"
 #include "profinet/profinet_manager.h"
+#include "config/config.h"
+
+#ifdef LED_SUPPORT
+#include "hal/led_status.h"
+#endif
+
+/* Config export function declaration */
+static int config_to_json(char *buffer, size_t buffer_size);
 
 #include <pthread.h>
 #include <unistd.h>
@@ -367,6 +375,90 @@ result_t health_check_write_file(const char *path) {
 }
 
 /* ============================================================================
+ * Config Export
+ * ========================================================================== */
+
+static int config_to_json(char *buffer, size_t buffer_size) {
+    extern app_config_t g_app_config;
+
+    return snprintf(buffer, buffer_size,
+        "{\n"
+        "  \"system\": {\n"
+        "    \"device_name\": \"%s\",\n"
+        "    \"log_level\": \"%s\",\n"
+        "    \"log_file\": \"%s\",\n"
+        "    \"daemon_mode\": %s\n"
+        "  },\n"
+        "  \"network\": {\n"
+        "    \"interface\": \"%s\",\n"
+        "    \"ip_address\": \"%s\",\n"
+        "    \"netmask\": \"%s\",\n"
+        "    \"gateway\": \"%s\",\n"
+        "    \"dhcp_enabled\": %s\n"
+        "  },\n"
+        "  \"profinet\": {\n"
+        "    \"station_name\": \"%s\",\n"
+        "    \"vendor_id\": %d,\n"
+        "    \"device_id\": %d,\n"
+        "    \"product_name\": \"%s\",\n"
+        "    \"enabled\": %s\n"
+        "  },\n"
+        "  \"database\": {\n"
+        "    \"path\": \"%s\"\n"
+        "  },\n"
+        "  \"logging\": {\n"
+        "    \"enabled\": %s,\n"
+        "    \"interval_seconds\": %d,\n"
+        "    \"retention_days\": %d,\n"
+        "    \"remote_enabled\": %s,\n"
+        "    \"remote_url\": \"%s\"\n"
+        "  },\n"
+        "  \"health\": {\n"
+        "    \"enabled\": %s,\n"
+        "    \"http_enabled\": %s,\n"
+        "    \"http_port\": %d,\n"
+        "    \"file_path\": \"%s\",\n"
+        "    \"update_interval_seconds\": %d\n"
+        "  },\n"
+        "  \"led\": {\n"
+        "    \"enabled\": %s,\n"
+        "    \"led_count\": %d,\n"
+        "    \"brightness\": %d,\n"
+        "    \"backend\": \"%s\"\n"
+        "  }\n"
+        "}\n",
+        g_app_config.system.device_name,
+        g_app_config.system.log_level,
+        g_app_config.system.log_file,
+        g_app_config.system.daemon_mode ? "true" : "false",
+        g_app_config.network.interface,
+        g_app_config.network.ip_address,
+        g_app_config.network.netmask,
+        g_app_config.network.gateway,
+        g_app_config.network.dhcp_enabled ? "true" : "false",
+        g_app_config.profinet.station_name,
+        g_app_config.profinet.vendor_id,
+        g_app_config.profinet.device_id,
+        g_app_config.profinet.product_name,
+        g_app_config.profinet.enabled ? "true" : "false",
+        g_app_config.database.path,
+        g_app_config.logging.enabled ? "true" : "false",
+        g_app_config.logging.interval_seconds,
+        g_app_config.logging.retention_days,
+        g_app_config.logging.remote_enabled ? "true" : "false",
+        g_app_config.logging.remote_url,
+        g_app_config.health.enabled ? "true" : "false",
+        g_app_config.health.http_enabled ? "true" : "false",
+        g_app_config.health.http_port,
+        g_app_config.health.file_path,
+        g_app_config.health.update_interval_seconds,
+        g_app_config.led.enabled ? "true" : "false",
+        g_app_config.led.led_count,
+        g_app_config.led.brightness,
+        g_app_config.led.backend);
+}
+
+/* ============================================================================
  * HTTP Server
  * ========================================================================== */
 
@@ -421,10 +513,56 @@ static void handle_http_request(int client_fd) {
         /* Kubernetes-style liveness probe (always true if server is running) */
         snprintf(response_body, sizeof(response_body), "{\"alive\": true}");
         content_type = "application/json";
+#ifdef LED_SUPPORT
+    } else if (strcmp(path, "/led/test") == 0) {
+        /* LED test endpoint for commissioning */
+        extern led_status_manager_t g_led_mgr;
+        if (g_led_mgr.initialized) {
+            led_status_test(&g_led_mgr);
+            snprintf(response_body, sizeof(response_body),
+                    "{\"success\": true, \"message\": \"LED test pattern running\", \"led_count\": %d}",
+                    g_led_mgr.led_count);
+            LOG_INFO("LED test triggered via HTTP endpoint");
+        } else {
+            snprintf(response_body, sizeof(response_body),
+                    "{\"success\": false, \"error\": \"LED manager not initialized\"}");
+            status_code = 503;
+        }
+        content_type = "application/json";
+    } else if (strcmp(path, "/led/status") == 0) {
+        /* LED status endpoint */
+        extern led_status_manager_t g_led_mgr;
+        if (g_led_mgr.initialized) {
+            int pos = snprintf(response_body, sizeof(response_body),
+                    "{\"enabled\": %s, \"led_count\": %d, \"leds\": [",
+                    g_led_mgr.enabled ? "true" : "false",
+                    g_led_mgr.led_count);
+            for (int i = 0; i < g_led_mgr.led_count && i < LED_FUNC_MAX; i++) {
+                if (i > 0) pos += snprintf(response_body + pos, sizeof(response_body) - pos, ",");
+                pos += snprintf(response_body + pos, sizeof(response_body) - pos,
+                        "{\"index\": %d, \"status\": \"%s\"}",
+                        i, led_status_name(g_led_mgr.leds[i].status));
+            }
+            snprintf(response_body + pos, sizeof(response_body) - pos, "]}");
+        } else {
+            snprintf(response_body, sizeof(response_body),
+                    "{\"enabled\": false, \"error\": \"LED manager not initialized\"}");
+        }
+        content_type = "application/json";
+#endif
+    } else if (strcmp(path, "/config") == 0 || strcmp(path, "/config/export") == 0) {
+        /* Configuration export endpoint */
+        config_to_json(response_body, sizeof(response_body));
+        content_type = "application/json";
+        LOG_DEBUG("Config export requested via HTTP");
     } else {
         /* 404 Not Found */
         snprintf(response_body, sizeof(response_body),
-                "{\"error\": \"Not Found\", \"endpoints\": [\"/health\", \"/metrics\", \"/ready\", \"/live\"]}");
+                "{\"error\": \"Not Found\", \"endpoints\": [\"/health\", \"/metrics\", \"/ready\", \"/live\", \"/config\""
+#ifdef LED_SUPPORT
+                ", \"/led/test\", \"/led/status\""
+#endif
+                "]}");
         content_type = "application/json";
         status_code = 404;
     }
