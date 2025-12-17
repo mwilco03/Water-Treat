@@ -245,6 +245,25 @@ When PROFINET connection is lost:
 - Timeout triggers safe state for actuators
 - Configurable per-actuator safe state (ON/OFF)
 
+## Unit Tests (`tests/`)
+
+| File | Description |
+|------|-------------|
+| `test_main.c` | Test runner and result summary |
+| `test_framework.h` | Minimal assertion macros |
+| `test_formula.c` | Formula evaluator tests |
+| `test_calibration.c` | Sensor calibration/scaling tests |
+| `test_alarms.c` | Alarm threshold logic tests |
+| `test_profinet_data.c` | PROFINET data encoding tests |
+| `test_config.c` | Configuration parsing tests |
+
+**Building Tests:**
+```bash
+cmake -DBUILD_TESTS=ON ..
+make run_tests
+./run_tests
+```
+
 ## Dependencies
 
 ### Required

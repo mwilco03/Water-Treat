@@ -185,3 +185,44 @@ target_link_libraries(profinet-monitor
 )
 
 install(TARGETS profinet-monitor DESTINATION bin)
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+option(BUILD_TESTS "Build unit tests" OFF)
+
+if(BUILD_TESTS)
+    enable_testing()
+
+    set(TEST_SOURCES
+        tests/test_main.c
+        tests/test_formula.c
+        tests/test_calibration.c
+        tests/test_alarms.c
+        tests/test_profinet_data.c
+        tests/test_config.c
+    )
+
+    # Tests that need formula evaluator
+    set(TEST_DEPS
+        src/sensors/formula_evaluator.c
+        src/utils/logger.c
+    )
+
+    add_executable(run_tests ${TEST_SOURCES} ${TEST_DEPS})
+
+    target_include_directories(run_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests
+    )
+
+    target_link_libraries(run_tests m)
+
+    if(TINYEXPR_LIBRARY)
+        target_compile_definitions(run_tests PRIVATE HAVE_TINYEXPR=1)
+        target_link_libraries(run_tests ${TINYEXPR_LIBRARY})
+    endif()
+
+    add_test(NAME unit_tests COMMAND run_tests)
+endif()
