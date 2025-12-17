@@ -144,8 +144,9 @@ static void collect_health_snapshot(health_snapshot_t *snapshot) {
     if (g_sensor_mgr.running) {
         int total = 0, failed = 0;
         for (int i = 0; i < g_sensor_mgr.instance_count; i++) {
+            if (!g_sensor_mgr.instances[i]) continue;
             total++;
-            if (!g_sensor_mgr.instances[i].connected) {
+            if (!g_sensor_mgr.instances[i]->connected) {
                 failed++;
             }
         }
@@ -196,7 +197,8 @@ static void collect_health_snapshot(health_snapshot_t *snapshot) {
 
     /* Alarm status */
     if (alarm_manager_is_running()) {
-        int active = alarm_manager_get_active_count();
+        int active = 0;
+        alarm_manager_get_active_count(&active);
         snapshot->active_alarms = active;
         if (active == 0) {
             update_subsystem_health(&snapshot->alarms, "alarms",

@@ -51,14 +51,7 @@ typedef struct {
     float memory_usage_percent;
 } health_snapshot_t;
 
-/* Configuration for health check endpoint */
-typedef struct {
-    bool enabled;
-    bool http_enabled;
-    uint16_t http_port;
-    char file_path[MAX_PATH_LEN];
-    int update_interval_seconds;
-} health_config_t;
+/* health_config_t is defined in config/config.h */
 
 /**
  * @brief Initialize the health check module

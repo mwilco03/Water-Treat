@@ -39,10 +39,10 @@ static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_reload_config = 0;
 
 static database_t g_db;
-static config_manager_t g_config_mgr;
-static app_config_t g_app_config;
 
-/* These are non-static so health_check.c can access them */
+/* Non-static globals - accessed by TUI and health modules */
+config_manager_t g_config_mgr;
+app_config_t g_app_config;
 sensor_manager_t g_sensor_mgr;
 actuator_manager_t g_actuator_mgr;
 

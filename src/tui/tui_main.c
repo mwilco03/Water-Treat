@@ -12,6 +12,7 @@
 #include "pages/page_status.h"
 #include "pages/page_alarms.h"
 #include "pages/page_logging.h"
+#include "pages/page_actuators.h"
 #include "utils/logger.h"
 #include <ncurses.h>
 #include <signal.h>
@@ -29,6 +30,7 @@ typedef enum {
     PAGE_STATUS,
     PAGE_ALARMS,
     PAGE_LOGGING,
+    PAGE_ACTUATORS,
     PAGE_COUNT
 } tui_page_t;
 
@@ -59,13 +61,14 @@ static struct {
 } g_tui = {0};
 
 static page_def_t pages[PAGE_COUNT] = {
-    {"System",   KEY_F(1), page_system_init,  page_system_draw,  page_system_input,  page_system_cleanup},
-    {"Sensors",  KEY_F(2), page_sensors_init, page_sensors_draw, page_sensors_input, page_sensors_cleanup},
-    {"Network",  KEY_F(3), page_network_init, page_network_draw, page_network_input, page_network_cleanup},
-    {"PROFINET", KEY_F(4), page_profinet_init, page_profinet_draw, page_profinet_input, page_profinet_cleanup},
-    {"Status",   KEY_F(5), page_status_init,  page_status_draw,  page_status_input,  page_status_cleanup},
-    {"Alarms",   KEY_F(6), page_alarms_init,  page_alarms_draw,  page_alarms_input,  page_alarms_cleanup},
-    {"Logging",  KEY_F(7), page_logging_init, page_logging_draw, page_logging_input, page_logging_cleanup},
+    {"System",    KEY_F(1), page_system_init,    page_system_draw,    page_system_input,    page_system_cleanup},
+    {"Sensors",   KEY_F(2), page_sensors_init,   page_sensors_draw,   page_sensors_input,   page_sensors_cleanup},
+    {"Network",   KEY_F(3), page_network_init,   page_network_draw,   page_network_input,   page_network_cleanup},
+    {"PROFINET",  KEY_F(4), page_profinet_init,  page_profinet_draw,  page_profinet_input,  page_profinet_cleanup},
+    {"Status",    KEY_F(5), page_status_init,    page_status_draw,    page_status_input,    page_status_cleanup},
+    {"Alarms",    KEY_F(6), page_alarms_init,    page_alarms_draw,    page_alarms_input,    page_alarms_cleanup},
+    {"Logging",   KEY_F(7), page_logging_init,   page_logging_draw,   page_logging_input,   page_logging_cleanup},
+    {"Actuators", KEY_F(8), page_actuators_init, page_actuators_draw, page_actuators_input, page_actuators_cleanup},
 };
 
 /* ============================================================================
@@ -269,6 +272,7 @@ void tui_run(void) {
             case KEY_F(5): switch_page(PAGE_STATUS); break;
             case KEY_F(6): switch_page(PAGE_ALARMS); break;
             case KEY_F(7): switch_page(PAGE_LOGGING); break;
+            case KEY_F(8): switch_page(PAGE_ACTUATORS); break;
             case KEY_F(10):
             case 'q':
             case 'Q':

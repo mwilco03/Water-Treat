@@ -17,7 +17,7 @@
 #ifndef LED_WS2812_H
 #define LED_WS2812_H
 
-#include "utils/common.h"
+#include "common.h"
 
 #ifdef LED_SUPPORT
 

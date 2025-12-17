@@ -341,7 +341,7 @@ void page_wizard_init(void) {
     board_info_t board_info;
     if (board_detect(&board_info) == RESULT_OK && board_info.confidence > 50) {
         g_wizard.board_type = board_info.type;
-        SAFE_STRNCPY(g_wizard.board_name, board_info.model_name, sizeof(g_wizard.board_name));
+        SAFE_STRNCPY(g_wizard.board_name, board_info.model, sizeof(g_wizard.board_name));
         g_wizard.board_detected = true;
     }
 
@@ -526,7 +526,7 @@ bool page_wizard_input(int ch) {
                 board_info_t board_info;
                 if (board_detect(&board_info) == RESULT_OK && board_info.confidence > 50) {
                     g_wizard.board_type = board_info.type;
-                    SAFE_STRNCPY(g_wizard.board_name, board_info.model_name, sizeof(g_wizard.board_name));
+                    SAFE_STRNCPY(g_wizard.board_name, board_info.model, sizeof(g_wizard.board_name));
                     g_wizard.board_detected = true;
                 }
             }

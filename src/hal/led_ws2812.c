@@ -45,11 +45,15 @@ void led_register_rpi_backend(void) {
  * ========================================================================== */
 
 static led_backend_type_t detect_best_backend(void) {
-    board_type_t board = board_get_type();
+    board_info_t board_info;
+    if (board_detect(&board_info) != RESULT_OK) {
+        LOG_DEBUG("Board detection failed - using SPI backend");
+        return LED_BACKEND_SPI;
+    }
 
     /* Use rpi_ws281x on Raspberry Pi if available */
 #ifdef HAVE_RPI_WS281X
-    switch (board) {
+    switch (board_info.type) {
         case BOARD_RASPBERRY_PI_3:
         case BOARD_RASPBERRY_PI_4:
         case BOARD_RASPBERRY_PI_5:
@@ -103,7 +107,7 @@ result_t led_strip_init(led_strip_t *strip, const led_config_t *config) {
     /* Validate LED count */
     if (config->led_count == 0 || config->led_count > LED_MAX_COUNT) {
         LOG_ERROR("Invalid LED count: %d (max %d)", config->led_count, LED_MAX_COUNT);
-        return RESULT_INVALID_ARG;
+        return RESULT_INVALID_PARAM;
     }
 
     /* Determine backend */
@@ -177,15 +181,15 @@ void led_strip_cleanup(led_strip_t *strip) {
  * ========================================================================== */
 
 result_t led_set_pixel(led_strip_t *strip, uint16_t index, led_color_t color) {
-    if (!strip || !strip->initialized) return RESULT_INVALID_STATE;
-    if (index >= strip->led_count) return RESULT_INVALID_ARG;
+    if (!strip || !strip->initialized) return RESULT_NOT_INITIALIZED;
+    if (index >= strip->led_count) return RESULT_INVALID_PARAM;
 
     strip->pixels[index] = color;
     return RESULT_OK;
 }
 
 result_t led_set_all(led_strip_t *strip, led_color_t color) {
-    if (!strip || !strip->initialized) return RESULT_INVALID_STATE;
+    if (!strip || !strip->initialized) return RESULT_NOT_INITIALIZED;
 
     for (uint16_t i = 0; i < strip->led_count; i++) {
         strip->pixels[i] = color;
@@ -198,7 +202,7 @@ result_t led_clear(led_strip_t *strip) {
 }
 
 result_t led_render(led_strip_t *strip) {
-    if (!strip || !strip->initialized) return RESULT_INVALID_STATE;
+    if (!strip || !strip->initialized) return RESULT_NOT_INITIALIZED;
 
     if (!g_backends[strip->backend] || !g_backends[strip->backend]->render) {
         return RESULT_NOT_SUPPORTED;

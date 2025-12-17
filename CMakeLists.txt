@@ -85,6 +85,7 @@ set(SOURCES_TUI
     src/tui/pages/page_alarms.c
     src/tui/pages/page_logging.c
     src/tui/pages/page_wizard.c
+    src/tui/pages/page_actuators.c
 )
 
 # HAL (conditionally included based on features)
@@ -157,6 +158,17 @@ if(ENABLE_LED_SUPPORT)
 else()
     message(STATUS "LED status indicator support disabled (use -DENABLE_LED_SUPPORT=ON to enable)")
 endif()
+
+# Re-assemble SOURCES with HAL (after optional LED files added)
+set(SOURCES
+    ${SOURCES_CORE}
+    ${SOURCES_DRIVERS_NEW}
+    ${SOURCES_DRIVERS_LEGACY}
+    ${SOURCES_SENSORS}
+    ${SOURCES_SUBSYSTEMS}
+    ${SOURCES_TUI}
+    ${SOURCES_HAL}
+)
 
 find_library(PNET_LIBRARY pnet HINTS /usr/local/lib)
 find_path(PNET_INCLUDE_DIR pnet_api.h HINTS /usr/local/include)

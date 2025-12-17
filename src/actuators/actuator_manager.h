@@ -11,17 +11,13 @@
 
 #include "common.h"
 #include "db/database.h"
+#include "db/db_actuators.h"
 
 /* ============================================================================
- * Actuator Types
+ * Actuator State (runtime, not persisted type)
  * ========================================================================== */
 
-typedef enum {
-    ACTUATOR_TYPE_PUMP = 0,
-    ACTUATOR_TYPE_VALVE,
-    ACTUATOR_TYPE_RELAY,
-    ACTUATOR_TYPE_PWM,
-} actuator_type_t;
+/* actuator_type_t is defined in db/db_actuators.h */
 
 typedef enum {
     ACTUATOR_STATE_OFF = 0,

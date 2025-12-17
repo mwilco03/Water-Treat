@@ -11,7 +11,9 @@ typedef enum {
     ACTUATOR_TYPE_RELAY = 0,    // Simple on/off relay
     ACTUATOR_TYPE_PWM,          // PWM output for variable speed
     ACTUATOR_TYPE_LATCHING,     // Latching relay (maintains state)
-    ACTUATOR_TYPE_MOMENTARY     // Momentary contact
+    ACTUATOR_TYPE_MOMENTARY,    // Momentary contact
+    ACTUATOR_TYPE_PUMP,         // Pump (may support PWM speed control)
+    ACTUATOR_TYPE_VALVE         // Valve (solenoid or motorized)
 } actuator_type_t;
 
 /**

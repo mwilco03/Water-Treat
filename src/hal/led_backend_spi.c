@@ -180,7 +180,7 @@ static void spi_cleanup(led_strip_t *strip) {
 static result_t spi_render(led_strip_t *strip) {
 #ifdef __linux__
     spi_backend_t *backend = (spi_backend_t *)strip->backend_data;
-    if (!backend) return RESULT_INVALID_STATE;
+    if (!backend) return RESULT_NOT_INITIALIZED;
 
     /* Encode pixel data */
     encode_pixels(strip, backend);
