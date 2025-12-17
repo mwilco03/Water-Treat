@@ -365,19 +365,105 @@ DS18B20 sensors are factory-calibrated. Verify with:
 
 ---
 
+## Sensor Management Workflow
+
+### Adding a New Sensor
+
+1. **Open Sensor Management (F2)**
+2. **Press 'A' to add new sensor**
+3. **Fill in the form fields:**
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| Name | Descriptive sensor name | "Tank 1 pH" |
+| Slot | PROFINET slot (1-63) | 5 |
+| Subslot | PROFINET subslot (usually 1) | 1 |
+| Type | physical, adc, web_poll, calculated, static | "adc" |
+| Hardware | Sensor hardware type | "ADS1115" |
+| Interface | Communication interface | "i2c" |
+| Address | Device address/ID | "0x48" |
+| Bus | I2C bus number | 1 |
+| Channel | ADC channel (0-3) | 0 |
+| Gain | ADC gain setting | 1 |
+| Ref Voltage | Reference voltage | 3.3 |
+| Unit | Engineering unit | "pH" |
+| Min Value | Minimum expected value | 0.0 |
+| Max Value | Maximum expected value | 14.0 |
+| Poll Rate | Polling interval in ms | 1000 |
+
+4. **Press Tab to reach Save button, then Enter**
+5. **Sensor immediately begins polling** (no restart required)
+
+### Editing an Existing Sensor
+
+1. **Navigate to sensor with ↑↓ keys**
+2. **Press 'E' to edit**
+3. **Modify desired fields**
+4. **Press Tab → Save → Enter**
+5. **Changes take effect immediately**
+
+### Deleting a Sensor
+
+1. **Navigate to sensor with ↑↓ keys**
+2. **Press 'D' to delete**
+3. **Confirm deletion with 'Y'**
+4. **Sensor removed from polling immediately**
+
+### Sensor Types Explained
+
+| Type | Use Case | Configuration |
+|------|----------|---------------|
+| **physical** | DS18B20, DHT22, flow sensors | Interface, address, bus |
+| **adc** | pH, TDS, turbidity via ADC | ADC type, channel, gain, calibration |
+| **web_poll** | Remote HTTP sensors | URL, method, JSON path |
+| **calculated** | Derived values | Formula, input sensors |
+| **static** | Fixed test values | Initial value, writable flag |
+
+### Live Value Monitoring
+
+- **View Sensor Details:** Select sensor, press Enter
+- **Refresh Values:** Press 'R' to reload all sensor values
+- **Status Colors:**
+  - Green: Normal operation
+  - Yellow: Warning threshold exceeded
+  - Red: Error or alarm state
+
+---
+
 ## Status Indicators
 
-### LED Indicators
+### LED Indicators (ISA-101 / IEC 60073 Colors)
 
-| LED | State | Meaning |
-|-----|-------|---------|
-| Green | Solid | System OK, PROFINET connected |
-| Green | Slow blink | System OK, PROFINET disconnected |
-| Green | Fast blink | System starting up |
-| Red | Off | No errors |
-| Red | Solid | Critical error - check logs |
-| Red | Blinking | Warning - sensor fault |
-| Both | Alternating | Firmware update in progress |
+If WS2812B LED strip is installed and configured:
+
+| Color | Animation | Meaning |
+|-------|-----------|---------|
+| **GREEN** | Solid | Normal operation, system OK |
+| **YELLOW** | Slow blink (1 Hz) | Warning condition |
+| **RED** | Fast blink (4 Hz) | Alarm active |
+| **RED** | Solid | Fault condition |
+| **BLUE** | Solid | Manual mode active |
+| **CYAN** | Fast blink | Communication/data exchange active |
+| **MAGENTA** | Pulsing | Calibration in progress |
+| **WHITE** | Pulsing | Initializing/standby |
+| **OFF** | - | LED disabled or not applicable |
+
+**LED Assignment (8-LED default):**
+- LED 0: System status
+- LED 1: PROFINET connection status
+- LED 2-5: Sensor status (slots 1-4)
+- LED 6-7: Actuator status
+
+**Configuration (`/etc/profinet-monitor/profinet-monitor.conf`):**
+```ini
+[led]
+enabled = true
+led_count = 8
+brightness = 64
+backend = auto    ; auto, spi, rpi_ws281x
+spi_device = /dev/spidev0.0
+gpio_pin = 18     ; For rpi_ws281x on Pi
+```
 
 ### PROFINET Connection States
 

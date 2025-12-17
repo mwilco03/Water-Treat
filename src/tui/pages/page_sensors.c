@@ -5,6 +5,7 @@
 
 #include "page_sensors.h"
 #include "../tui_common.h"
+#include "../dialogs/dialog_sensor.h"
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "utils/logger.h"
@@ -147,95 +148,107 @@ static void draw_help(WINDOW *win) {
     wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
 }
 
-static void show_sensor_dialog(int type) {
+static void show_view_dialog(void) {
     database_t *db = tui_get_database();
-    if (!db) return;
-    
+    if (!db || g_page.selected >= g_page.sensor_count) return;
+
+    sensor_item_t *s = &g_page.sensors[g_page.selected];
+
     WINDOW *dialog = newwin(20, 60, 4, 10);
     box(dialog, 0, 0);
-    
-    const char *title = type == 1 ? " Add Sensor " : type == 2 ? " Edit Sensor " : " Sensor Details ";
+
     wattron(dialog, A_BOLD);
-    mvwprintw(dialog, 0, (60 - strlen(title)) / 2, "%s", title);
+    mvwprintw(dialog, 0, 20, " Sensor Details ");
     wattroff(dialog, A_BOLD);
-    
-    if (type == 0 && g_page.selected < g_page.sensor_count) {
-        // View details
-        sensor_item_t *s = &g_page.sensors[g_page.selected];
-        
-        int row = 2;
-        mvwprintw(dialog, row++, 2, "Slot:     %d", s->slot);
-        mvwprintw(dialog, row++, 2, "Name:     %s", s->name);
-        mvwprintw(dialog, row++, 2, "Type:     %s", s->type);
-        mvwprintw(dialog, row++, 2, "Value:    %.4f", s->value);
-        mvwprintw(dialog, row++, 2, "Status:   %s", s->status);
-        
-        row++;
-        
-        // Get sensor-specific details
-        db_physical_sensor_t phys;
-        if (db_physical_sensor_get(db, s->id, &phys) == RESULT_OK) {
-            mvwprintw(dialog, row++, 2, "Interface: %s", phys.interface);
-            mvwprintw(dialog, row++, 2, "Address:   %s", phys.address);
-            mvwprintw(dialog, row++, 2, "Bus:       %d", phys.bus);
-            mvwprintw(dialog, row++, 2, "Channel:   %d", phys.channel);
-            mvwprintw(dialog, row++, 2, "Poll Rate: %d ms", phys.poll_rate_ms);
-        }
-        
-        db_adc_sensor_t adc;
-        if (db_adc_sensor_get(db, s->id, &adc) == RESULT_OK) {
-            mvwprintw(dialog, row++, 2, "ADC Type:  %s", adc.adc_type);
-            mvwprintw(dialog, row++, 2, "Channel:   %d", adc.channel);
-            mvwprintw(dialog, row++, 2, "Gain:      %d", adc.gain);
-            mvwprintw(dialog, row++, 2, "Range:     %.2f - %.2f %s", adc.eng_min, adc.eng_max, adc.unit);
-        }
-        
-        row++;
-        wattron(dialog, COLOR_PAIR(TUI_COLOR_NORMAL));
-        mvwprintw(dialog, row, 2, "Press any key to close");
-        wattroff(dialog, COLOR_PAIR(TUI_COLOR_NORMAL));
-    } else if (type == 1) {
-        // Add sensor form
-        mvwprintw(dialog, 2, 2, "Slot:      [    ]");
-        mvwprintw(dialog, 3, 2, "Name:      [                    ]");
-        mvwprintw(dialog, 4, 2, "Type:      [physical/adc/web/calc]");
-        
-        mvwprintw(dialog, 18, 2, "Press Esc to cancel, Enter to save");
-        
-        // Simple implementation - could be expanded with full form editing
-        tui_set_status("Add sensor dialog - implementation pending");
-    } else if (type == 3 && g_page.selected < g_page.sensor_count) {
-        // Delete confirmation
-        sensor_item_t *s = &g_page.sensors[g_page.selected];
-        
-        wattron(dialog, COLOR_PAIR(TUI_COLOR_WARNING));
-        mvwprintw(dialog, 4, 4, "Delete sensor '%s' (slot %d)?", s->name, s->slot);
-        wattroff(dialog, COLOR_PAIR(TUI_COLOR_WARNING));
-        
-        mvwprintw(dialog, 8, 4, "Press 'y' to confirm, any other key to cancel");
-        
-        wrefresh(dialog);
-        
-        int ch = wgetch(dialog);
-        if (ch == 'y' || ch == 'Y') {
-            if (db_module_delete(db, s->id) == RESULT_OK) {
-                tui_set_status("Deleted sensor: %s", s->name);
-                load_sensors();
-                if (g_page.selected >= g_page.sensor_count) {
-                    g_page.selected = g_page.sensor_count - 1;
-                }
-            } else {
-                tui_set_status("Failed to delete sensor");
-            }
-        }
-        
-        delwin(dialog);
-        return;
+
+    int row = 2;
+    mvwprintw(dialog, row++, 2, "Slot:     %d", s->slot);
+    mvwprintw(dialog, row++, 2, "Name:     %s", s->name);
+    mvwprintw(dialog, row++, 2, "Type:     %s", s->type);
+    mvwprintw(dialog, row++, 2, "Value:    %.4f", s->value);
+    mvwprintw(dialog, row++, 2, "Status:   %s", s->status);
+
+    row++;
+
+    /* Get sensor-specific details */
+    db_physical_sensor_t phys;
+    if (db_physical_sensor_get(db, s->id, &phys) == RESULT_OK) {
+        mvwprintw(dialog, row++, 2, "Interface: %s", phys.interface);
+        mvwprintw(dialog, row++, 2, "Address:   %s", phys.address);
+        mvwprintw(dialog, row++, 2, "Bus:       %d", phys.bus);
+        mvwprintw(dialog, row++, 2, "Channel:   %d", phys.channel);
+        mvwprintw(dialog, row++, 2, "Poll Rate: %d ms", phys.poll_rate_ms);
     }
-    
+
+    db_adc_sensor_t adc;
+    if (db_adc_sensor_get(db, s->id, &adc) == RESULT_OK) {
+        mvwprintw(dialog, row++, 2, "ADC Type:  %s", adc.adc_type);
+        mvwprintw(dialog, row++, 2, "Channel:   %d", adc.channel);
+        mvwprintw(dialog, row++, 2, "Gain:      %d", adc.gain);
+        mvwprintw(dialog, row++, 2, "Range:     %.2f - %.2f %s", adc.eng_min, adc.eng_max, adc.unit);
+    }
+
+    row++;
+    wattron(dialog, COLOR_PAIR(TUI_COLOR_NORMAL));
+    mvwprintw(dialog, row, 2, "Press any key to close");
+    wattroff(dialog, COLOR_PAIR(TUI_COLOR_NORMAL));
+
     wrefresh(dialog);
     wgetch(dialog);
     delwin(dialog);
+}
+
+static void handle_add_sensor(void) {
+    int sensor_id = dialog_sensor_add();
+    if (sensor_id > 0) {
+        /* Sensor was created - reload and notify */
+        load_sensors();
+        tui_notify_sensor_changed(-1);  /* -1 = all sensors changed */
+        tui_set_status("Added sensor (ID %d)", sensor_id);
+
+        /* Select the newly added sensor */
+        for (int i = 0; i < g_page.sensor_count; i++) {
+            if (g_page.sensors[i].id == sensor_id) {
+                g_page.selected = i;
+                break;
+            }
+        }
+    }
+}
+
+static void handle_edit_sensor(void) {
+    if (g_page.selected >= g_page.sensor_count) return;
+
+    sensor_item_t *s = &g_page.sensors[g_page.selected];
+    int slot = s->slot;
+
+    if (dialog_sensor_edit(s->id)) {
+        /* Sensor was updated - reload and notify */
+        load_sensors();
+        tui_notify_sensor_changed(slot);
+        tui_set_status("Updated sensor: %s", s->name);
+    }
+}
+
+static void handle_delete_sensor(void) {
+    if (g_page.selected >= g_page.sensor_count) return;
+
+    sensor_item_t *s = &g_page.sensors[g_page.selected];
+    int slot = s->slot;
+    char name[64];
+    SAFE_STRNCPY(name, s->name, sizeof(name));
+
+    if (dialog_sensor_delete(s->id)) {
+        /* Sensor was deleted - reload and notify */
+        load_sensors();
+        tui_notify_sensor_changed(slot);
+        tui_set_status("Deleted sensor: %s", name);
+
+        /* Adjust selection if needed */
+        if (g_page.selected >= g_page.sensor_count && g_page.sensor_count > 0) {
+            g_page.selected = g_page.sensor_count - 1;
+        }
+    }
 }
 
 void page_sensors_init(WINDOW *win) {
@@ -286,26 +299,26 @@ void page_sensors_input(WINDOW *win, int ch) {
         case '\n':
         case KEY_ENTER:
             if (g_page.sensor_count > 0) {
-                show_sensor_dialog(0);  // View
+                show_view_dialog();
             }
             break;
-            
+
         case 'a':
         case 'A':
-            show_sensor_dialog(1);  // Add
+            handle_add_sensor();
             break;
-            
+
         case 'e':
         case 'E':
             if (g_page.sensor_count > 0) {
-                show_sensor_dialog(2);  // Edit
+                handle_edit_sensor();
             }
             break;
-            
+
         case 'd':
         case 'D':
             if (g_page.sensor_count > 0) {
-                show_sensor_dialog(3);  // Delete
+                handle_delete_sensor();
             }
             break;
             

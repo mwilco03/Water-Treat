@@ -685,6 +685,14 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        // Give TUI access to sensor manager for live updates
+        tui_set_sensor_manager(&g_sensor_mgr);
+#ifdef LED_SUPPORT
+        if (g_led_mgr.initialized) {
+            tui_set_led_manager(&g_led_mgr);
+        }
+#endif
+
         // Check for first run and offer setup wizard
         if (config_is_first_run(&g_app_config)) {
             LOG_INFO("First-run detected - launching setup wizard");

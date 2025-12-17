@@ -4,6 +4,10 @@
 #include "common.h"
 #include "db/database.h"
 #include "config/config.h"
+#include "sensors/sensor_manager.h"
+#ifdef LED_SUPPORT
+#include "hal/led_status.h"
+#endif
 #include <ncurses.h>
 #include <stdarg.h>
 
@@ -19,11 +23,33 @@ typedef enum {
     TUI_COLOR_INPUT
 } tui_color_t;
 
-// Context management
+// Context management - extended with sensor and LED manager access
 void tui_set_context(database_t *db, config_manager_t *config, app_config_t *app_config);
+void tui_set_sensor_manager(sensor_manager_t *sensor_mgr);
+#ifdef LED_SUPPORT
+void tui_set_led_manager(led_status_manager_t *led_mgr);
+led_status_manager_t* tui_get_led_manager(void);
+#endif
 database_t* tui_get_database(void);
 config_manager_t* tui_get_config_manager(void);
 app_config_t* tui_get_app_config(void);
+sensor_manager_t* tui_get_sensor_manager(void);
+
+/**
+ * @brief Trigger sensor manager to reload sensors from database
+ *
+ * Call this after adding, editing, or deleting sensors in the TUI
+ * to ensure the sensor manager picks up the changes immediately.
+ */
+void tui_reload_sensors(void);
+
+/**
+ * @brief Notify that a sensor configuration changed
+ * @param sensor_slot Slot number of affected sensor (-1 for all)
+ *
+ * Updates LED status and triggers any necessary refreshes.
+ */
+void tui_notify_sensor_changed(int sensor_slot);
 
 // Drawing utilities
 void tui_draw_box(WINDOW *win, int y, int x, int height, int width, const char *title);

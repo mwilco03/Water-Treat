@@ -14,6 +14,10 @@ static struct {
     database_t *db;
     config_manager_t *config;
     app_config_t *app_config;
+    sensor_manager_t *sensor_mgr;
+#ifdef LED_SUPPORT
+    led_status_manager_t *led_mgr;
+#endif
 } g_ctx = {0};
 
 /* ============================================================================
@@ -26,6 +30,20 @@ void tui_set_context(database_t *db, config_manager_t *config, app_config_t *app
     g_ctx.app_config = app_config;
 }
 
+void tui_set_sensor_manager(sensor_manager_t *sensor_mgr) {
+    g_ctx.sensor_mgr = sensor_mgr;
+}
+
+#ifdef LED_SUPPORT
+void tui_set_led_manager(led_status_manager_t *led_mgr) {
+    g_ctx.led_mgr = led_mgr;
+}
+
+led_status_manager_t* tui_get_led_manager(void) {
+    return g_ctx.led_mgr;
+}
+#endif
+
 database_t* tui_get_database(void) {
     return g_ctx.db;
 }
@@ -36,6 +54,35 @@ config_manager_t* tui_get_config_manager(void) {
 
 app_config_t* tui_get_app_config(void) {
     return g_ctx.app_config;
+}
+
+sensor_manager_t* tui_get_sensor_manager(void) {
+    return g_ctx.sensor_mgr;
+}
+
+void tui_reload_sensors(void) {
+    if (g_ctx.sensor_mgr) {
+        LOG_INFO("TUI triggered sensor reload");
+        sensor_manager_reload_sensors(g_ctx.sensor_mgr);
+    }
+}
+
+void tui_notify_sensor_changed(int sensor_slot) {
+    /* Reload sensors from database */
+    tui_reload_sensors();
+
+#ifdef LED_SUPPORT
+    /* Update LED status for sensor changes */
+    if (g_ctx.led_mgr && g_ctx.led_mgr->initialized) {
+        if (sensor_slot >= 0 && sensor_slot < 4) {
+            /* For specific sensor, update that LED */
+            led_set_sensor_status(g_ctx.led_mgr, sensor_slot, false, false, false);
+        }
+        led_status_update(g_ctx.led_mgr);
+    }
+#else
+    UNUSED(sensor_slot);
+#endif
 }
 
 /* ============================================================================
