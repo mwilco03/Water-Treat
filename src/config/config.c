@@ -53,6 +53,10 @@ void config_get_defaults(app_config_t *c) {
     c->profinet.vendor_id=0x0493; c->profinet.device_id=0x0001; c->profinet.enabled=true;
     SAFE_STRNCPY(c->database.path,"/var/lib/profinet-monitor/data.db",sizeof(c->database.path)); c->database.create_if_missing=true;
     c->logging.enabled=true; c->logging.interval_seconds=60; c->logging.retention_days=30;
+    /* Health check defaults */
+    c->health.enabled=true; c->health.http_enabled=true; c->health.http_port=8080;
+    SAFE_STRNCPY(c->health.file_path,"/var/lib/profinet-monitor/health.prom",sizeof(c->health.file_path));
+    c->health.update_interval_seconds=10;
 }
 
 result_t config_load_app_config(config_manager_t *m, app_config_t *c) {
@@ -69,5 +73,11 @@ result_t config_load_app_config(config_manager_t *m, app_config_t *c) {
     if(config_get_string(m,"database","path",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->database.path,v,sizeof(c->database.path));
     if(config_get_bool(m,"logging","enabled",&bv)==RESULT_OK) c->logging.enabled=bv;
     if(config_get_int(m,"logging","interval_seconds",&iv)==RESULT_OK) c->logging.interval_seconds=iv;
+    /* Health check configuration */
+    if(config_get_bool(m,"health","enabled",&bv)==RESULT_OK) c->health.enabled=bv;
+    if(config_get_bool(m,"health","http_enabled",&bv)==RESULT_OK) c->health.http_enabled=bv;
+    if(config_get_int(m,"health","http_port",&iv)==RESULT_OK) c->health.http_port=(uint16_t)iv;
+    if(config_get_string(m,"health","file_path",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->health.file_path,v,sizeof(c->health.file_path));
+    if(config_get_int(m,"health","update_interval_seconds",&iv)==RESULT_OK) c->health.update_interval_seconds=iv;
     return RESULT_OK;
 }

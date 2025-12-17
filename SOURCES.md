@@ -148,6 +148,25 @@ Alarm priorities:
 | `data_logger.c` | Local SQLite + remote HTTP with store & forward |
 
 Store & forward behavior:
+
+### Health Check (`src/health/`)
+
+| File | Description |
+|------|-------------|
+| `health_check.c` | System health monitoring with HTTP API and file output |
+
+**HTTP Endpoints:**
+- `GET /health` - JSON health status (returns 503 if critical)
+- `GET /metrics` - Prometheus-compatible metrics
+- `GET /ready` - Kubernetes readiness probe
+- `GET /live` - Kubernetes liveness probe
+
+**File Output:**
+- Writes Prometheus metrics format to configured path
+- Atomic writes via temp file + rename
+- Compatible with Prometheus node_exporter textfile collector
+
+Store & forward behavior:
 1. Log entries written to local SQLite immediately
 2. Background thread attempts remote HTTP POST
 3. On network failure, entries queued locally

@@ -66,6 +66,7 @@ set(SOURCES_SUBSYSTEMS
     src/actuators/actuator_manager.c
     src/profinet/profinet_manager.c
     src/profinet/profinet_callbacks.c
+    src/health/health_check.c
 )
 
 # TUI

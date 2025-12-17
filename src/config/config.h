@@ -13,7 +13,8 @@ typedef struct { char interface[32]; char ip_address[16]; char netmask[16]; char
 typedef struct { char station_name[MAX_NAME_LEN]; uint16_t vendor_id; uint16_t device_id; char product_name[64]; uint32_t min_device_interval; bool enabled; } profinet_config_t;
 typedef struct { char path[MAX_PATH_LEN]; bool create_if_missing; int busy_timeout_ms; } database_config_t;
 typedef struct { bool enabled; int interval_seconds; int retention_days; int destination; char remote_url[MAX_PATH_LEN]; bool remote_enabled; } logging_config_t;
-typedef struct { system_config_t system; network_config_t network; profinet_config_t profinet; database_config_t database; logging_config_t logging; } app_config_t;
+typedef struct { bool enabled; bool http_enabled; uint16_t http_port; char file_path[MAX_PATH_LEN]; int update_interval_seconds; } health_config_t;
+typedef struct { system_config_t system; network_config_t network; profinet_config_t profinet; database_config_t database; logging_config_t logging; health_config_t health; } app_config_t;
 
 result_t config_manager_init(config_manager_t *mgr);
 void config_manager_destroy(config_manager_t *mgr);

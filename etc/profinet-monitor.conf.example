@@ -35,5 +35,12 @@ remote_enabled = false
 # remote_url = https://your-server.com/api/logs
 # remote_api_key = your-api-key
 
+[health]
+enabled = true
+http_enabled = true
+http_port = 8080
+file_path = /var/lib/profinet-monitor/health.prom
+update_interval_seconds = 10
+
 # Note: Modbus functionality is handled by the PROFINET Controller (SBC #1)
 # This RTU communicates via clear-text PROFINET for network analysis

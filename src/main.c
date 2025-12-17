@@ -16,6 +16,7 @@
 #include "alarms/alarm_manager.h"
 #include "logging/data_logger.h"
 #include "profinet/profinet_manager.h"
+#include "health/health_check.h"
 #include "tui/tui_main.h"
 
 #include <signal.h>
@@ -37,8 +38,10 @@ static volatile sig_atomic_t g_reload_config = 0;
 static database_t g_db;
 static config_manager_t g_config_mgr;
 static app_config_t g_app_config;
-static sensor_manager_t g_sensor_mgr;
-static actuator_manager_t g_actuator_mgr;
+
+/* These are non-static so health_check.c can access them */
+sensor_manager_t g_sensor_mgr;
+actuator_manager_t g_actuator_mgr;
 
 /* ============================================================================
  * Signal Handlers
@@ -286,6 +289,37 @@ static result_t init_data_logger(void) {
     return RESULT_OK;
 }
 
+static result_t init_health_check(void) {
+    if (!g_app_config.health.enabled) {
+        LOG_INFO("Health check is disabled in configuration");
+        return RESULT_OK;
+    }
+
+    health_config_t health_config = {
+        .enabled = g_app_config.health.enabled,
+        .http_enabled = g_app_config.health.http_enabled,
+        .http_port = g_app_config.health.http_port,
+        .update_interval_seconds = g_app_config.health.update_interval_seconds
+    };
+    SAFE_STRNCPY(health_config.file_path, g_app_config.health.file_path, sizeof(health_config.file_path));
+
+    result_t r = health_check_init(&g_db, &health_config);
+    if (r != RESULT_OK) {
+        LOG_ERROR("Failed to initialize health check");
+        return r;
+    }
+
+    r = health_check_start();
+    if (r != RESULT_OK) {
+        LOG_ERROR("Failed to start health check");
+        return r;
+    }
+
+    LOG_INFO("Health check started (port=%d, file=%s)",
+             g_app_config.health.http_port, g_app_config.health.file_path);
+    return RESULT_OK;
+}
+
 /* ============================================================================
  * Shutdown
  * ========================================================================== */
@@ -294,6 +328,12 @@ static void shutdown_subsystems(void) {
     LOG_INFO("Shutting down subsystems...");
 
     // Stop in reverse order of initialization
+    if (health_check_is_running()) {
+        health_check_stop();
+        health_check_shutdown();
+        LOG_INFO("Health check stopped");
+    }
+
     if (data_logger_is_running()) {
         data_logger_stop();
         data_logger_shutdown();
@@ -470,6 +510,11 @@ int main(int argc, char *argv[]) {
     // Initialize data logger
     if (init_data_logger() != RESULT_OK) {
         LOG_WARNING("Data logger initialization failed, continuing without it");
+    }
+
+    // Initialize health check endpoint
+    if (init_health_check() != RESULT_OK) {
+        LOG_WARNING("Health check initialization failed, continuing without it");
     }
 
     LOG_INFO("All subsystems initialized successfully");
