@@ -1,7 +1,12 @@
 /**
  * @file driver_turbidity.c
  * @brief Turbidity Sensor driver (via ADC)
+ *
+ * @deprecated This driver is deprecated. Use analog_sensor.c with
+ *             SENSOR_CHAN_TURBIDITY and CAL_PRESET_TURBIDITY_GENERIC instead.
+ *             Migration: src/sensors/analog/analog_sensor.c
  */
+#warning "driver_turbidity.c is deprecated - use analog_sensor.c instead"
 
 #include "common.h"
 #include "utils/logger.h"

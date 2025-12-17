@@ -46,15 +46,42 @@ result_t config_get_bool(config_manager_t *m, const char *s, const char *k, bool
 
 void config_get_defaults(app_config_t *c) {
     memset(c,0,sizeof(*c));
+
+    /* System defaults */
     SAFE_STRNCPY(c->system.device_name,"profinet-sensor-hub",sizeof(c->system.device_name));
     SAFE_STRNCPY(c->system.log_level,"info",sizeof(c->system.log_level));
-    SAFE_STRNCPY(c->network.interface,"eth0",sizeof(c->network.interface)); c->network.dhcp_enabled=true;
+    SAFE_STRNCPY(c->system.log_file,"/var/log/profinet-monitor/monitor.log",sizeof(c->system.log_file));
+    c->system.daemon_mode=false;
+
+    /* Network defaults */
+    SAFE_STRNCPY(c->network.interface,"eth0",sizeof(c->network.interface));
+    c->network.dhcp_enabled=true;
+    /* ip_address, netmask, gateway left empty (DHCP) */
+
+    /* PROFINET defaults */
     SAFE_STRNCPY(c->profinet.station_name,"rpi-sensor-hub",sizeof(c->profinet.station_name));
-    c->profinet.vendor_id=0x0493; c->profinet.device_id=0x0001; c->profinet.enabled=true;
-    SAFE_STRNCPY(c->database.path,"/var/lib/profinet-monitor/data.db",sizeof(c->database.path)); c->database.create_if_missing=true;
-    c->logging.enabled=true; c->logging.interval_seconds=60; c->logging.retention_days=30;
+    SAFE_STRNCPY(c->profinet.product_name,"Water Treatment RTU",sizeof(c->profinet.product_name));
+    c->profinet.vendor_id=0x0493;
+    c->profinet.device_id=0x0001;
+    c->profinet.min_device_interval=32;
+    c->profinet.enabled=true;
+
+    /* Database defaults */
+    SAFE_STRNCPY(c->database.path,"/var/lib/profinet-monitor/data.db",sizeof(c->database.path));
+    c->database.create_if_missing=true;
+    c->database.busy_timeout_ms=5000;
+
+    /* Logging defaults */
+    c->logging.enabled=true;
+    c->logging.interval_seconds=60;
+    c->logging.retention_days=30;
+    c->logging.destination=1; /* Local */
+    c->logging.remote_enabled=false;
+
     /* Health check defaults */
-    c->health.enabled=true; c->health.http_enabled=true; c->health.http_port=8080;
+    c->health.enabled=true;
+    c->health.http_enabled=true;
+    c->health.http_port=8080;
     SAFE_STRNCPY(c->health.file_path,"/var/lib/profinet-monitor/health.prom",sizeof(c->health.file_path));
     c->health.update_interval_seconds=10;
 }
@@ -62,22 +89,47 @@ void config_get_defaults(app_config_t *c) {
 result_t config_load_app_config(config_manager_t *m, app_config_t *c) {
     CHECK_NULL(m); CHECK_NULL(c); config_get_defaults(c);
     char v[MAX_CONFIG_VALUE_LEN]; int iv; bool bv;
+
+    /* System configuration */
     if(config_get_string(m,"system","device_name",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->system.device_name,v,sizeof(c->system.device_name));
     if(config_get_string(m,"system","log_level",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->system.log_level,v,sizeof(c->system.log_level));
+    if(config_get_string(m,"system","log_file",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->system.log_file,v,sizeof(c->system.log_file));
+    if(config_get_bool(m,"system","daemon_mode",&bv)==RESULT_OK) c->system.daemon_mode=bv;
+
+    /* Network configuration */
     if(config_get_string(m,"network","interface",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.interface,v,sizeof(c->network.interface));
     if(config_get_bool(m,"network","dhcp_enabled",&bv)==RESULT_OK) c->network.dhcp_enabled=bv;
+    if(config_get_string(m,"network","ip_address",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.ip_address,v,sizeof(c->network.ip_address));
+    if(config_get_string(m,"network","netmask",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.netmask,v,sizeof(c->network.netmask));
+    if(config_get_string(m,"network","gateway",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.gateway,v,sizeof(c->network.gateway));
+
+    /* PROFINET configuration */
     if(config_get_string(m,"profinet","station_name",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->profinet.station_name,v,sizeof(c->profinet.station_name));
     if(config_get_int(m,"profinet","vendor_id",&iv)==RESULT_OK) c->profinet.vendor_id=(uint16_t)iv;
     if(config_get_int(m,"profinet","device_id",&iv)==RESULT_OK) c->profinet.device_id=(uint16_t)iv;
+    if(config_get_string(m,"profinet","product_name",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->profinet.product_name,v,sizeof(c->profinet.product_name));
+    if(config_get_int(m,"profinet","min_device_interval",&iv)==RESULT_OK) c->profinet.min_device_interval=(uint32_t)iv;
     if(config_get_bool(m,"profinet","enabled",&bv)==RESULT_OK) c->profinet.enabled=bv;
+
+    /* Database configuration */
     if(config_get_string(m,"database","path",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->database.path,v,sizeof(c->database.path));
+    if(config_get_bool(m,"database","create_if_missing",&bv)==RESULT_OK) c->database.create_if_missing=bv;
+    if(config_get_int(m,"database","busy_timeout_ms",&iv)==RESULT_OK) c->database.busy_timeout_ms=iv;
+
+    /* Logging configuration */
     if(config_get_bool(m,"logging","enabled",&bv)==RESULT_OK) c->logging.enabled=bv;
     if(config_get_int(m,"logging","interval_seconds",&iv)==RESULT_OK) c->logging.interval_seconds=iv;
+    if(config_get_int(m,"logging","retention_days",&iv)==RESULT_OK) c->logging.retention_days=iv;
+    if(config_get_int(m,"logging","destination",&iv)==RESULT_OK) c->logging.destination=iv;
+    if(config_get_string(m,"logging","remote_url",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->logging.remote_url,v,sizeof(c->logging.remote_url));
+    if(config_get_bool(m,"logging","remote_enabled",&bv)==RESULT_OK) c->logging.remote_enabled=bv;
+
     /* Health check configuration */
     if(config_get_bool(m,"health","enabled",&bv)==RESULT_OK) c->health.enabled=bv;
     if(config_get_bool(m,"health","http_enabled",&bv)==RESULT_OK) c->health.http_enabled=bv;
     if(config_get_int(m,"health","http_port",&iv)==RESULT_OK) c->health.http_port=(uint16_t)iv;
     if(config_get_string(m,"health","file_path",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->health.file_path,v,sizeof(c->health.file_path));
     if(config_get_int(m,"health","update_interval_seconds",&iv)==RESULT_OK) c->health.update_interval_seconds=iv;
+
     return RESULT_OK;
 }

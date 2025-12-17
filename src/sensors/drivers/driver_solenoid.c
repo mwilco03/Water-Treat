@@ -1,3 +1,13 @@
+/**
+ * @file driver_solenoid.c
+ * @brief Solenoid valve driver
+ *
+ * @deprecated This driver is deprecated. Use relay_output.c with
+ *             OUTPUT_TYPE_RELAY instead.
+ *             Migration: src/drivers/digital/relay_output.c
+ */
+#warning "driver_solenoid.c is deprecated - use relay_output.c instead"
+
 #include "driver_solenoid.h"
 #include "utils/logger.h"
 
