@@ -16,6 +16,7 @@ set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(SOURCES_CORE
     src/main.c
     src/config/config.c
+    src/config/config_validate.c
     src/db/database.c
     src/db/db_modules.c
     src/db/db_events.c
@@ -83,6 +84,7 @@ set(SOURCES_TUI
     src/tui/pages/page_status.c
     src/tui/pages/page_alarms.c
     src/tui/pages/page_logging.c
+    src/tui/pages/page_wizard.c
 )
 
 set(SOURCES

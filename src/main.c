@@ -9,6 +9,7 @@
 #include "common.h"
 #include "utils/logger.h"
 #include "config/config.h"
+#include "config/config_validate.h"
 #include "db/database.h"
 #include "db/db_events.h"
 #include "sensors/sensor_manager.h"
@@ -18,6 +19,7 @@
 #include "profinet/profinet_manager.h"
 #include "health/health_check.h"
 #include "tui/tui_main.h"
+#include "tui/pages/page_wizard.h"
 
 #include <signal.h>
 #include <unistd.h>
@@ -103,6 +105,15 @@ static result_t load_configuration(const char *config_path) {
         }
     } else {
         LOG_INFO("No configuration file found, using defaults");
+    }
+
+    /* Validate configuration and log warnings/errors */
+    config_validation_result_t validation;
+    if (config_validate(&g_app_config, &validation) != RESULT_OK) {
+        LOG_ERROR("Configuration validation failed with %d error(s)", validation.error_count);
+        config_validation_log(&validation);
+    } else if (validation.warning_count > 0) {
+        config_validation_log(&validation);
     }
 
     return RESULT_OK;
@@ -586,6 +597,19 @@ int main(int argc, char *argv[]) {
             shutdown_subsystems();
             logger_shutdown();
             return 1;
+        }
+
+        // Check for first run and offer setup wizard
+        if (config_is_first_run(&g_app_config)) {
+            LOG_INFO("First-run detected - launching setup wizard");
+            page_wizard_init();
+            if (wizard_run() == RESULT_OK) {
+                LOG_INFO("Setup wizard completed successfully");
+                // Reload config after wizard
+                load_configuration(config_path);
+            } else {
+                LOG_INFO("Setup wizard skipped or cancelled");
+            }
         }
 
         LOG_INFO("Starting TUI interface");

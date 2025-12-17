@@ -264,6 +264,32 @@ make run_tests
 ./run_tests
 ```
 
+## Configuration (`src/config/`)
+
+| File | Description |
+|------|-------------|
+| `config.c` | INI file parsing and config management |
+| `config_validate.c` | Configuration validation and remote loading |
+
+**Remote Configuration:**
+- `config_load_from_url()` - Fetch config from HTTP URL (requires libcurl)
+- `config_bootstrap()` - Load from URL, local file, or defaults (in priority order)
+
+**Validation Features:**
+- Warns on default station/device names
+- Validates port numbers and intervals
+- Detects first-run state for setup wizard
+
+## Setup Wizard (`src/tui/pages/page_wizard.c`)
+
+First-run setup wizard with guided configuration:
+1. Hardware detection (auto-detect SBC type)
+2. Network configuration (DHCP or static IP)
+3. PROFINET setup (station name, device name)
+4. Sensor overview (pointer to F2 page)
+5. Actuator overview (pointer to F1 page)
+6. Confirmation and save
+
 ## Dependencies
 
 ### Required
@@ -273,7 +299,7 @@ make run_tests
 
 ### Optional
 - `p-net` - PROFINET I/O Device stack
-- `libcurl` - Remote HTTP logging
+- `libcurl` - Remote HTTP logging and remote config
 - `libcjson` - JSON parsing
 - `libgpiod` - Modern GPIO interface
 - `libsystemd` - Service integration
