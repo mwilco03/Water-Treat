@@ -178,6 +178,77 @@ static const pin_config_t LUCKFOX_LYRA_PINS = {
     .gpio_chip = "gpiochip0",
 };
 
+/*
+ * Libre Computer Le Potato (AML-S905X-CC)
+ *
+ * Amlogic S905X GPIO uses Linux GPIO numbers.
+ * The 40-pin header is RPi-layout compatible but uses different GPIO numbers.
+ *
+ * Le Potato GPIO mapping (physical pin -> Linux GPIO):
+ * - Pin 3 (I2C SDA) = GPIODV_24 = GPIO 473
+ * - Pin 5 (I2C SCL) = GPIODV_25 = GPIO 474
+ * - Pin 7 (1-Wire)  = GPIOH_4 = GPIO 430
+ * - Pin 11 = GPIOH_5 = GPIO 431
+ * - Pin 13 = GPIOH_6 = GPIO 432
+ * - Pin 15 = GPIOH_7 = GPIO 433
+ * - Pin 16 = GPIOH_8 = GPIO 434
+ *
+ * Reference: https://libre.computer/products/aml-s905x-cc/
+ */
+static const pin_config_t LIBRE_POTATO_PINS = {
+    .i2c_bus_primary = 1,       /* /dev/i2c-1 (AO I2C) */
+    .i2c_bus_secondary = 0,     /* /dev/i2c-0 */
+    .spi_bus = 0,               /* /dev/spidev0.x */
+    .spi_cs0 = 434,             /* GPIOH_8 (Pin 16) as CS0 */
+    .spi_cs1 = -1,
+    .onewire_data = 430,        /* GPIOH_4 (Pin 7) - 1-Wire */
+    .gpio_relay_1 = 431,        /* GPIOH_5 (Pin 11) */
+    .gpio_relay_2 = 432,        /* GPIOH_6 (Pin 13) */
+    .gpio_relay_3 = 433,        /* GPIOH_7 (Pin 15) */
+    .gpio_relay_4 = 435,        /* GPIOH_9 (Pin 18) */
+    .gpio_input_1 = 447,        /* GPIOX_10 (Pin 29) */
+    .gpio_input_2 = 448,        /* GPIOX_11 (Pin 31) */
+    .gpio_input_3 = 449,        /* GPIOX_12 (Pin 32) */
+    .gpio_input_4 = 450,        /* GPIOX_13 (Pin 33) */
+    .gpio_led_status = 443,     /* GPIOX_6 (Pin 22) */
+    .gpio_led_error = 444,      /* GPIOX_7 (Pin 24) */
+    .pwm_channel_0 = 436,       /* GPIOX_0/PWM (Pin 12) */
+    .pwm_channel_1 = 441,       /* GPIOX_4/PWM (Pin 35) */
+    .uart_tx = 446,             /* GPIOX_9 - UART_C_TX */
+    .uart_rx = 445,             /* GPIOX_8 - UART_C_RX */
+    .gpio_chip = "gpiochip0",
+};
+
+/*
+ * Libre Computer Renegade (ROC-RK3328-CC)
+ *
+ * Rockchip RK3328 GPIO numbering.
+ * Reference: https://libre.computer/products/roc-rk3328-cc/
+ */
+static const pin_config_t LIBRE_RENEGADE_PINS = {
+    .i2c_bus_primary = 1,       /* /dev/i2c-1 */
+    .i2c_bus_secondary = 0,
+    .spi_bus = 0,
+    .spi_cs0 = 88,              /* GPIO2_D0 */
+    .spi_cs1 = -1,
+    .onewire_data = 100,        /* GPIO3_A4 (Pin 7) */
+    .gpio_relay_1 = 97,         /* GPIO3_A1 (Pin 11) */
+    .gpio_relay_2 = 98,         /* GPIO3_A2 (Pin 13) */
+    .gpio_relay_3 = 99,         /* GPIO3_A3 (Pin 15) */
+    .gpio_relay_4 = 101,        /* GPIO3_A5 (Pin 16) */
+    .gpio_input_1 = 104,        /* GPIO3_B0 (Pin 29) */
+    .gpio_input_2 = 105,        /* GPIO3_B1 (Pin 31) */
+    .gpio_input_3 = 106,        /* GPIO3_B2 (Pin 32) */
+    .gpio_input_4 = 107,        /* GPIO3_B3 (Pin 33) */
+    .gpio_led_status = 102,     /* GPIO3_A6 (Pin 22) */
+    .gpio_led_error = 103,      /* GPIO3_A7 (Pin 24) */
+    .pwm_channel_0 = 89,        /* GPIO2_D1/PWM2 (Pin 12) */
+    .pwm_channel_1 = 90,        /* GPIO2_D2/PWM3 (Pin 35) */
+    .uart_tx = 14,              /* UART2_TX */
+    .uart_rx = 15,              /* UART2_RX */
+    .gpio_chip = "gpiochip0",
+};
+
 /* Generic fallback configuration */
 static const pin_config_t GENERIC_PINS = {
     .i2c_bus_primary = 1,
@@ -243,6 +314,12 @@ static const struct {
      {"Luckfox Lyra", "RK3506", "rk3506", NULL}},
     {BOARD_TYPE_LUCKFOX_PICO, "Luckfox Pico",
      {"Luckfox Pico", "RV1103", "RV1106", NULL}},
+
+    /* Libre Computer */
+    {BOARD_TYPE_LIBRE_POTATO, "Libre Computer Le Potato",
+     {"Le Potato", "AML-S905X-CC", "libretech-cc", "meson-gxl", NULL}},
+    {BOARD_TYPE_LIBRE_RENEGADE, "Libre Computer Renegade",
+     {"Renegade", "ROC-RK3328-CC", "libretech-renegade", "rk3328", NULL}},
 
     /* End marker */
     {BOARD_TYPE_UNKNOWN, NULL, {NULL}}
@@ -357,6 +434,28 @@ static void set_board_capabilities(board_info_t *info) {
             };
             SAFE_STRNCPY(info->soc, "RK3506", sizeof(info->soc));
             SAFE_STRNCPY(info->manufacturer, "Luckfox", sizeof(info->manufacturer));
+            break;
+
+        case BOARD_TYPE_LIBRE_POTATO:
+            info->caps = (board_capabilities_t){
+                .has_wifi = false, .has_bluetooth = false, .has_ethernet = true,
+                .has_hdmi = true, .has_camera_csi = false, .has_display_dsi = false,
+                .i2c_bus_count = 2, .spi_bus_count = 2, .uart_count = 3,
+                .pwm_channels = 2, .gpio_count = 40, .ram_mb = 2048, .cpu_cores = 4
+            };
+            SAFE_STRNCPY(info->soc, "S905X", sizeof(info->soc));
+            SAFE_STRNCPY(info->manufacturer, "Libre Computer", sizeof(info->manufacturer));
+            break;
+
+        case BOARD_TYPE_LIBRE_RENEGADE:
+            info->caps = (board_capabilities_t){
+                .has_wifi = false, .has_bluetooth = false, .has_ethernet = true,
+                .has_hdmi = true, .has_camera_csi = false, .has_display_dsi = false,
+                .i2c_bus_count = 2, .spi_bus_count = 2, .uart_count = 4,
+                .pwm_channels = 4, .gpio_count = 40, .ram_mb = 4096, .cpu_cores = 4
+            };
+            SAFE_STRNCPY(info->soc, "RK3328", sizeof(info->soc));
+            SAFE_STRNCPY(info->manufacturer, "Libre Computer", sizeof(info->manufacturer));
             break;
 
         default:
@@ -503,6 +602,14 @@ result_t board_get_default_pins(board_type_t type, pin_config_t *pins) {
         case BOARD_TYPE_LUCKFOX_LYRA:
         case BOARD_TYPE_LUCKFOX_PICO:
             memcpy(pins, &LUCKFOX_LYRA_PINS, sizeof(pin_config_t));
+            break;
+
+        case BOARD_TYPE_LIBRE_POTATO:
+            memcpy(pins, &LIBRE_POTATO_PINS, sizeof(pin_config_t));
+            break;
+
+        case BOARD_TYPE_LIBRE_RENEGADE:
+            memcpy(pins, &LIBRE_RENEGADE_PINS, sizeof(pin_config_t));
             break;
 
         default:
