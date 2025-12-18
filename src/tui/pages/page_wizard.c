@@ -8,6 +8,7 @@
 #include "config/config.h"
 #include "config/config_validate.h"
 #include "platform/board_detect.h"
+#include "platform/hw_discover.h"
 #include "utils/logger.h"
 #include <ncurses.h>
 #include <string.h>
@@ -46,6 +47,12 @@ static struct {
     board_type_t board_type;
     char board_name[64];
     bool board_detected;
+
+    /* Hardware discovery results */
+    hw_discovery_result_t hw_discovery;
+    bool hw_scan_done;
+    bool hw_scanning;
+    int hw_scroll_offset;
 
     /* Current field being edited */
     int current_field;
@@ -229,23 +236,112 @@ static void draw_step_profinet(void) {
 
 static void draw_step_sensors(void) {
     int row = 6;
-    mvprintw(row++, 4, "Sensor Configuration");
-    row++;
-    mvprintw(row++, 4, "Sensor detection and configuration can be done after setup.");
-    mvprintw(row++, 4, "Use the Sensors page (F2) to add and configure sensors.");
+    int max_y = getmaxy(stdscr);
+    int max_display = max_y - 16;  /* Leave room for header/footer */
+
+    mvprintw(row++, 4, "Sensor Hardware Discovery");
     row++;
 
-    mvprintw(row++, 4, "Supported sensor types:");
-    mvprintw(row++, 6, "- Temperature (DS18B20, DHT22, NTC)");
-    mvprintw(row++, 6, "- pH (via ADC)");
-    mvprintw(row++, 6, "- TDS/Conductivity (via ADC)");
-    mvprintw(row++, 6, "- Turbidity (via ADC)");
-    mvprintw(row++, 6, "- Pressure (4-20mA via ADC)");
-    mvprintw(row++, 6, "- Level (Ultrasonic, Float switch)");
-    mvprintw(row++, 6, "- Web/URL polling (external data sources)");
+    if (g_wizard.hw_scanning) {
+        attron(COLOR_PAIR(3));  /* Yellow */
+        mvprintw(row++, 4, "Scanning hardware buses... Please wait.");
+        attroff(COLOR_PAIR(3));
+        return;
+    }
 
-    row += 2;
-    mvprintw(row, 4, "Press ENTER to continue");
+    if (!g_wizard.hw_scan_done) {
+        mvprintw(row++, 4, "Press 'S' to scan for connected I2C and 1-Wire devices.");
+        row++;
+        mvprintw(row++, 4, "This will detect:");
+        mvprintw(row++, 6, "- I2C devices: ADCs (ADS1115), sensors (BME280, SHT31)");
+        mvprintw(row++, 6, "- 1-Wire devices: Temperature sensors (DS18B20)");
+        row++;
+        mvprintw(row++, 4, "Or press ENTER to skip and configure sensors manually later.");
+    } else {
+        /* Show discovery results */
+        hw_discovery_result_t *hw = &g_wizard.hw_discovery;
+        int total_devices = hw->i2c_count + hw->onewire_count;
+
+        if (total_devices == 0) {
+            attron(COLOR_PAIR(3));
+            mvprintw(row++, 4, "No devices found.");
+            attroff(COLOR_PAIR(3));
+            row++;
+            mvprintw(row++, 4, "Make sure devices are properly connected and 1-Wire/I2C enabled.");
+            mvprintw(row++, 4, "You can configure sensors manually in the Sensors page (F2).");
+        } else {
+            attron(COLOR_PAIR(2));  /* Green */
+            mvprintw(row++, 4, "Found %d device(s):", total_devices);
+            attroff(COLOR_PAIR(2));
+            row++;
+
+            int display_row = 0;
+            int skip_count = g_wizard.hw_scroll_offset;
+
+            /* Display I2C devices */
+            if (hw->i2c_count > 0) {
+                if (skip_count == 0 && display_row < max_display) {
+                    attron(A_BOLD);
+                    mvprintw(row++, 4, "I2C Devices (%d):", hw->i2c_count);
+                    attroff(A_BOLD);
+                    display_row++;
+                } else if (skip_count > 0) {
+                    skip_count--;
+                }
+
+                for (int i = 0; i < hw->i2c_count && display_row < max_display; i++) {
+                    if (skip_count > 0) {
+                        skip_count--;
+                        continue;
+                    }
+                    i2c_device_t *dev = &hw->i2c_devices[i];
+                    mvprintw(row++, 6, "[I2C%d:0x%02X] %-16s - %s",
+                             dev->bus, dev->address, dev->name, dev->description);
+                    display_row++;
+                }
+            }
+
+            /* Display 1-Wire devices */
+            if (hw->onewire_count > 0 && display_row < max_display) {
+                if (skip_count == 0 && display_row < max_display) {
+                    row++;
+                    attron(A_BOLD);
+                    mvprintw(row++, 4, "1-Wire Devices (%d):", hw->onewire_count);
+                    attroff(A_BOLD);
+                    display_row += 2;
+                } else if (skip_count > 0) {
+                    skip_count--;
+                }
+
+                for (int i = 0; i < hw->onewire_count && display_row < max_display; i++) {
+                    if (skip_count > 0) {
+                        skip_count--;
+                        continue;
+                    }
+                    onewire_device_t *dev = &hw->onewire_devices[i];
+                    if (dev->last_value > -273.15f) {
+                        mvprintw(row++, 6, "[1W] %-18s %-10s - %.1f C",
+                                 dev->id, dev->name, dev->last_value);
+                    } else {
+                        mvprintw(row++, 6, "[1W] %-18s %-10s - %s",
+                                 dev->id, dev->name, dev->description);
+                    }
+                    display_row++;
+                }
+            }
+
+            /* Scroll indicator */
+            int total_rows = hw->i2c_count + hw->onewire_count + 3;
+            if (total_rows > max_display) {
+                mvprintw(row + 1, 4, "[Use UP/DOWN to scroll, %d more]",
+                         total_rows - max_display - g_wizard.hw_scroll_offset);
+            }
+        }
+
+        row = max_y - 6;
+        mvprintw(row++, 4, "Press 'S' to re-scan, ENTER to continue to next step.");
+        mvprintw(row++, 4, "Detected devices will be available for sensor configuration.");
+    }
 }
 
 static void draw_step_actuators(void) {
@@ -531,6 +627,37 @@ bool page_wizard_input(int ch) {
                 }
             }
             return true;
+
+        case 's':
+        case 'S':
+            if (g_wizard.current_step == WIZARD_STEP_SENSORS) {
+                /* Trigger hardware scan */
+                g_wizard.hw_scanning = true;
+                page_wizard_draw();  /* Show scanning message */
+                refresh();
+
+                /* Perform the scan */
+                memset(&g_wizard.hw_discovery, 0, sizeof(g_wizard.hw_discovery));
+                hw_discover_all(&g_wizard.hw_discovery);
+
+                g_wizard.hw_scanning = false;
+                g_wizard.hw_scan_done = true;
+                g_wizard.hw_scroll_offset = 0;
+            }
+            return true;
+    }
+
+    /* Handle scrolling in sensors step */
+    if (g_wizard.current_step == WIZARD_STEP_SENSORS && g_wizard.hw_scan_done) {
+        int total_devices = g_wizard.hw_discovery.i2c_count +
+                           g_wizard.hw_discovery.onewire_count;
+        if (ch == KEY_UP && g_wizard.hw_scroll_offset > 0) {
+            g_wizard.hw_scroll_offset--;
+            return true;
+        } else if (ch == KEY_DOWN && g_wizard.hw_scroll_offset < total_devices) {
+            g_wizard.hw_scroll_offset++;
+            return true;
+        }
     }
 
     return false;

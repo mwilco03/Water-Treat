@@ -24,6 +24,7 @@ set(SOURCES_CORE
     src/db/db_actuators.c
     src/utils/logger.c
     src/platform/board_detect.c
+    src/platform/hw_discover.c
 )
 
 # New unified driver architecture (following Linux IIO / Zephyr patterns)

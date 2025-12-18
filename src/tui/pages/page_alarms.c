@@ -117,7 +117,7 @@ static void load_alarm_rules(void) {
 
         /* Get sensor name from module */
         db_module_t mod;
-        if (db_module_get_by_id(db, r->module_id, &mod) == RESULT_OK) {
+        if (db_module_get(db, r->module_id, &mod) == RESULT_OK) {
             snprintf(r->sensor_name, sizeof(r->sensor_name), "%s (slot %d)", mod.name, mod.slot);
         } else {
             snprintf(r->sensor_name, sizeof(r->sensor_name), "Module %d", r->module_id);
