@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <glob.h>
 #include <sys/ioctl.h>
 #include <errno.h>
 
@@ -214,14 +215,16 @@ result_t hw_discover_i2c_all(hw_discovery_result_t *result)
         return RESULT_INVALID_PARAM;
     }
 
-    /* Try I2C buses 0-7 */
-    for (int bus = 0; bus <= 7; bus++) {
-        char bus_path[32];
-        snprintf(bus_path, sizeof(bus_path), "/dev/i2c-%d", bus);
-
-        if (access(bus_path, F_OK) == 0) {
-            hw_discover_i2c(bus, result);
+    /* Use glob to find all I2C bus devices */
+    glob_t globbuf;
+    if (glob("/dev/i2c-*", GLOB_NOSORT, NULL, &globbuf) == 0) {
+        for (size_t i = 0; i < globbuf.gl_pathc; i++) {
+            int bus;
+            if (sscanf(globbuf.gl_pathv[i], "/dev/i2c-%d", &bus) == 1) {
+                hw_discover_i2c(bus, result);
+            }
         }
+        globfree(&globbuf);
     }
 
     result->scan_complete = true;
