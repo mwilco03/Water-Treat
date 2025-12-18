@@ -54,6 +54,11 @@ typedef enum {
     BOARD_TYPE_LIBRE_POTATO,    /* AML-S905X-CC (Le Potato) */
     BOARD_TYPE_LIBRE_RENEGADE,  /* ROC-RK3328-CC (Renegade) */
 
+    /* Hardkernel ODROID Family */
+    BOARD_TYPE_ODROID_XU4,      /* Samsung Exynos 5422 */
+    BOARD_TYPE_ODROID_C4,       /* Amlogic S905X3 */
+    BOARD_TYPE_ODROID_N2,       /* Amlogic S922X */
+
     /* Generic fallback */
     BOARD_TYPE_GENERIC_ARM,
     BOARD_TYPE_GENERIC_X86,
