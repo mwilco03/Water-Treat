@@ -12,6 +12,7 @@
 
 #include "page_actuators.h"
 #include "../tui_common.h"
+#include "tui/dialogs/dialog_actuator.h"
 #include "db/database.h"
 #include "db/db_actuators.h"
 #include "actuators/actuator_manager.h"
@@ -412,8 +413,75 @@ void page_actuators_input(WINDOW *win, int ch) {
             break;
 
         case 'a':
-        case 'A':
-            show_add_dialog();
+        case 'n':
+        case 'N':
+            /* Add new actuator */
+            {
+                database_t *db = tui_get_database();
+                if (db) {
+                    actuator_form_t form;
+                    dialog_actuator_init_form(&form);
+                    if (dialog_actuator_show(ACTUATOR_DIALOG_ADD, &form)) {
+                        db_actuator_t db_act = {0};
+                        dialog_actuator_save(&form, &db_act);
+                        int new_id = 0;
+                        if (db_actuator_create(db, &db_act, &new_id) == RESULT_OK) {
+                            tui_set_status("Actuator '%s' created (ID: %d)", form.name, new_id);
+                            load_actuators();
+                        } else {
+                            tui_set_status("Failed to create actuator");
+                        }
+                    }
+                }
+            }
+            break;
+
+        case 'e':
+        case '\n':
+        case KEY_ENTER:
+            /* Edit selected actuator */
+            if (g_page.actuator_count > 0) {
+                database_t *db = tui_get_database();
+                if (db) {
+                    actuator_item_t *item = &g_page.actuators[g_page.selected];
+                    db_actuator_t db_act = {0};
+                    if (db_actuator_get(db, item->id, &db_act) == RESULT_OK) {
+                        actuator_form_t form;
+                        dialog_actuator_load(&form, &db_act);
+                        if (dialog_actuator_show(ACTUATOR_DIALOG_EDIT, &form)) {
+                            dialog_actuator_save(&form, &db_act);
+                            if (db_actuator_update(db, &db_act) == RESULT_OK) {
+                                tui_set_status("Actuator '%s' updated", form.name);
+                                load_actuators();
+                            } else {
+                                tui_set_status("Failed to update actuator");
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+
+        case 'd':
+        case KEY_DC:
+            /* Delete selected actuator */
+            if (g_page.actuator_count > 0) {
+                database_t *db = tui_get_database();
+                if (db) {
+                    actuator_item_t *item = &g_page.actuators[g_page.selected];
+                    if (dialog_actuator_confirm_delete(item->name)) {
+                        if (db_actuator_delete(db, item->id) == RESULT_OK) {
+                            tui_set_status("Actuator '%s' deleted", item->name);
+                            load_actuators();
+                            if (g_page.selected >= g_page.actuator_count && g_page.actuator_count > 0) {
+                                g_page.selected = g_page.actuator_count - 1;
+                            }
+                        } else {
+                            tui_set_status("Failed to delete actuator");
+                        }
+                    }
+                }
+            }
             break;
 
         case 'E':  /* Capital E for emergency stop */

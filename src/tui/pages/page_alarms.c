@@ -5,8 +5,10 @@
 
 #include "page_alarms.h"
 #include "../tui_common.h"
+#include "tui/dialogs/dialog_alarm.h"
 #include "db/database.h"
 #include "db/db_alarms.h"
+#include "db/db_modules.h"
 #include "alarms/alarm_manager.h"
 #include "utils/logger.h"
 #include <ncurses.h>
@@ -604,11 +606,51 @@ void page_alarms_input(WINDOW *win, int ch) {
         /* Actions */
         case '\n':
         case KEY_ENTER:
-            if (g_page.view_mode == 2) {
-                /* TODO: Edit rule dialog */
-                tui_set_status("Rule editing: Press 'e' to toggle, 'd' to delete");
+            if (g_page.view_mode == 2 && g_page.rule_count > 0) {
+                /* Edit selected rule */
+                database_t *db = tui_get_database();
+                if (db) {
+                    rule_display_t *rule = &g_page.rules[g_page.selected];
+                    db_alarm_rule_t db_rule = {0};
+                    if (db_alarm_rule_get(db, rule->id, &db_rule) == RESULT_OK) {
+                        alarm_form_t form;
+                        dialog_alarm_load_rule(&form, &db_rule);
+                        if (dialog_alarm_show(ALARM_DIALOG_EDIT, &form)) {
+                            dialog_alarm_save_to_rule(&form, &db_rule);
+                            if (db_alarm_rule_update(db, &db_rule) == RESULT_OK) {
+                                tui_set_status("Rule '%s' updated", form.name);
+                                load_alarm_rules();
+                            } else {
+                                tui_set_status("Failed to update rule");
+                            }
+                        }
+                    }
+                }
             } else if (g_page.alarm_count > 0) {
                 show_alarm_details();
+            }
+            break;
+
+        case 'n':
+        case 'N':
+            if (g_page.view_mode == 2) {
+                /* Add new rule */
+                database_t *db = tui_get_database();
+                if (db) {
+                    alarm_form_t form;
+                    dialog_alarm_init_form(&form);
+                    if (dialog_alarm_show(ALARM_DIALOG_ADD, &form)) {
+                        db_alarm_rule_t db_rule = {0};
+                        dialog_alarm_save_to_rule(&form, &db_rule);
+                        int new_id = 0;
+                        if (db_alarm_rule_create(db, &db_rule, &new_id) == RESULT_OK) {
+                            tui_set_status("Rule '%s' created (ID: %d)", form.name, new_id);
+                            load_alarm_rules();
+                        } else {
+                            tui_set_status("Failed to create rule");
+                        }
+                    }
+                }
             }
             break;
 
@@ -628,6 +670,25 @@ void page_alarms_input(WINDOW *win, int ch) {
         case 'E':
             if (g_page.view_mode == 2) {
                 toggle_rule_enabled();
+            }
+            break;
+
+        case 'd':
+        case 'D':
+        case KEY_DC:
+            if (g_page.view_mode == 2 && g_page.rule_count > 0) {
+                /* Delete selected rule */
+                database_t *db = tui_get_database();
+                if (db) {
+                    rule_display_t *rule = &g_page.rules[g_page.selected];
+                    if (db_alarm_rule_delete(db, rule->id) == RESULT_OK) {
+                        tui_set_status("Rule '%s' deleted", rule->name);
+                        load_alarm_rules();
+                        if (g_page.selected >= g_page.rule_count && g_page.rule_count > 0) {
+                            g_page.selected = g_page.rule_count - 1;
+                        }
+                    }
+                }
             }
             break;
 
