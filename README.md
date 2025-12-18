@@ -163,6 +163,54 @@ Byte 2-3: Reserved
 | F7 | Logging Settings |
 | F10 | Exit |
 
+## Authentication
+
+### Default Credentials
+
+| Username | Password |
+|----------|----------|
+| `admin` | `H2OhYeah!` |
+
+> **Note:** The password is a water pun (H2O + "Oh Yeah!"). After 3 failed login attempts, the TUI displays a hint.
+
+### Changing Default Credentials
+
+Edit [`src/auth/auth.c`](src/auth/auth.c) lines 16-18:
+
+```c
+#define DEFAULT_USERNAME    "admin"
+#define DEFAULT_PASSWORD    "H2OhYeah!"
+#define DEFAULT_SALT        "NaCl4Life"
+```
+
+Then rebuild:
+```bash
+cd build && make
+```
+
+### Authentication Modes
+
+The RTU supports two authentication sources:
+
+1. **Local Users** (always available)
+   - Default admin account
+   - Works when controller is offline
+   - Stored in local SQLite database
+
+2. **Controller-Synced Users** (when connected)
+   - User list synced from controller via PROFINET acyclic read
+   - Controller is the authority for user management
+   - RTU caches synced users for offline fallback
+
+```
+┌─────────────────────────┐         ┌─────────────────────────┐
+│  Controller (SBC #1)    │         │     RTU (SBC #2)        │
+│  - Master user list     │ ──────► │  - Synced user cache    │
+│  - HMI / Web interface  │ PROFINET│  - Local fallback users │
+│  - User management UI   │ acyclic │  - Default admin always │
+└─────────────────────────┘         └─────────────────────────┘
+```
+
 ## Runtime
 
 ```bash
@@ -181,6 +229,9 @@ sudo systemctl start profinet-monitor
 Water-Treat/
 ├── src/
 │   ├── main.c                    # Application entry point
+│   ├── auth/                     # Authentication system
+│   │   ├── auth.h                # Auth API and structures
+│   │   └── auth.c                # Login, sessions, password hashing
 │   ├── config/                   # Configuration management
 │   ├── db/                       # SQLite database layer
 │   ├── sensors/                  # Sensor abstraction and drivers
@@ -192,6 +243,8 @@ Water-Treat/
 │   ├── logging/                  # Data logging subsystem
 │   ├── platform/                 # Platform detection
 │   └── tui/                      # Terminal user interface
+│       ├── dialogs/              # CRUD dialogs (alarms, actuators)
+│       └── pages/                # TUI pages including login
 ├── include/                      # Public headers
 ├── gsd/                          # PROFINET GSD files
 └── systemd/                      # Service configuration
