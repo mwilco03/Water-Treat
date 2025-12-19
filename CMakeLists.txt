@@ -108,26 +108,40 @@ set(SOURCES
 
 find_package(Threads REQUIRED)
 find_package(CURL QUIET)
-find_package(PkgConfig REQUIRED)
+
+# PkgConfig may not be available during cross-compilation
+find_package(PkgConfig QUIET)
 
 if(NOT CURL_FOUND)
     message(WARNING "CURL not found - remote logging will be disabled")
 endif()
 
-pkg_check_modules(NCURSES REQUIRED ncurses)
-pkg_check_modules(SQLITE3 REQUIRED sqlite3)
-pkg_check_modules(CJSON libcjson)
+# For cross-compilation, pkg-config may not be available
+# Libraries should be provided via toolchain file or sysroot
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(NCURSES REQUIRED ncurses)
+    pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+    pkg_check_modules(CJSON libcjson)
+else()
+    message(WARNING "pkg-config not found - using default library names")
+    # Fallback for cross-compilation: assume libraries are in sysroot
+    set(NCURSES_LIBRARIES ncurses)
+    set(SQLITE3_LIBRARIES sqlite3)
+    set(NCURSES_FOUND TRUE)
+    set(SQLITE3_FOUND TRUE)
+endif()
 
 # libgpiod - modern GPIO interface (preferred over deprecated sysfs)
-pkg_check_modules(GPIOD libgpiod)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(GPIOD libgpiod)
+    pkg_check_modules(SYSTEMD libsystemd)
+endif()
+
 if(GPIOD_FOUND)
     message(STATUS "libgpiod found - using modern GPIO interface")
 else()
     message(WARNING "libgpiod not found - falling back to deprecated sysfs GPIO")
 endif()
-
-# systemd integration for sd_notify and watchdog
-pkg_check_modules(SYSTEMD libsystemd)
 
 # ============================================================================
 # Optional LED Status Indicator Support (WS2812B/WS2811)

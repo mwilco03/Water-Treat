@@ -74,7 +74,8 @@ result_t db_actuator_state_increment_cycle(database_t *db, int actuator_id);
 // GPIO pin conflict detection
 typedef struct {
     bool has_conflict;
-    int conflicting_actuator_id;
+    int conflict_type;              // 0 = actuator, 1 = sensor
+    int conflicting_actuator_id;    // ID of conflicting actuator (or -1 for sensor)
     char conflicting_name[MAX_NAME_LEN];
 } gpio_conflict_t;
 

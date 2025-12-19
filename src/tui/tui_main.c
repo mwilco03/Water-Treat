@@ -237,7 +237,7 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
 
 void tui_run(void) {
     /* Require login before accessing main interface */
-    result_t login_result = page_login_run(g_tui.main_win);
+    result_t login_result = page_login_run();
     if (login_result != RESULT_OK) {
         LOG_INFO("Login cancelled or failed - exiting TUI");
         return;

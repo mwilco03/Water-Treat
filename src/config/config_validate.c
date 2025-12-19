@@ -137,7 +137,7 @@ typedef struct {
     size_t capacity;
 } curl_buffer_t;
 
-static size_t curl_write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+static size_t config_curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t total = size * nmemb;
     curl_buffer_t *buf = (curl_buffer_t *)userp;
 
@@ -182,7 +182,7 @@ result_t config_load_from_url(const char *url, config_manager_t *mgr) {
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, config_curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
