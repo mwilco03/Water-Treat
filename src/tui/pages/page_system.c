@@ -11,6 +11,9 @@
 #include <string.h>
 #include <sys/utsname.h>
 #include <sys/sysinfo.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #define MAX_FIELDS 10
 
@@ -216,13 +219,60 @@ void page_system_draw(WINDOW *win) {
     wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
     mvwprintw(win, row++, label_col, "Navigation: Up/Down arrows");
     mvwprintw(win, row++, label_col, "Edit: Enter to edit, Enter to save, Esc to cancel");
-    mvwprintw(win, row++, label_col, "Save config: Ctrl+S");
+    mvwprintw(win, row++, label_col, "Save config: Ctrl+S | Export: E | Import: I");
     wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
+}
+
+static void export_config(void) {
+    /* Create backup directory if it doesn't exist */
+    mkdir("/var/backup", 0755);
+    mkdir("/var/backup/profinet-monitor", 0755);
+
+    /* Generate timestamped filename */
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char filename[256];
+    snprintf(filename, sizeof(filename),
+             "/var/backup/profinet-monitor/config_%04d%02d%02d_%02d%02d%02d.conf",
+             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+             tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+    config_manager_t *cfg = tui_get_config_manager();
+    if (cfg && config_save_file(cfg, filename) == RESULT_OK) {
+        tui_set_status("Config exported to %s", filename);
+        LOG_INFO("Configuration exported to %s", filename);
+    } else {
+        tui_set_status("Export failed!");
+    }
+}
+
+static void import_config(void) {
+    /* Show file browser dialog - for now just import from fixed path */
+    const char *import_path = "/var/backup/profinet-monitor/import.conf";
+
+    if (access(import_path, R_OK) != 0) {
+        tui_set_status("No import file found at %s", import_path);
+        return;
+    }
+
+    config_manager_t *cfg = tui_get_config_manager();
+    if (cfg && config_load_file(cfg, import_path) == RESULT_OK) {
+        /* Reload app config */
+        app_config_t *app_cfg = tui_get_app_config();
+        if (app_cfg) {
+            config_load_app_config(cfg, app_cfg);
+        }
+        load_system_info();
+        tui_set_status("Config imported from %s", import_path);
+        LOG_INFO("Configuration imported from %s", import_path);
+    } else {
+        tui_set_status("Import failed!");
+    }
 }
 
 void page_system_input(WINDOW *win, int ch) {
     UNUSED(win);
-    
+
     if (g_page.editing) {
         switch (ch) {
             case 27:  // Escape
@@ -281,6 +331,14 @@ void page_system_input(WINDOW *win, int ch) {
             case 'R':
                 load_system_info();
                 tui_set_status("Refreshed");
+                break;
+            case 'e':
+            case 'E':
+                export_config();
+                break;
+            case 'i':
+            case 'I':
+                import_config();
                 break;
         }
     }

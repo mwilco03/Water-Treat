@@ -63,6 +63,29 @@ static struct {
 } g_gpio = {0};
 
 /* ============================================================================
+ * Common Functions
+ * ========================================================================== */
+
+bool gpio_is_available(void) {
+    return g_gpio.initialized;
+}
+
+bool gpio_chip_exists(const char *chip_name) {
+    if (!chip_name) return false;
+
+    char path[128];
+    snprintf(path, sizeof(path), "/dev/%s", chip_name);
+    if (access(path, F_OK) == 0) return true;
+
+    /* Try without /dev/ prefix for already-prefixed names */
+    if (strncmp(chip_name, "/dev/", 5) == 0) {
+        if (access(chip_name, F_OK) == 0) return true;
+    }
+
+    return false;
+}
+
+/* ============================================================================
  * libgpiod Implementation
  * ========================================================================== */
 
