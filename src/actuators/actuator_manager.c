@@ -558,6 +558,7 @@ result_t actuator_manager_handle_output(actuator_manager_t *mgr,
     if (act->state != new_state || act->pwm_duty != new_pwm) {
         act->state = new_state;
         act->pwm_duty = new_pwm;
+        act->manual_mode = false;  // PROFINET command clears manual mode
         apply_actuator_state(act);
 
         LOG_DEBUG("Actuator %s: command=%d, state=%d, PWM=%d%%",
@@ -609,6 +610,27 @@ result_t actuator_manager_get_state(actuator_manager_t *mgr, int slot,
     return RESULT_OK;
 }
 
+result_t actuator_manager_get_full_state(actuator_manager_t *mgr, int slot,
+                                          actuator_state_t *state, uint8_t *pwm_duty,
+                                          bool *manual_mode) {
+    CHECK_NULL(mgr);
+
+    pthread_mutex_lock(&mgr->mutex);
+
+    actuator_instance_t *act = find_actuator_by_slot(mgr, slot);
+    if (!act) {
+        pthread_mutex_unlock(&mgr->mutex);
+        return RESULT_NOT_FOUND;
+    }
+
+    if (state) *state = act->state;
+    if (pwm_duty) *pwm_duty = act->pwm_duty;
+    if (manual_mode) *manual_mode = act->manual_mode;
+
+    pthread_mutex_unlock(&mgr->mutex);
+    return RESULT_OK;
+}
+
 result_t actuator_manager_manual_set(actuator_manager_t *mgr, int slot,
                                       actuator_state_t state, uint8_t pwm_duty) {
     CHECK_NULL(mgr);
@@ -624,6 +646,7 @@ result_t actuator_manager_manual_set(actuator_manager_t *mgr, int slot,
 
     act->state = state;
     act->pwm_duty = pwm_duty;
+    act->manual_mode = true;  // Mark as manual control (TUI override)
     result_t r = apply_actuator_state(act);
 
     if (r == RESULT_OK && mgr->db) {

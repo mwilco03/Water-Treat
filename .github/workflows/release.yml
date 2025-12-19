@@ -1,0 +1,86 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            toolchain: ""
+            package_suffix: "linux-x86_64"
+          # ARM builds require sysroot, so we do best-effort
+          # - arch: aarch64
+          #   toolchain: "toolchain/aarch64-linux-gnu.cmake"
+          #   package_suffix: "linux-arm64"
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          libncurses5-dev \
+          libsqlite3-dev \
+          libcurl4-openssl-dev \
+          libcjson-dev \
+          libgpiod-dev \
+          libsystemd-dev
+
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          ${{ matrix.toolchain && format('-DCMAKE_TOOLCHAIN_FILE={0}', matrix.toolchain) || '' }}
+
+    - name: Build
+      run: cmake --build build --parallel $(nproc)
+
+    - name: Create package
+      run: |
+        mkdir -p package
+        cp build/profinet-monitor package/
+        cp -r systemd package/
+        cp README.md INSTALL.md OPERATOR.md package/
+        cp -r toolchain package/
+        tar -czvf profinet-monitor-${{ github.ref_name }}-${{ matrix.package_suffix }}.tar.gz -C package .
+
+    - name: Upload release asset
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-${{ matrix.package_suffix }}
+        path: profinet-monitor-${{ github.ref_name }}-${{ matrix.package_suffix }}.tar.gz
+        retention-days: 30
+
+  create-release:
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: releases
+        pattern: release-*
+        merge-multiple: true
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: releases/*.tar.gz
+        generate_release_notes: true
+        draft: false
+        prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}

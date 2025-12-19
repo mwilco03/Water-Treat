@@ -96,7 +96,37 @@ static void refresh_io_slots(void) {
         free(modules);
     }
 
-    // TODO: Add output modules (actuators) when db_actuators is implemented
+    // Add output modules (actuators)
+    db_actuator_t *actuators = NULL;
+    int act_count = 0;
+
+    if (db_actuator_list(db, &actuators, &act_count) == RESULT_OK && actuators) {
+        for (int i = 0; i < act_count && g_page.slot_count < MAX_IO_SLOTS; i++) {
+            if (!actuators[i].enabled) continue;
+
+            io_slot_info_t *slot = &g_page.slots[g_page.slot_count];
+
+            slot->slot = actuators[i].slot;
+            slot->subslot = actuators[i].subslot > 0 ? actuators[i].subslot : 1;
+            SAFE_STRNCPY(slot->name, actuators[i].name, sizeof(slot->name));
+            strcpy(slot->direction, "Output");
+
+            // Get current state from actuator manager
+            extern actuator_manager_t g_actuator_mgr;
+            actuator_state_t state;
+            uint8_t pwm_duty = 0;
+            if (actuator_manager_get_state(&g_actuator_mgr, actuators[i].slot, &state, &pwm_duty) == RESULT_OK) {
+                slot->value = (state == ACTUATOR_STATE_ON) ? 1.0f : 0.0f;
+                slot->valid = (state != ACTUATOR_STATE_FAULT);
+            } else {
+                slot->value = 0.0f;
+                slot->valid = false;
+            }
+
+            g_page.slot_count++;
+        }
+        free(actuators);
+    }
 }
 
 static void draw_connection_status(WINDOW *win, int *row) {

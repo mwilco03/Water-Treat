@@ -107,13 +107,14 @@ static void load_actuators(void) {
                 SAFE_STRNCPY(a->type, "Unknown", sizeof(a->type));
         }
 
-        /* Get current state from actuator manager */
+        /* Get current state from actuator manager (including manual mode) */
         actuator_state_t state;
         uint8_t pwm_duty = 0;
-        if (actuator_manager_get_state(&g_actuator_mgr, a->slot, &state, &pwm_duty) == RESULT_OK) {
+        bool manual_mode = false;
+        if (actuator_manager_get_full_state(&g_actuator_mgr, a->slot, &state, &pwm_duty, &manual_mode) == RESULT_OK) {
             a->state = (state == ACTUATOR_STATE_ON);
             a->fault = (state == ACTUATOR_STATE_FAULT);
-            a->manual_mode = false;  /* TODO: track manual mode */
+            a->manual_mode = manual_mode;
             a->pwm_duty = pwm_duty;
         } else {
             a->state = false;

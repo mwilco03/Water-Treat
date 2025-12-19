@@ -95,6 +95,9 @@ typedef struct {
     bool controller_connected;
     uint64_t last_command_time_ms;
 
+    // Manual control tracking
+    bool manual_mode;           // True if last control was via TUI, false if via PROFINET
+
     // Driver handle
     void *driver_handle;
 
@@ -179,6 +182,13 @@ result_t actuator_manager_set_connected(actuator_manager_t *mgr, bool connected)
  */
 result_t actuator_manager_get_state(actuator_manager_t *mgr, int slot,
                                      actuator_state_t *state, uint8_t *pwm_duty);
+
+/**
+ * Get full actuator status including manual mode
+ */
+result_t actuator_manager_get_full_state(actuator_manager_t *mgr, int slot,
+                                          actuator_state_t *state, uint8_t *pwm_duty,
+                                          bool *manual_mode);
 
 /**
  * Manual control (for TUI/testing) - bypasses PROFINET
