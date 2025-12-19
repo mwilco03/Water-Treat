@@ -686,10 +686,74 @@ result_t actuator_manager_reload(actuator_manager_t *mgr) {
     CHECK_NULL(mgr);
     if (!mgr->initialized || !mgr->db) return RESULT_NOT_INITIALIZED;
 
-    // TODO: Load actuator configuration from database
-    // For now, actuators must be added programmatically
-    // This would query a db_actuators table if it existed
+    LOG_INFO("Loading actuators from database...");
 
-    LOG_INFO("Actuator configuration reload requested (not yet implemented)");
+    /* Query all actuators from database */
+    db_actuator_t *db_actuators = NULL;
+    int db_count = 0;
+
+    result_t r = db_actuator_list(mgr->db, &db_actuators, &db_count);
+    if (r != RESULT_OK) {
+        LOG_ERROR("Failed to query actuators from database");
+        return r;
+    }
+
+    if (db_count == 0) {
+        LOG_INFO("No actuators configured in database");
+        if (db_actuators) free(db_actuators);
+        return RESULT_OK;
+    }
+
+    LOG_INFO("Found %d actuators in database", db_count);
+
+    int added = 0;
+    int skipped = 0;
+
+    for (int i = 0; i < db_count; i++) {
+        db_actuator_t *db_act = &db_actuators[i];
+
+        /* Skip disabled actuators */
+        if (!db_act->enabled) {
+            LOG_DEBUG("Skipping disabled actuator: %s", db_act->name);
+            skipped++;
+            continue;
+        }
+
+        /* Check if actuator already exists at this slot */
+        if (find_actuator_by_slot(mgr, db_act->slot)) {
+            LOG_DEBUG("Actuator already loaded at slot %d, skipping", db_act->slot);
+            skipped++;
+            continue;
+        }
+
+        /* Convert db_actuator_t to actuator_config_t */
+        actuator_config_t config = {0};
+        config.id = db_act->id;
+        SAFE_STRNCPY(config.name, db_act->name, sizeof(config.name));
+        config.type = db_act->type;
+        config.profinet_slot = db_act->slot;
+        config.profinet_subslot = db_act->subslot > 0 ? db_act->subslot : 1;
+        config.gpio_pin = db_act->gpio_pin;
+        config.active_low = db_act->active_low;
+        config.pwm_capable = (db_act->type == ACTUATOR_TYPE_PWM ||
+                              db_act->type == ACTUATOR_TYPE_PUMP);
+        config.pwm_frequency_hz = db_act->pwm_frequency_hz;
+        config.max_on_time_sec = db_act->max_on_time_ms / 1000;
+        config.min_cycle_time_ms = db_act->min_on_time_ms;
+
+        /* Add the actuator */
+        r = actuator_manager_add(mgr, &config);
+        if (r == RESULT_OK) {
+            LOG_INFO("Loaded actuator: %s (slot %d, GPIO %d)",
+                     config.name, config.profinet_slot, config.gpio_pin);
+            added++;
+        } else {
+            LOG_WARNING("Failed to add actuator %s: %d", config.name, r);
+        }
+    }
+
+    free(db_actuators);
+
+    LOG_INFO("Actuator reload complete: %d added, %d skipped", added, skipped);
     return RESULT_OK;
 }

@@ -5,6 +5,8 @@
 
 #include "dialog_actuator.h"
 #include "tui/tui_common.h"
+#include "platform/board_detect.h"
+#include "db/db_actuators.h"
 #include <ncurses.h>
 #include <string.h>
 #include <stdlib.h>
@@ -55,6 +57,162 @@ static const char *SAFE_STATES[] = {
     "Hold"   /* SAFE_STATE_HOLD */
 };
 static const int SAFE_STATE_COUNT = 3;
+
+/* ============================================================================
+ * Pin Selector Popup
+ * ========================================================================== */
+
+typedef struct {
+    int pin;
+    const char *label;
+    bool in_use;
+} pin_option_t;
+
+/**
+ * Show GPIO pin selector popup with board-specific defaults
+ * Returns selected pin or -1 if cancelled
+ */
+static int show_pin_selector(int current_pin, const char *gpio_chip, int exclude_id) {
+    board_info_t board;
+    board_detect(&board);
+
+    /* Build list of suggested pins based on board type */
+    pin_option_t pins[16];
+    int pin_count = 0;
+
+    /* Add board-specific relay/output pins */
+    if (board.pins.gpio_relay_1 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.gpio_relay_1, "Relay 1", false};
+    }
+    if (board.pins.gpio_relay_2 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.gpio_relay_2, "Relay 2", false};
+    }
+    if (board.pins.gpio_relay_3 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.gpio_relay_3, "Relay 3", false};
+    }
+    if (board.pins.gpio_relay_4 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.gpio_relay_4, "Relay 4", false};
+    }
+
+    /* Add PWM pins if available */
+    if (board.pins.pwm_channel_0 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.pwm_channel_0, "PWM 0", false};
+    }
+    if (board.pins.pwm_channel_1 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.pwm_channel_1, "PWM 1", false};
+    }
+
+    /* Add input pins (can be used as outputs too) */
+    if (board.pins.gpio_input_1 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.gpio_input_1, "GPIO In 1", false};
+    }
+    if (board.pins.gpio_input_2 >= 0) {
+        pins[pin_count++] = (pin_option_t){board.pins.gpio_input_2, "GPIO In 2", false};
+    }
+
+    if (pin_count == 0) {
+        /* Fallback: common GPIO pins if no board detected */
+        pins[pin_count++] = (pin_option_t){17, "GPIO 17", false};
+        pins[pin_count++] = (pin_option_t){27, "GPIO 27", false};
+        pins[pin_count++] = (pin_option_t){22, "GPIO 22", false};
+        pins[pin_count++] = (pin_option_t){23, "GPIO 23", false};
+        pins[pin_count++] = (pin_option_t){24, "GPIO 24", false};
+        pins[pin_count++] = (pin_option_t){25, "GPIO 25", false};
+    }
+
+    /* Check which pins are already in use */
+    database_t *db = tui_get_database();
+    if (db) {
+        for (int i = 0; i < pin_count; i++) {
+            gpio_conflict_t conflict;
+            if (db_actuator_gpio_conflict_check(db, pins[i].pin, gpio_chip,
+                    exclude_id, &conflict) == RESULT_OK) {
+                pins[i].in_use = conflict.has_conflict;
+            }
+        }
+    }
+
+    /* Draw popup */
+    int dialog_h = pin_count + 6;
+    int dialog_w = 40;
+    int dialog_y = (LINES - dialog_h) / 2;
+    int dialog_x = (COLS - dialog_w) / 2;
+
+    WINDOW *popup = newwin(dialog_h, dialog_w, dialog_y, dialog_x);
+    keypad(popup, TRUE);
+    box(popup, 0, 0);
+
+    wattron(popup, A_BOLD);
+    mvwprintw(popup, 0, (dialog_w - 18) / 2, " Select GPIO Pin ");
+    wattroff(popup, A_BOLD);
+
+    /* Board info */
+    mvwprintw(popup, 1, 2, "Board: %s", board.name);
+    mvwprintw(popup, 2, 2, "Chip: %s", board.pins.gpio_chip);
+    mvwhline(popup, 3, 1, ACS_HLINE, dialog_w - 2);
+
+    int selected = 0;
+    /* Find current pin in list */
+    for (int i = 0; i < pin_count; i++) {
+        if (pins[i].pin == current_pin) {
+            selected = i;
+            break;
+        }
+    }
+
+    bool running = true;
+    while (running) {
+        /* Draw pin options */
+        for (int i = 0; i < pin_count; i++) {
+            if (i == selected) {
+                wattron(popup, A_REVERSE);
+            }
+
+            if (pins[i].in_use) {
+                wattron(popup, COLOR_PAIR(TUI_COLOR_ERROR));
+                mvwprintw(popup, 4 + i, 2, " GPIO %2d - %-12s [IN USE] ",
+                          pins[i].pin, pins[i].label);
+                wattroff(popup, COLOR_PAIR(TUI_COLOR_ERROR));
+            } else {
+                mvwprintw(popup, 4 + i, 2, " GPIO %2d - %-12s          ",
+                          pins[i].pin, pins[i].label);
+            }
+
+            if (i == selected) {
+                wattroff(popup, A_REVERSE);
+            }
+        }
+
+        wattron(popup, A_DIM);
+        mvwprintw(popup, dialog_h - 2, 2, "Enter: Select | Esc: Cancel");
+        wattroff(popup, A_DIM);
+
+        wrefresh(popup);
+
+        int ch = wgetch(popup);
+        switch (ch) {
+            case KEY_UP:
+                if (selected > 0) selected--;
+                break;
+            case KEY_DOWN:
+                if (selected < pin_count - 1) selected++;
+                break;
+            case '\n':
+            case KEY_ENTER:
+                if (!pins[selected].in_use) {
+                    delwin(popup);
+                    return pins[selected].pin;
+                }
+                break;
+            case 27:
+                running = false;
+                break;
+        }
+    }
+
+    delwin(popup);
+    return -1;
+}
 
 /* ============================================================================
  * Helper Functions
@@ -154,7 +312,10 @@ static void draw_dialog(void) {
         mvprintw(row, value_x, "%-10s", g_dlg.edit_buffer);
         attroff(A_UNDERLINE);
     } else {
-        mvprintw(row, value_x, "%d", g_dlg.form->gpio_pin);
+        mvprintw(row, value_x, "%-4d", g_dlg.form->gpio_pin);
+        attron(A_DIM);
+        printw("  [p=select]");
+        attroff(A_DIM);
     }
     row++;
 
@@ -435,6 +596,19 @@ static bool handle_input(int ch) {
 
         case KEY_RIGHT:
             handle_toggle_or_cycle();
+            break;
+
+        case 'p':
+        case 'P':
+            /* Open pin selector when on GPIO Pin field */
+            if (g_dlg.current_field == FIELD_GPIO_PIN) {
+                int new_pin = show_pin_selector(g_dlg.form->gpio_pin,
+                                                g_dlg.form->gpio_chip,
+                                                g_dlg.form->id);
+                if (new_pin >= 0) {
+                    g_dlg.form->gpio_pin = new_pin;
+                }
+            }
             break;
     }
 

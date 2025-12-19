@@ -170,8 +170,57 @@ static void draw_step_board_detect(void) {
         attroff(COLOR_PAIR(2));
         row++;
 
-        mvprintw(row++, 4, "Default pin assignments will be used for this board.");
-        mvprintw(row++, 4, "You can customize pin mappings in the Sensors/Actuators pages.");
+        /* Show board-specific pin configuration */
+        board_info_t board_info;
+        if (board_detect(&board_info) == RESULT_OK) {
+            pin_config_t *pins = &board_info.pins;
+
+            mvprintw(row++, 4, "GPIO Chip: %s", pins->gpio_chip);
+            row++;
+
+            attron(A_BOLD);
+            mvprintw(row++, 4, "Pre-configured GPIO Pins:");
+            attroff(A_BOLD);
+
+            /* Relay/Output pins */
+            mvprintw(row++, 6, "Relay/Output Pins:");
+            mvprintw(row++, 8, "Relay 1: GPIO %d    Relay 2: GPIO %d",
+                     pins->gpio_relay_1, pins->gpio_relay_2);
+            mvprintw(row++, 8, "Relay 3: GPIO %d    Relay 4: GPIO %d",
+                     pins->gpio_relay_3, pins->gpio_relay_4);
+
+            /* Input pins */
+            mvprintw(row++, 6, "Input Pins:");
+            mvprintw(row++, 8, "Input 1: GPIO %d    Input 2: GPIO %d",
+                     pins->gpio_input_1, pins->gpio_input_2);
+            mvprintw(row++, 8, "Input 3: GPIO %d    Input 4: GPIO %d",
+                     pins->gpio_input_3, pins->gpio_input_4);
+
+            /* PWM and special pins */
+            if (pins->pwm_channel_0 >= 0 || pins->pwm_channel_1 >= 0) {
+                mvprintw(row++, 6, "PWM Channels:");
+                if (pins->pwm_channel_0 >= 0) {
+                    mvprintw(row++, 8, "PWM 0: GPIO %d", pins->pwm_channel_0);
+                }
+                if (pins->pwm_channel_1 >= 0) {
+                    mvprintw(row++, 8, "PWM 1: GPIO %d", pins->pwm_channel_1);
+                }
+            }
+
+            /* 1-Wire */
+            if (pins->onewire_data >= 0) {
+                mvprintw(row++, 6, "1-Wire Data: GPIO %d", pins->onewire_data);
+            }
+
+            /* I2C buses */
+            mvprintw(row++, 6, "I2C Buses: %d (primary), %d (secondary)",
+                     pins->i2c_bus_primary, pins->i2c_bus_secondary);
+
+            row++;
+        }
+
+        mvprintw(row++, 4, "These pins will be used as defaults when adding sensors/actuators.");
+        mvprintw(row++, 4, "You can customize pin mappings using the pin selector [p].");
     } else {
         attron(COLOR_PAIR(3));  /* Yellow/warning */
         mvprintw(row++, 4, "Board auto-detection inconclusive");
@@ -179,6 +228,12 @@ static void draw_step_board_detect(void) {
         row++;
         mvprintw(row++, 4, "Generic GPIO configuration will be used.");
         mvprintw(row++, 4, "You may need to manually configure pin mappings.");
+        row++;
+        mvprintw(row++, 4, "Common GPIO pins (Raspberry Pi compatible):");
+        mvprintw(row++, 6, "Relay/Output: GPIO 17, 27, 22, 23");
+        mvprintw(row++, 6, "Input: GPIO 5, 6, 13, 19");
+        mvprintw(row++, 6, "PWM: GPIO 18, 19");
+        mvprintw(row++, 6, "1-Wire: GPIO 4");
     }
 
     row += 2;

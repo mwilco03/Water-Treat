@@ -91,22 +91,60 @@ static profinet_slot_t* add_slot(int slot, int subslot) {
 }
 
 #ifdef HAVE_PNET
+static void poll_output_slots(void) {
+    /* Poll all output slots for new data from controller */
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        profinet_slot_t *slot = &g_pn.slots[i];
+
+        /* Skip slots that don't have output data */
+        if (!slot->plugged || slot->output_size == 0) {
+            continue;
+        }
+
+        uint8_t data[PROFINET_DATA_SIZE];
+        uint8_t iops;
+        bool new_data;
+        uint16_t len = slot->output_size;
+
+        int ret = pnet_output_get_data_and_iops(g_pn.pnet, 0, slot->slot, slot->subslot,
+                                                 &new_data, data, &len, &iops);
+        if (ret == 0 && new_data && iops == PNET_IOXS_GOOD) {
+            /* Check if data actually changed to avoid redundant callbacks */
+            if (len > 0 && memcmp(data, slot->output_data, len) != 0) {
+                /* New data received - cache and dispatch to listeners */
+                memcpy(slot->output_data, data, len);
+                slot->output_valid = true;
+
+                /* Call the data callback (actuator manager handler) */
+                if (g_pn.on_data_received) {
+                    g_pn.on_data_received(slot->slot, slot->subslot, data, len, g_pn.callback_ctx);
+                }
+            }
+        }
+    }
+}
+
 static void* profinet_tick_thread(void *arg) {
     UNUSED(arg);
-    
+
     while (g_pn.running) {
         pthread_mutex_lock(&g_pn.mutex);
-        
+
         if (g_pn.pnet) {
             pnet_handle_periodic(g_pn.pnet);
             g_pn.cycle_count++;
+
+            /* Poll output slots when connected to controller */
+            if (g_pn.connected) {
+                poll_output_slots();
+            }
         }
-        
+
         pthread_mutex_unlock(&g_pn.mutex);
-        
+
         usleep(PROFINET_TICK_INTERVAL_US);
     }
-    
+
     return NULL;
 }
 #endif

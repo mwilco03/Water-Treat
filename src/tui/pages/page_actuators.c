@@ -47,6 +47,31 @@ static struct {
     int scroll_offset;
 } g_page = {0};
 
+/* Show GPIO pin conflict error dialog */
+static void show_gpio_conflict_dialog(int gpio_pin, const char *conflict_name) {
+    WINDOW *dialog = newwin(9, 55, 8, 12);
+    wattron(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+    box(dialog, 0, 0);
+    wattroff(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+
+    wattron(dialog, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+    mvwprintw(dialog, 0, 14, " GPIO PIN CONFLICT ");
+    wattroff(dialog, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+
+    mvwprintw(dialog, 2, 3, "GPIO pin %d is already in use!", gpio_pin);
+    mvwprintw(dialog, 4, 3, "Conflicting actuator: %s", conflict_name);
+    mvwprintw(dialog, 6, 3, "Please choose a different GPIO pin.");
+
+    wattron(dialog, A_DIM);
+    mvwprintw(dialog, 8, 18, " Press any key ");
+    wattroff(dialog, A_DIM);
+
+    wrefresh(dialog);
+    nodelay(dialog, FALSE);
+    wgetch(dialog);
+    delwin(dialog);
+}
+
 static void load_actuators(void) {
     g_page.actuator_count = 0;
 
@@ -336,6 +361,20 @@ static void show_add_dialog(void) {
                 {
                     database_t *db = tui_get_database();
                     if (db) {
+                        /* Check for GPIO pin conflict */
+                        gpio_conflict_t conflict;
+                        if (db_actuator_gpio_conflict_check(db, gpio_pin,
+                                "gpiochip0", 0, &conflict) == RESULT_OK &&
+                            conflict.has_conflict) {
+                            /* Show error in dialog */
+                            wattron(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+                            mvwprintw(dialog, 10, 2, "ERROR: GPIO %d used by '%s'",
+                                      gpio_pin, conflict.conflicting_name);
+                            wattroff(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+                            wrefresh(dialog);
+                            break;
+                        }
+
                         db_actuator_t act = {0};
                         SAFE_STRNCPY(act.name, name, sizeof(act.name));
                         act.slot = slot;
@@ -422,6 +461,17 @@ void page_actuators_input(WINDOW *win, int ch) {
                     actuator_form_t form;
                     dialog_actuator_init_form(&form);
                     if (dialog_actuator_show(ACTUATOR_DIALOG_ADD, &form)) {
+                        /* Check for GPIO pin conflict before saving */
+                        gpio_conflict_t conflict;
+                        if (db_actuator_gpio_conflict_check(db, form.gpio_pin,
+                                form.gpio_chip, 0, &conflict) == RESULT_OK &&
+                            conflict.has_conflict) {
+                            show_gpio_conflict_dialog(form.gpio_pin, conflict.conflicting_name);
+                            tui_set_status("GPIO pin %d already in use by '%s'",
+                                           form.gpio_pin, conflict.conflicting_name);
+                            break;
+                        }
+
                         db_actuator_t db_act = {0};
                         dialog_actuator_save(&form, &db_act);
                         int new_id = 0;
@@ -449,6 +499,17 @@ void page_actuators_input(WINDOW *win, int ch) {
                         actuator_form_t form;
                         dialog_actuator_load(&form, &db_act);
                         if (dialog_actuator_show(ACTUATOR_DIALOG_EDIT, &form)) {
+                            /* Check for GPIO pin conflict (excluding this actuator) */
+                            gpio_conflict_t conflict;
+                            if (db_actuator_gpio_conflict_check(db, form.gpio_pin,
+                                    form.gpio_chip, form.id, &conflict) == RESULT_OK &&
+                                conflict.has_conflict) {
+                                show_gpio_conflict_dialog(form.gpio_pin, conflict.conflicting_name);
+                                tui_set_status("GPIO pin %d already in use by '%s'",
+                                               form.gpio_pin, conflict.conflicting_name);
+                                break;
+                            }
+
                             dialog_actuator_save(&form, &db_act);
                             if (db_actuator_update(db, &db_act) == RESULT_OK) {
                                 tui_set_status("Actuator '%s' updated", form.name);

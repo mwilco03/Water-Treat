@@ -13,6 +13,8 @@
 #include "pages/page_alarms.h"
 #include "pages/page_logging.h"
 #include "pages/page_actuators.h"
+#include "pages/page_login.h"
+#include "auth/auth.h"
 #include "utils/logger.h"
 #include <ncurses.h>
 #include <signal.h>
@@ -234,8 +236,16 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
 }
 
 void tui_run(void) {
+    /* Require login before accessing main interface */
+    result_t login_result = page_login_run(g_tui.main_win);
+    if (login_result != RESULT_OK) {
+        LOG_INFO("Login cancelled or failed - exiting TUI");
+        return;
+    }
+    LOG_INFO("Login successful - starting main interface");
+
     g_tui.running = true;
-    
+
     while (g_tui.running) {
         // Draw status bar and footer
         draw_status_bar();
