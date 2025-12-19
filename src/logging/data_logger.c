@@ -101,7 +101,7 @@ static data_logger_t g_logger = {0};
  * Internal Functions
  * ========================================================================== */
 
-static size_t curl_write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+static size_t logger_curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
     UNUSED(contents); UNUSED(userp);
     return size * nmemb;
 }
@@ -115,7 +115,7 @@ static result_t init_curl(void) {
         return RESULT_ERROR;
     }
     
-    curl_easy_setopt(g_logger.curl, CURLOPT_WRITEFUNCTION, curl_write_callback);
+    curl_easy_setopt(g_logger.curl, CURLOPT_WRITEFUNCTION, logger_curl_write_cb);
     curl_easy_setopt(g_logger.curl, CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(g_logger.curl, CURLOPT_CONNECTTIMEOUT, 5L);
     
