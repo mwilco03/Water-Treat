@@ -147,8 +147,9 @@ jobs:
             | Architecture | Description | File |
             |-------------|-------------|------|
             | x86_64 | Intel/AMD 64-bit | `water-treat-${{ steps.version.outputs.version }}-x86_64.tar.gz` |
-            | aarch64 | ARM 64-bit (RPi 3/4/5) | `water-treat-${{ steps.version.outputs.version }}-aarch64.tar.gz` |
-            | armv7hf | ARM 32-bit (RPi 2/Zero) | `water-treat-${{ steps.version.outputs.version }}-armv7hf.tar.gz` |
+            | aarch64 | ARM 64-bit (RPi 3/4/5, Orange Pi, Le Potato) | `water-treat-${{ steps.version.outputs.version }}-aarch64.tar.gz` |
+            | armv7hf | ARM 32-bit ARMv7 (RPi 2, Zero 2 W) | `water-treat-${{ steps.version.outputs.version }}-armv7hf.tar.gz` |
+            | armv6 | ARM 32-bit ARMv6 (RPi 1, Pi Zero original) | `water-treat-${{ steps.version.outputs.version }}-armv6.tar.gz` |
 
             ### Installation
 

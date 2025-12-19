@@ -2,8 +2,12 @@
 # Reusable Build Workflow
 # ============================================================
 # Purpose: Shared build logic for CI and Release workflows
-# Architectures: x86_64 (native), aarch64, armv7hf (cross-compile)
-# Naming: Consistent use of x86_64, aarch64, armv7hf throughout
+# Architectures:
+#   - x86_64 (native) - Intel/AMD 64-bit
+#   - aarch64 (cross) - ARM 64-bit (RPi 3/4/5, Orange Pi, Le Potato)
+#   - armv7hf (cross) - ARM 32-bit (RPi 2, Zero 2 W, older boards)
+#   - armv6 (cross)   - ARM 32-bit (RPi 1, Pi Zero original)
+# Naming: Consistent architecture names throughout
 # ============================================================
 name: Build
 
@@ -42,6 +46,8 @@ jobs:
             cross: false
             packages: "build-essential cmake pkg-config libncurses5-dev libsqlite3-dev libcurl4-openssl-dev libcjson-dev libgpiod-dev libsystemd-dev"
             toolchain: ""
+            toolchain_file: ""
+            cmake_flags: ""
             debian_arch: ""
             cross_packages: ""
             optional: false
@@ -51,15 +57,30 @@ jobs:
             cross: true
             packages: "build-essential cmake pkg-config"
             toolchain: "aarch64-linux-gnu"
+            toolchain_file: "toolchain/aarch64-linux-gnu.cmake"
+            cmake_flags: "-march=armv8-a"
             debian_arch: "arm64"
             cross_packages: "gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
             optional: true
 
-          # ARM32 cross-compilation (Raspberry Pi 2, Zero W, older boards)
+          # ARM32 ARMv7 cross-compilation (Raspberry Pi 2, Zero 2 W, older boards)
           - arch: armv7hf
             cross: true
             packages: "build-essential cmake pkg-config"
             toolchain: "arm-linux-gnueabihf"
+            toolchain_file: "toolchain/arm-linux-gnueabihf.cmake"
+            cmake_flags: "-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard"
+            debian_arch: "armhf"
+            cross_packages: "gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            optional: true
+
+          # ARM32 ARMv6 cross-compilation (Raspberry Pi 1, Pi Zero original)
+          - arch: armv6
+            cross: true
+            packages: "build-essential cmake pkg-config"
+            toolchain: "arm-linux-gnueabihf"
+            toolchain_file: "toolchain/armv6-linux-gnueabihf.cmake"
+            cmake_flags: "-march=armv6 -mfpu=vfp -mfloat-abi=hard"
             debian_arch: "armhf"
             cross_packages: "gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
             optional: true
@@ -125,8 +146,13 @@ jobs:
       - name: Configure CMake (cross-compile)
         if: ${{ matrix.cross }}
         run: |
-          # Generate toolchain file
-          cat > build-toolchain.cmake << 'EOF'
+          # Use repo toolchain file if available, otherwise generate one
+          if [ -n "${{ matrix.toolchain_file }}" ] && [ -f "${{ matrix.toolchain_file }}" ]; then
+            TOOLCHAIN_FILE="${{ matrix.toolchain_file }}"
+            echo "Using repo toolchain: $TOOLCHAIN_FILE"
+          else
+            # Generate toolchain file for architectures without repo toolchain
+            cat > build-toolchain.cmake << 'EOF'
           set(CMAKE_SYSTEM_NAME Linux)
           set(CMAKE_SYSTEM_PROCESSOR ${{ matrix.arch }})
           set(CMAKE_C_COMPILER ${{ matrix.toolchain }}-gcc)
@@ -137,10 +163,13 @@ jobs:
           set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
           set(PKG_CONFIG_EXECUTABLE /usr/bin/pkg-config)
           EOF
+            TOOLCHAIN_FILE="build-toolchain.cmake"
+            echo "Generated toolchain: $TOOLCHAIN_FILE"
+          fi
 
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ inputs.build_type }} \
-            -DCMAKE_TOOLCHAIN_FILE=build-toolchain.cmake \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
             -DBUILD_TESTS=OFF
 
       # ============================================================
