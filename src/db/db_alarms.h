@@ -25,6 +25,16 @@ typedef enum {
     ALARM_STATE_CLEARED
 } alarm_state_t;
 
+/**
+ * Interlock action when alarm triggers
+ */
+typedef enum {
+    INTERLOCK_ACTION_NONE = 0,   /* No actuator action */
+    INTERLOCK_ACTION_OFF,        /* Turn actuator OFF */
+    INTERLOCK_ACTION_ON,         /* Turn actuator ON */
+    INTERLOCK_ACTION_PWM,        /* Set PWM duty cycle */
+} interlock_action_t;
+
 typedef struct {
     int id;
     int module_id;
@@ -36,6 +46,13 @@ typedef struct {
     bool enabled;
     bool auto_clear;
     int hysteresis_percent;
+
+    /* Safety Interlock - actuator override when alarm triggers */
+    bool interlock_enabled;           /* Enable actuator interlock */
+    int interlock_slot;               /* Target actuator slot (9-16) */
+    interlock_action_t interlock_action;  /* Action to take on alarm */
+    uint8_t interlock_pwm_duty;       /* PWM duty if action=PWM (0-100) */
+    bool release_on_clear;            /* Release to controller when alarm clears */
 } db_alarm_rule_t;
 
 typedef struct {

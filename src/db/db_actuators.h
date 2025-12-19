@@ -71,6 +71,27 @@ result_t db_actuator_state_update(database_t *db, int actuator_id, bool state, i
 result_t db_actuator_state_get(database_t *db, int actuator_id, db_actuator_state_t *state);
 result_t db_actuator_state_increment_cycle(database_t *db, int actuator_id);
 
+// GPIO pin conflict detection
+typedef struct {
+    bool has_conflict;
+    int conflicting_actuator_id;
+    char conflicting_name[MAX_NAME_LEN];
+} gpio_conflict_t;
+
+/**
+ * Check if GPIO pin is already used by another actuator
+ * @param db Database handle
+ * @param gpio_pin GPIO pin number
+ * @param gpio_chip GPIO chip name
+ * @param exclude_actuator_id Actuator ID to exclude from check (0 for new)
+ * @param conflict Output conflict information
+ * @return RESULT_OK on success
+ */
+result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
+                                         const char *gpio_chip,
+                                         int exclude_actuator_id,
+                                         gpio_conflict_t *conflict);
+
 // Utility
 void db_actuator_free_list(db_actuator_t *actuators);
 const char* actuator_type_to_string(actuator_type_t type);

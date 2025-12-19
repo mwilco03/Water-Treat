@@ -366,3 +366,78 @@ void db_actuator_free_list(db_actuator_t *actuators) {
         free(actuators);
     }
 }
+
+/* ============================================================================
+ * GPIO Pin Conflict Detection
+ * ========================================================================== */
+
+result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
+                                         const char *gpio_chip,
+                                         int exclude_actuator_id,
+                                         gpio_conflict_t *conflict) {
+    CHECK_NULL(db); CHECK_NULL(conflict);
+    if (!db->db) return RESULT_NOT_INITIALIZED;
+
+    memset(conflict, 0, sizeof(*conflict));
+    conflict->has_conflict = false;
+
+    const char *chip = gpio_chip && gpio_chip[0] ? gpio_chip : "gpiochip0";
+    char gpio_str[16];
+    snprintf(gpio_str, sizeof(gpio_str), "%d", gpio_pin);
+
+    /* Query for any actuator using this GPIO pin on the same chip */
+    const char *sql = "SELECT id, name FROM actuators "
+                      "WHERE gpio_pin = ? AND gpio_chip = ? AND id != ?;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        LOG_ERROR("Prepare failed: %s", sqlite3_errmsg(db->db));
+        return RESULT_ERROR;
+    }
+
+    sqlite3_bind_int(stmt, 1, gpio_pin);
+    sqlite3_bind_text(stmt, 2, chip, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, exclude_actuator_id);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        /* Found a conflict with actuator */
+        conflict->has_conflict = true;
+        conflict->conflicting_actuator_id = sqlite3_column_int(stmt, 0);
+        const char *name = (const char*)sqlite3_column_text(stmt, 1);
+        if (name) {
+            SAFE_STRNCPY(conflict->conflicting_name, name, sizeof(conflict->conflicting_name));
+        }
+        LOG_DEBUG("GPIO conflict: pin %d on %s already used by actuator %d (%s)",
+                  gpio_pin, chip, conflict->conflicting_actuator_id, conflict->conflicting_name);
+        sqlite3_finalize(stmt);
+        return RESULT_OK;
+    }
+    sqlite3_finalize(stmt);
+
+    /* Also check sensors that use GPIO (DHT22, float switches, etc.)
+     * Sensors store GPIO pin in 'address' field when interface is GPIO-based */
+    const char *sensor_sql =
+        "SELECT m.name FROM physical_sensors ps "
+        "JOIN modules m ON ps.module_id = m.id "
+        "WHERE ps.address = ? AND ps.sensor_type IN ('DHT22', 'DHT11', 'FLOAT_SWITCH', 'GPIO');";
+
+    if (sqlite3_prepare_v2(db->db, sensor_sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, gpio_str, -1, SQLITE_TRANSIENT);
+
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            /* Found a conflict with sensor */
+            conflict->has_conflict = true;
+            conflict->conflicting_actuator_id = -1;  /* Indicate sensor conflict */
+            const char *name = (const char*)sqlite3_column_text(stmt, 0);
+            if (name) {
+                snprintf(conflict->conflicting_name, sizeof(conflict->conflicting_name),
+                         "Sensor: %s", name);
+            }
+            LOG_DEBUG("GPIO conflict: pin %d already used by sensor %s",
+                      gpio_pin, conflict->conflicting_name);
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    return RESULT_OK;
+}

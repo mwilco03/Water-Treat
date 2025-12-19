@@ -13,15 +13,15 @@
 result_t db_alarm_rule_create(database_t *db, db_alarm_rule_t *rule, int *rule_id) {
     CHECK_NULL(db); CHECK_NULL(rule); CHECK_NULL(rule_id);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
-    const char *sql = "INSERT INTO alarm_rules (module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
+
+    const char *sql = "INSERT INTO alarm_rules (module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent, interlock_enabled, interlock_slot, interlock_action, interlock_pwm_duty, release_on_clear) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         LOG_ERROR("Prepare failed: %s", sqlite3_errmsg(db->db));
         return RESULT_ERROR;
     }
-    
+
     sqlite3_bind_int(stmt, 1, rule->module_id);
     sqlite3_bind_text(stmt, 2, rule->name, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 3, (int)rule->condition);
@@ -31,31 +31,37 @@ result_t db_alarm_rule_create(database_t *db, db_alarm_rule_t *rule, int *rule_i
     sqlite3_bind_int(stmt, 7, rule->enabled ? 1 : 0);
     sqlite3_bind_int(stmt, 8, rule->auto_clear ? 1 : 0);
     sqlite3_bind_int(stmt, 9, rule->hysteresis_percent);
-    
+    sqlite3_bind_int(stmt, 10, rule->interlock_enabled ? 1 : 0);
+    sqlite3_bind_int(stmt, 11, rule->interlock_slot);
+    sqlite3_bind_int(stmt, 12, (int)rule->interlock_action);
+    sqlite3_bind_int(stmt, 13, rule->interlock_pwm_duty);
+    sqlite3_bind_int(stmt, 14, rule->release_on_clear ? 1 : 0);
+
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
-    
+
     if (rc != SQLITE_DONE) {
         LOG_ERROR("Insert alarm rule failed: %s", sqlite3_errmsg(db->db));
         return RESULT_ERROR;
     }
-    
+
     *rule_id = (int)sqlite3_last_insert_rowid(db->db);
     rule->id = *rule_id;
-    
-    LOG_INFO("Created alarm rule %d: %s for module %d", *rule_id, rule->name, rule->module_id);
+
+    LOG_INFO("Created alarm rule %d: %s for module %d%s", *rule_id, rule->name, rule->module_id,
+             rule->interlock_enabled ? " (with interlock)" : "");
     return RESULT_OK;
 }
 
 result_t db_alarm_rule_update(database_t *db, db_alarm_rule_t *rule) {
     CHECK_NULL(db); CHECK_NULL(rule);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
-    const char *sql = "UPDATE alarm_rules SET module_id=?, name=?, condition=?, threshold_high=?, threshold_low=?, severity=?, enabled=?, auto_clear=?, hysteresis_percent=? WHERE id=?;";
+
+    const char *sql = "UPDATE alarm_rules SET module_id=?, name=?, condition=?, threshold_high=?, threshold_low=?, severity=?, enabled=?, auto_clear=?, hysteresis_percent=?, interlock_enabled=?, interlock_slot=?, interlock_action=?, interlock_pwm_duty=?, release_on_clear=? WHERE id=?;";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
-    
+
     sqlite3_bind_int(stmt, 1, rule->module_id);
     sqlite3_bind_text(stmt, 2, rule->name, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 3, (int)rule->condition);
@@ -65,11 +71,16 @@ result_t db_alarm_rule_update(database_t *db, db_alarm_rule_t *rule) {
     sqlite3_bind_int(stmt, 7, rule->enabled ? 1 : 0);
     sqlite3_bind_int(stmt, 8, rule->auto_clear ? 1 : 0);
     sqlite3_bind_int(stmt, 9, rule->hysteresis_percent);
-    sqlite3_bind_int(stmt, 10, rule->id);
-    
+    sqlite3_bind_int(stmt, 10, rule->interlock_enabled ? 1 : 0);
+    sqlite3_bind_int(stmt, 11, rule->interlock_slot);
+    sqlite3_bind_int(stmt, 12, (int)rule->interlock_action);
+    sqlite3_bind_int(stmt, 13, rule->interlock_pwm_duty);
+    sqlite3_bind_int(stmt, 14, rule->release_on_clear ? 1 : 0);
+    sqlite3_bind_int(stmt, 15, rule->id);
+
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
-    
+
     return rc == SQLITE_DONE ? RESULT_OK : RESULT_ERROR;
 }
 
@@ -96,18 +107,18 @@ result_t db_alarm_rule_delete(database_t *db, int rule_id) {
 result_t db_alarm_rule_get(database_t *db, int rule_id, db_alarm_rule_t *rule) {
     CHECK_NULL(db); CHECK_NULL(rule);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
-    const char *sql = "SELECT id, module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent FROM alarm_rules WHERE id=?;";
+
+    const char *sql = "SELECT id, module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent, interlock_enabled, interlock_slot, interlock_action, interlock_pwm_duty, release_on_clear FROM alarm_rules WHERE id=?;";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
     sqlite3_bind_int(stmt, 1, rule_id);
-    
+
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
         return RESULT_NOT_FOUND;
     }
-    
+
     rule->id = sqlite3_column_int(stmt, 0);
     rule->module_id = sqlite3_column_int(stmt, 1);
     SAFE_STRNCPY(rule->name, (const char*)sqlite3_column_text(stmt, 2), sizeof(rule->name));
@@ -118,7 +129,12 @@ result_t db_alarm_rule_get(database_t *db, int rule_id, db_alarm_rule_t *rule) {
     rule->enabled = sqlite3_column_int(stmt, 7) != 0;
     rule->auto_clear = sqlite3_column_int(stmt, 8) != 0;
     rule->hysteresis_percent = sqlite3_column_int(stmt, 9);
-    
+    rule->interlock_enabled = sqlite3_column_int(stmt, 10) != 0;
+    rule->interlock_slot = sqlite3_column_int(stmt, 11);
+    rule->interlock_action = (interlock_action_t)sqlite3_column_int(stmt, 12);
+    rule->interlock_pwm_duty = (uint8_t)sqlite3_column_int(stmt, 13);
+    rule->release_on_clear = sqlite3_column_int(stmt, 14) != 0;
+
     sqlite3_finalize(stmt);
     return RESULT_OK;
 }
@@ -126,30 +142,30 @@ result_t db_alarm_rule_get(database_t *db, int rule_id, db_alarm_rule_t *rule) {
 result_t db_alarm_rule_list(database_t *db, db_alarm_rule_t **rules, int *count) {
     CHECK_NULL(db); CHECK_NULL(rules); CHECK_NULL(count);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
+
     *rules = NULL;
     *count = 0;
-    
+
     const char *count_sql = "SELECT COUNT(*) FROM alarm_rules;";
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db->db, count_sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
-    
+
     int total = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) total = sqlite3_column_int(stmt, 0);
     sqlite3_finalize(stmt);
-    
+
     if (total == 0) return RESULT_OK;
-    
+
     *rules = calloc(total, sizeof(db_alarm_rule_t));
     if (!*rules) return RESULT_NO_MEMORY;
-    
-    const char *sql = "SELECT id, module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent FROM alarm_rules ORDER BY module_id, id;";
+
+    const char *sql = "SELECT id, module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent, interlock_enabled, interlock_slot, interlock_action, interlock_pwm_duty, release_on_clear FROM alarm_rules ORDER BY module_id, id;";
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         free(*rules);
         *rules = NULL;
         return RESULT_ERROR;
     }
-    
+
     int idx = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW && idx < total) {
         (*rules)[idx].id = sqlite3_column_int(stmt, 0);
@@ -162,9 +178,14 @@ result_t db_alarm_rule_list(database_t *db, db_alarm_rule_t **rules, int *count)
         (*rules)[idx].enabled = sqlite3_column_int(stmt, 7) != 0;
         (*rules)[idx].auto_clear = sqlite3_column_int(stmt, 8) != 0;
         (*rules)[idx].hysteresis_percent = sqlite3_column_int(stmt, 9);
+        (*rules)[idx].interlock_enabled = sqlite3_column_int(stmt, 10) != 0;
+        (*rules)[idx].interlock_slot = sqlite3_column_int(stmt, 11);
+        (*rules)[idx].interlock_action = (interlock_action_t)sqlite3_column_int(stmt, 12);
+        (*rules)[idx].interlock_pwm_duty = (uint8_t)sqlite3_column_int(stmt, 13);
+        (*rules)[idx].release_on_clear = sqlite3_column_int(stmt, 14) != 0;
         idx++;
     }
-    
+
     sqlite3_finalize(stmt);
     *count = idx;
     return RESULT_OK;
@@ -173,31 +194,31 @@ result_t db_alarm_rule_list(database_t *db, db_alarm_rule_t **rules, int *count)
 result_t db_alarm_rule_list_by_module(database_t *db, int module_id, db_alarm_rule_t **rules, int *count) {
     CHECK_NULL(db); CHECK_NULL(rules); CHECK_NULL(count);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
+
     *rules = NULL;
     *count = 0;
-    
-    const char *sql = "SELECT id, module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent FROM alarm_rules WHERE module_id=? ORDER BY id;";
+
+    const char *sql = "SELECT id, module_id, name, condition, threshold_high, threshold_low, severity, enabled, auto_clear, hysteresis_percent, interlock_enabled, interlock_slot, interlock_action, interlock_pwm_duty, release_on_clear FROM alarm_rules WHERE module_id=? ORDER BY id;";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
     sqlite3_bind_int(stmt, 1, module_id);
-    
+
     int row_count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) row_count++;
     sqlite3_reset(stmt);
-    
+
     if (row_count == 0) {
         sqlite3_finalize(stmt);
         return RESULT_OK;
     }
-    
+
     *rules = calloc(row_count, sizeof(db_alarm_rule_t));
     if (!*rules) {
         sqlite3_finalize(stmt);
         return RESULT_NO_MEMORY;
     }
-    
+
     int idx = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW && idx < row_count) {
         (*rules)[idx].id = sqlite3_column_int(stmt, 0);
@@ -210,9 +231,14 @@ result_t db_alarm_rule_list_by_module(database_t *db, int module_id, db_alarm_ru
         (*rules)[idx].enabled = sqlite3_column_int(stmt, 7) != 0;
         (*rules)[idx].auto_clear = sqlite3_column_int(stmt, 8) != 0;
         (*rules)[idx].hysteresis_percent = sqlite3_column_int(stmt, 9);
+        (*rules)[idx].interlock_enabled = sqlite3_column_int(stmt, 10) != 0;
+        (*rules)[idx].interlock_slot = sqlite3_column_int(stmt, 11);
+        (*rules)[idx].interlock_action = (interlock_action_t)sqlite3_column_int(stmt, 12);
+        (*rules)[idx].interlock_pwm_duty = (uint8_t)sqlite3_column_int(stmt, 13);
+        (*rules)[idx].release_on_clear = sqlite3_column_int(stmt, 14) != 0;
         idx++;
     }
-    
+
     sqlite3_finalize(stmt);
     *count = idx;
     return RESULT_OK;

@@ -12,6 +12,7 @@
 
 #include "page_actuators.h"
 #include "../tui_common.h"
+#include "tui/dialogs/dialog_actuator.h"
 #include "db/database.h"
 #include "db/db_actuators.h"
 #include "actuators/actuator_manager.h"
@@ -45,6 +46,31 @@ static struct {
     int selected;
     int scroll_offset;
 } g_page = {0};
+
+/* Show GPIO pin conflict error dialog */
+static void show_gpio_conflict_dialog(int gpio_pin, const char *conflict_name) {
+    WINDOW *dialog = newwin(9, 55, 8, 12);
+    wattron(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+    box(dialog, 0, 0);
+    wattroff(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+
+    wattron(dialog, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+    mvwprintw(dialog, 0, 14, " GPIO PIN CONFLICT ");
+    wattroff(dialog, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+
+    mvwprintw(dialog, 2, 3, "GPIO pin %d is already in use!", gpio_pin);
+    mvwprintw(dialog, 4, 3, "Conflicting actuator: %s", conflict_name);
+    mvwprintw(dialog, 6, 3, "Please choose a different GPIO pin.");
+
+    wattron(dialog, A_DIM);
+    mvwprintw(dialog, 8, 18, " Press any key ");
+    wattroff(dialog, A_DIM);
+
+    wrefresh(dialog);
+    nodelay(dialog, FALSE);
+    wgetch(dialog);
+    delwin(dialog);
+}
 
 static void load_actuators(void) {
     g_page.actuator_count = 0;
@@ -81,13 +107,14 @@ static void load_actuators(void) {
                 SAFE_STRNCPY(a->type, "Unknown", sizeof(a->type));
         }
 
-        /* Get current state from actuator manager */
+        /* Get current state from actuator manager (including manual mode) */
         actuator_state_t state;
         uint8_t pwm_duty = 0;
-        if (actuator_manager_get_state(&g_actuator_mgr, a->slot, &state, &pwm_duty) == RESULT_OK) {
+        bool manual_mode = false;
+        if (actuator_manager_get_full_state(&g_actuator_mgr, a->slot, &state, &pwm_duty, &manual_mode) == RESULT_OK) {
             a->state = (state == ACTUATOR_STATE_ON);
             a->fault = (state == ACTUATOR_STATE_FAULT);
-            a->manual_mode = false;  /* TODO: track manual mode */
+            a->manual_mode = manual_mode;
             a->pwm_duty = pwm_duty;
         } else {
             a->state = false;
@@ -335,6 +362,20 @@ static void show_add_dialog(void) {
                 {
                     database_t *db = tui_get_database();
                     if (db) {
+                        /* Check for GPIO pin conflict */
+                        gpio_conflict_t conflict;
+                        if (db_actuator_gpio_conflict_check(db, gpio_pin,
+                                "gpiochip0", 0, &conflict) == RESULT_OK &&
+                            conflict.has_conflict) {
+                            /* Show error in dialog */
+                            wattron(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+                            mvwprintw(dialog, 10, 2, "ERROR: GPIO %d used by '%s'",
+                                      gpio_pin, conflict.conflicting_name);
+                            wattroff(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
+                            wrefresh(dialog);
+                            break;
+                        }
+
                         db_actuator_t act = {0};
                         SAFE_STRNCPY(act.name, name, sizeof(act.name));
                         act.slot = slot;
@@ -412,8 +453,97 @@ void page_actuators_input(WINDOW *win, int ch) {
             break;
 
         case 'a':
-        case 'A':
-            show_add_dialog();
+        case 'n':
+        case 'N':
+            /* Add new actuator */
+            {
+                database_t *db = tui_get_database();
+                if (db) {
+                    actuator_form_t form;
+                    dialog_actuator_init_form(&form);
+                    if (dialog_actuator_show(ACTUATOR_DIALOG_ADD, &form)) {
+                        /* Check for GPIO pin conflict before saving */
+                        gpio_conflict_t conflict;
+                        if (db_actuator_gpio_conflict_check(db, form.gpio_pin,
+                                form.gpio_chip, 0, &conflict) == RESULT_OK &&
+                            conflict.has_conflict) {
+                            show_gpio_conflict_dialog(form.gpio_pin, conflict.conflicting_name);
+                            tui_set_status("GPIO pin %d already in use by '%s'",
+                                           form.gpio_pin, conflict.conflicting_name);
+                            break;
+                        }
+
+                        db_actuator_t db_act = {0};
+                        dialog_actuator_save(&form, &db_act);
+                        int new_id = 0;
+                        if (db_actuator_create(db, &db_act, &new_id) == RESULT_OK) {
+                            tui_set_status("Actuator '%s' created (ID: %d)", form.name, new_id);
+                            load_actuators();
+                        } else {
+                            tui_set_status("Failed to create actuator");
+                        }
+                    }
+                }
+            }
+            break;
+
+        case 'e':
+        case '\n':
+        case KEY_ENTER:
+            /* Edit selected actuator */
+            if (g_page.actuator_count > 0) {
+                database_t *db = tui_get_database();
+                if (db) {
+                    actuator_item_t *item = &g_page.actuators[g_page.selected];
+                    db_actuator_t db_act = {0};
+                    if (db_actuator_get(db, item->id, &db_act) == RESULT_OK) {
+                        actuator_form_t form;
+                        dialog_actuator_load(&form, &db_act);
+                        if (dialog_actuator_show(ACTUATOR_DIALOG_EDIT, &form)) {
+                            /* Check for GPIO pin conflict (excluding this actuator) */
+                            gpio_conflict_t conflict;
+                            if (db_actuator_gpio_conflict_check(db, form.gpio_pin,
+                                    form.gpio_chip, form.id, &conflict) == RESULT_OK &&
+                                conflict.has_conflict) {
+                                show_gpio_conflict_dialog(form.gpio_pin, conflict.conflicting_name);
+                                tui_set_status("GPIO pin %d already in use by '%s'",
+                                               form.gpio_pin, conflict.conflicting_name);
+                                break;
+                            }
+
+                            dialog_actuator_save(&form, &db_act);
+                            if (db_actuator_update(db, &db_act) == RESULT_OK) {
+                                tui_set_status("Actuator '%s' updated", form.name);
+                                load_actuators();
+                            } else {
+                                tui_set_status("Failed to update actuator");
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+
+        case 'd':
+        case KEY_DC:
+            /* Delete selected actuator */
+            if (g_page.actuator_count > 0) {
+                database_t *db = tui_get_database();
+                if (db) {
+                    actuator_item_t *item = &g_page.actuators[g_page.selected];
+                    if (dialog_actuator_confirm_delete(item->name)) {
+                        if (db_actuator_delete(db, item->id) == RESULT_OK) {
+                            tui_set_status("Actuator '%s' deleted", item->name);
+                            load_actuators();
+                            if (g_page.selected >= g_page.actuator_count && g_page.actuator_count > 0) {
+                                g_page.selected = g_page.actuator_count - 1;
+                            }
+                        } else {
+                            tui_set_status("Failed to delete actuator");
+                        }
+                    }
+                }
+            }
             break;
 
         case 'E':  /* Capital E for emergency stop */

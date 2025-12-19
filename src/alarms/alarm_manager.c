@@ -7,9 +7,13 @@
 #include "db/db_alarms.h"
 #include "db/db_events.h"
 #include "db/db_modules.h"
+#include "actuators/actuator_manager.h"
 #include "utils/logger.h"
 #include <pthread.h>
 #include <math.h>
+
+/* External actuator manager for safety interlocks */
+extern actuator_manager_t g_actuator_mgr;
 
 #define MAX_ALARM_RULES 256
 #define ALARM_CHECK_INTERVAL_MS 1000
@@ -121,7 +125,46 @@ static void raise_alarm(db_alarm_rule_t *rule, alarm_rule_state_t *state, float 
         state->in_alarm = true;
         state->active_alarm_id = alarm_id;
         db_event_insert(g_alarm_mgr.db, "alarm", "warning", alarm.message);
-        
+
+        /* Execute safety interlock if configured */
+        if (rule->interlock_enabled && rule->interlock_slot > 0) {
+            actuator_state_t act_state;
+            uint8_t pwm_duty = rule->interlock_pwm_duty;
+
+            switch (rule->interlock_action) {
+                case INTERLOCK_ACTION_OFF:
+                    act_state = ACTUATOR_STATE_OFF;
+                    pwm_duty = 0;
+                    break;
+                case INTERLOCK_ACTION_ON:
+                    act_state = ACTUATOR_STATE_ON;
+                    pwm_duty = 100;
+                    break;
+                case INTERLOCK_ACTION_PWM:
+                    act_state = ACTUATOR_STATE_ON;
+                    /* pwm_duty already set from rule */
+                    break;
+                default:
+                    act_state = ACTUATOR_STATE_OFF;
+                    pwm_duty = 0;
+            }
+
+            if (actuator_manager_manual_set(&g_actuator_mgr, rule->interlock_slot,
+                                            act_state, pwm_duty) == RESULT_OK) {
+                LOG_WARNING("INTERLOCK: Alarm '%s' forcing slot %d to %s (safety override)",
+                           rule->name, rule->interlock_slot,
+                           act_state == ACTUATOR_STATE_OFF ? "OFF" : "ON");
+
+                char interlock_msg[256];
+                snprintf(interlock_msg, sizeof(interlock_msg),
+                        "Safety interlock: Slot %d forced %s by alarm '%s'",
+                        rule->interlock_slot,
+                        act_state == ACTUATOR_STATE_OFF ? "OFF" : "ON",
+                        rule->name);
+                db_event_insert(g_alarm_mgr.db, "interlock", "critical", interlock_msg);
+            }
+        }
+
         if (g_alarm_mgr.on_alarm_raised) {
             g_alarm_mgr.on_alarm_raised(&alarm, g_alarm_mgr.callback_ctx);
         }
@@ -131,11 +174,28 @@ static void raise_alarm(db_alarm_rule_t *rule, alarm_rule_state_t *state, float 
 static void clear_alarm(db_alarm_rule_t *rule, alarm_rule_state_t *state) {
     if (state->active_alarm_id > 0) {
         db_alarm_clear(g_alarm_mgr.db, state->active_alarm_id);
-        
+
         char msg[256];
         snprintf(msg, sizeof(msg), "%s: Alarm cleared", rule->name);
         db_event_insert(g_alarm_mgr.db, "alarm", "info", msg);
-        
+
+        /* Release safety interlock if configured */
+        if (rule->interlock_enabled && rule->interlock_slot > 0 && rule->release_on_clear) {
+            /* Release actuator back to controller control by setting to OFF
+             * (controller can then re-command if needed) */
+            if (actuator_manager_manual_set(&g_actuator_mgr, rule->interlock_slot,
+                                            ACTUATOR_STATE_OFF, 0) == RESULT_OK) {
+                LOG_INFO("INTERLOCK: Alarm '%s' cleared, releasing slot %d back to controller",
+                        rule->name, rule->interlock_slot);
+
+                char release_msg[256];
+                snprintf(release_msg, sizeof(release_msg),
+                        "Safety interlock released: Slot %d returned to controller (alarm '%s' cleared)",
+                        rule->interlock_slot, rule->name);
+                db_event_insert(g_alarm_mgr.db, "interlock", "info", release_msg);
+            }
+        }
+
         if (g_alarm_mgr.on_alarm_cleared) {
             db_alarm_history_t alarm = {0};
             alarm.id = state->active_alarm_id;
@@ -145,7 +205,7 @@ static void clear_alarm(db_alarm_rule_t *rule, alarm_rule_state_t *state) {
             g_alarm_mgr.on_alarm_cleared(&alarm, g_alarm_mgr.callback_ctx);
         }
     }
-    
+
     state->in_alarm = false;
     state->active_alarm_id = 0;
 }

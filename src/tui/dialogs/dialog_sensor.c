@@ -8,6 +8,7 @@
 #include "../tui_common.h"
 #include "db/database.h"
 #include "db/db_modules.h"
+#include "db/db_actuators.h"
 #include <ncurses.h>
 #include <string.h>
 #include <stdlib.h>
@@ -159,10 +160,59 @@ static bool edit_field(WINDOW *dialog, sensor_form_t *form, int field) {
     return false;
 }
 
+static result_t check_gpio_conflict(database_t *db, sensor_form_t *form, int exclude_sensor_id) {
+    /* Check if this sensor uses GPIO interface */
+    if (strcmp(form->interface, "gpio") != 0 &&
+        strcmp(form->sensor_type, "DHT22") != 0 &&
+        strcmp(form->sensor_type, "Float Switch") != 0) {
+        return RESULT_OK;  /* Not a GPIO sensor, no conflict possible */
+    }
+
+    /* Parse GPIO pin from address field */
+    int gpio_pin = atoi(form->address);
+    if (gpio_pin <= 0 && strlen(form->address) > 0) {
+        /* Try parsing as GPIO number without prefix */
+        if (sscanf(form->address, "GPIO%d", &gpio_pin) != 1) {
+            gpio_pin = atoi(form->address);
+        }
+    }
+
+    if (gpio_pin <= 0) {
+        return RESULT_OK;  /* No valid GPIO pin specified */
+    }
+
+    /* Use the actuator GPIO conflict check which also checks sensors */
+    gpio_conflict_t conflict;
+    result_t r = db_actuator_gpio_conflict_check(db, gpio_pin, "gpiochip0", 0, &conflict);
+    if (r == RESULT_OK && conflict.has_conflict) {
+        /* Check if the conflict is with ourselves (when editing) */
+        if (exclude_sensor_id > 0 && conflict.conflict_type == 1) {
+            /* conflict_type 1 = sensor - ignore if it's the same sensor */
+            /* We can't easily check this without knowing the conflicting sensor ID */
+        }
+
+        char msg[256];
+        snprintf(msg, sizeof(msg), "GPIO %d is already in use by %s '%s'",
+                 gpio_pin,
+                 conflict.conflict_type == 0 ? "actuator" : "sensor",
+                 conflict.conflicting_name);
+        dialog_error(msg);
+        return RESULT_ALREADY_EXISTS;
+    }
+
+    return RESULT_OK;
+}
+
 static result_t save_sensor(sensor_form_t *form, int *sensor_id) {
     database_t *db = tui_get_database();
     if (!db) return RESULT_NOT_INITIALIZED;
-    
+
+    /* Check for GPIO conflicts before saving */
+    result_t r = check_gpio_conflict(db, form, 0);
+    if (r != RESULT_OK) {
+        return r;
+    }
+
     db_module_t module = {0};
     module.slot = form->slot;
     module.subslot = form->subslot;
@@ -171,8 +221,8 @@ static result_t save_sensor(sensor_form_t *form, int *sensor_id) {
     module.module_ident = form->module_ident;
     module.submodule_ident = form->submodule_ident;
     strcpy(module.status, "inactive");
-    
-    result_t r = db_module_create(db, &module, sensor_id);
+
+    r = db_module_create(db, &module, sensor_id);
     if (r != RESULT_OK) return r;
     
     if (strcmp(form->module_type, "physical") == 0) {

@@ -10,6 +10,8 @@
  * - Orange Pi Zero 3 (Allwinner H618)
  * - Orange Pi Zero 2W (Allwinner H618)
  * - Luckfox Lyra Pi (Rockchip RK3506)
+ * - Libre Computer Le Potato (Amlogic S905X)
+ * - Libre Computer Renegade (Rockchip RK3328)
  *
  * Usage:
  *   board_info_t board;
@@ -47,6 +49,15 @@ typedef enum {
     /* Luckfox Family (Rockchip) */
     BOARD_TYPE_LUCKFOX_LYRA,    /* RK3506 (Cortex-A7 + M0) */
     BOARD_TYPE_LUCKFOX_PICO,    /* RV1103/RV1106 */
+
+    /* Libre Computer (Amlogic) */
+    BOARD_TYPE_LIBRE_POTATO,    /* AML-S905X-CC (Le Potato) */
+    BOARD_TYPE_LIBRE_RENEGADE,  /* ROC-RK3328-CC (Renegade) */
+
+    /* Hardkernel ODROID Family */
+    BOARD_TYPE_ODROID_XU4,      /* Samsung Exynos 5422 */
+    BOARD_TYPE_ODROID_C4,       /* Amlogic S905X3 */
+    BOARD_TYPE_ODROID_N2,       /* Amlogic S922X */
 
     /* Generic fallback */
     BOARD_TYPE_GENERIC_ARM,

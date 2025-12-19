@@ -20,6 +20,8 @@
 #include <unistd.h>
 #include <poll.h>
 #include <string.h>
+#include <errno.h>
+#include <stdlib.h>
 #include <pthread.h>
 
 #ifdef HAVE_GPIOD
@@ -61,6 +63,29 @@ static struct {
     gpio_pin_state_t pins[MAX_GPIO_PINS];
     int pin_count;
 } g_gpio = {0};
+
+/* ============================================================================
+ * Common Functions
+ * ========================================================================== */
+
+bool gpio_is_available(void) {
+    return g_gpio.initialized;
+}
+
+bool gpio_chip_exists(const char *chip_name) {
+    if (!chip_name) return false;
+
+    char path[128];
+    snprintf(path, sizeof(path), "/dev/%s", chip_name);
+    if (access(path, F_OK) == 0) return true;
+
+    /* Try without /dev/ prefix for already-prefixed names */
+    if (strncmp(chip_name, "/dev/", 5) == 0) {
+        if (access(chip_name, F_OK) == 0) return true;
+    }
+
+    return false;
+}
 
 /* ============================================================================
  * libgpiod Implementation
@@ -649,28 +674,213 @@ result_t gpio_remove_callback(int pin) {
 #endif /* HAVE_GPIOD */
 
 /* ============================================================================
- * PWM Functions (shared implementation)
+ * PWM Functions (sysfs implementation)
  * ========================================================================== */
 
+/**
+ * Hardware PWM mapping for common boards:
+ *
+ * Raspberry Pi:
+ *   GPIO 18 -> PWM0 (pwmchip0/pwm0)
+ *   GPIO 13 -> PWM1 (pwmchip0/pwm1)
+ *   GPIO 12 -> PWM0 (alt function)
+ *   GPIO 19 -> PWM1 (alt function)
+ *
+ * Most SBCs have similar mappings but may differ.
+ * The sysfs PWM interface requires the pin to be configured via device tree.
+ */
+
+#define PWM_CHIP_PATH_FMT     "/sys/class/pwm/pwmchip%d"
+#define PWM_CHANNEL_PATH_FMT  "/sys/class/pwm/pwmchip%d/pwm%d"
+#define PWM_EXPORT_PATH_FMT   "/sys/class/pwm/pwmchip%d/export"
+#define PWM_UNEXPORT_PATH_FMT "/sys/class/pwm/pwmchip%d/unexport"
+
+typedef struct {
+    int gpio_pin;
+    int pwm_chip;
+    int pwm_channel;
+} pwm_pin_map_t;
+
+/* Raspberry Pi PWM pin mapping */
+static const pwm_pin_map_t g_pi_pwm_map[] = {
+    { 12, 0, 0 },   /* GPIO 12 -> PWM0/Channel0 */
+    { 18, 0, 0 },   /* GPIO 18 -> PWM0/Channel0 */
+    { 13, 0, 1 },   /* GPIO 13 -> PWM0/Channel1 */
+    { 19, 0, 1 },   /* GPIO 19 -> PWM0/Channel1 */
+    { -1, -1, -1 }  /* Sentinel */
+};
+
+static const pwm_pin_map_t* find_pwm_mapping(int pin) {
+    for (int i = 0; g_pi_pwm_map[i].gpio_pin >= 0; i++) {
+        if (g_pi_pwm_map[i].gpio_pin == pin) {
+            return &g_pi_pwm_map[i];
+        }
+    }
+    return NULL;
+}
+
+static bool pwm_channel_exists(int chip, int channel) {
+    char path[128];
+    snprintf(path, sizeof(path), PWM_CHANNEL_PATH_FMT, chip, channel);
+    return access(path, F_OK) == 0;
+}
+
+static result_t pwm_export(int chip, int channel) {
+    char path[128];
+    snprintf(path, sizeof(path), PWM_EXPORT_PATH_FMT, chip);
+
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) {
+        LOG_ERROR("PWM: Failed to open %s", path);
+        return RESULT_ERROR;
+    }
+
+    char buf[16];
+    int len = snprintf(buf, sizeof(buf), "%d", channel);
+    if (write(fd, buf, len) < 0) {
+        close(fd);
+        /* EBUSY means already exported - that's OK */
+        if (errno == EBUSY) return RESULT_OK;
+        LOG_ERROR("PWM: Failed to export chip%d/pwm%d", chip, channel);
+        return RESULT_ERROR;
+    }
+
+    close(fd);
+    usleep(100000);  /* 100ms for sysfs to create the channel directory */
+    return RESULT_OK;
+}
+
+static result_t pwm_unexport(int chip, int channel) {
+    char path[128];
+    snprintf(path, sizeof(path), PWM_UNEXPORT_PATH_FMT, chip);
+
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return RESULT_ERROR;
+
+    char buf[16];
+    int len = snprintf(buf, sizeof(buf), "%d", channel);
+    write(fd, buf, len);
+    close(fd);
+    return RESULT_OK;
+}
+
+static result_t pwm_write_attr(int chip, int channel, const char *attr, const char *value) {
+    char path[256];
+    snprintf(path, sizeof(path), PWM_CHANNEL_PATH_FMT "/%s", chip, channel, attr);
+
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) {
+        LOG_ERROR("PWM: Failed to open %s", path);
+        return RESULT_ERROR;
+    }
+
+    if (write(fd, value, strlen(value)) < 0) {
+        close(fd);
+        LOG_ERROR("PWM: Failed to write to %s", path);
+        return RESULT_ERROR;
+    }
+
+    close(fd);
+    return RESULT_OK;
+}
+
 bool gpio_has_pwm(int pin) {
-    /* Check for hardware PWM - board specific */
-    UNUSED(pin);
-    /* TODO: Check /sys/class/pwm/pwmchipN for hardware PWM support */
-    return false;
+    const pwm_pin_map_t *map = find_pwm_mapping(pin);
+    if (!map) return false;
+
+    /* Check if PWM chip exists */
+    char path[128];
+    snprintf(path, sizeof(path), PWM_CHIP_PATH_FMT, map->pwm_chip);
+    return access(path, F_OK) == 0;
 }
 
 result_t gpio_pwm_start(int pin, int frequency_hz, float duty_cycle) {
-    UNUSED(pin); UNUSED(frequency_hz); UNUSED(duty_cycle);
-    LOG_WARNING("GPIO: Hardware PWM not yet implemented");
-    return RESULT_NOT_SUPPORTED;
+    const pwm_pin_map_t *map = find_pwm_mapping(pin);
+    if (!map) {
+        LOG_WARNING("GPIO %d does not support hardware PWM", pin);
+        return RESULT_NOT_SUPPORTED;
+    }
+
+    if (frequency_hz <= 0 || frequency_hz > 50000) {
+        LOG_ERROR("PWM: Invalid frequency %d Hz (valid: 1-50000)", frequency_hz);
+        return RESULT_INVALID_PARAM;
+    }
+
+    if (duty_cycle < 0.0f || duty_cycle > 100.0f) {
+        LOG_ERROR("PWM: Invalid duty cycle %.1f%% (valid: 0-100)", duty_cycle);
+        return RESULT_INVALID_PARAM;
+    }
+
+    /* Export the PWM channel if not already */
+    if (!pwm_channel_exists(map->pwm_chip, map->pwm_channel)) {
+        result_t r = pwm_export(map->pwm_chip, map->pwm_channel);
+        if (r != RESULT_OK) return r;
+    }
+
+    /* Calculate period and duty in nanoseconds */
+    uint64_t period_ns = 1000000000ULL / frequency_hz;
+    uint64_t duty_ns = (uint64_t)(period_ns * duty_cycle / 100.0f);
+
+    char buf[32];
+
+    /* Set period first */
+    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)period_ns);
+    result_t r = pwm_write_attr(map->pwm_chip, map->pwm_channel, "period", buf);
+    if (r != RESULT_OK) return r;
+
+    /* Set duty cycle */
+    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)duty_ns);
+    r = pwm_write_attr(map->pwm_chip, map->pwm_channel, "duty_cycle", buf);
+    if (r != RESULT_OK) return r;
+
+    /* Enable PWM */
+    r = pwm_write_attr(map->pwm_chip, map->pwm_channel, "enable", "1");
+    if (r != RESULT_OK) return r;
+
+    LOG_INFO("PWM started: GPIO %d, %d Hz, %.1f%% duty", pin, frequency_hz, duty_cycle);
+    return RESULT_OK;
 }
 
 result_t gpio_pwm_set_duty(int pin, float duty_cycle) {
-    UNUSED(pin); UNUSED(duty_cycle);
-    return RESULT_NOT_SUPPORTED;
+    const pwm_pin_map_t *map = find_pwm_mapping(pin);
+    if (!map) return RESULT_NOT_SUPPORTED;
+
+    if (duty_cycle < 0.0f || duty_cycle > 100.0f) {
+        return RESULT_INVALID_PARAM;
+    }
+
+    /* Read current period to calculate new duty cycle */
+    char path[256];
+    snprintf(path, sizeof(path), PWM_CHANNEL_PATH_FMT "/period", map->pwm_chip, map->pwm_channel);
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return RESULT_ERROR;
+
+    char buf[32];
+    ssize_t len = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+
+    if (len <= 0) return RESULT_ERROR;
+    buf[len] = '\0';
+
+    uint64_t period_ns = strtoull(buf, NULL, 10);
+    uint64_t duty_ns = (uint64_t)(period_ns * duty_cycle / 100.0f);
+
+    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)duty_ns);
+    return pwm_write_attr(map->pwm_chip, map->pwm_channel, "duty_cycle", buf);
 }
 
 result_t gpio_pwm_stop(int pin) {
-    UNUSED(pin);
-    return RESULT_NOT_SUPPORTED;
+    const pwm_pin_map_t *map = find_pwm_mapping(pin);
+    if (!map) return RESULT_NOT_SUPPORTED;
+
+    /* Disable PWM */
+    result_t r = pwm_write_attr(map->pwm_chip, map->pwm_channel, "enable", "0");
+    if (r != RESULT_OK) {
+        LOG_WARNING("PWM: Failed to disable GPIO %d", pin);
+    }
+
+    /* Unexport is optional - leave exported for faster restart */
+    LOG_DEBUG("PWM stopped: GPIO %d", pin);
+    return RESULT_OK;
 }

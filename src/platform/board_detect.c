@@ -178,6 +178,134 @@ static const pin_config_t LUCKFOX_LYRA_PINS = {
     .gpio_chip = "gpiochip0",
 };
 
+/*
+ * Libre Computer Le Potato (AML-S905X-CC)
+ *
+ * Amlogic S905X GPIO uses Linux GPIO numbers.
+ * The 40-pin header is RPi-layout compatible but uses different GPIO numbers.
+ *
+ * Le Potato GPIO mapping (physical pin -> Linux GPIO):
+ * - Pin 3 (I2C SDA) = GPIODV_24 = GPIO 473
+ * - Pin 5 (I2C SCL) = GPIODV_25 = GPIO 474
+ * - Pin 7 (1-Wire)  = GPIOH_4 = GPIO 430
+ * - Pin 11 = GPIOH_5 = GPIO 431
+ * - Pin 13 = GPIOH_6 = GPIO 432
+ * - Pin 15 = GPIOH_7 = GPIO 433
+ * - Pin 16 = GPIOH_8 = GPIO 434
+ *
+ * Reference: https://libre.computer/products/aml-s905x-cc/
+ */
+static const pin_config_t LIBRE_POTATO_PINS = {
+    .i2c_bus_primary = 1,       /* /dev/i2c-1 (AO I2C) */
+    .i2c_bus_secondary = 0,     /* /dev/i2c-0 */
+    .spi_bus = 0,               /* /dev/spidev0.x */
+    .spi_cs0 = 434,             /* GPIOH_8 (Pin 16) as CS0 */
+    .spi_cs1 = -1,
+    .onewire_data = 430,        /* GPIOH_4 (Pin 7) - 1-Wire */
+    .gpio_relay_1 = 431,        /* GPIOH_5 (Pin 11) */
+    .gpio_relay_2 = 432,        /* GPIOH_6 (Pin 13) */
+    .gpio_relay_3 = 433,        /* GPIOH_7 (Pin 15) */
+    .gpio_relay_4 = 435,        /* GPIOH_9 (Pin 18) */
+    .gpio_input_1 = 447,        /* GPIOX_10 (Pin 29) */
+    .gpio_input_2 = 448,        /* GPIOX_11 (Pin 31) */
+    .gpio_input_3 = 449,        /* GPIOX_12 (Pin 32) */
+    .gpio_input_4 = 450,        /* GPIOX_13 (Pin 33) */
+    .gpio_led_status = 443,     /* GPIOX_6 (Pin 22) */
+    .gpio_led_error = 444,      /* GPIOX_7 (Pin 24) */
+    .pwm_channel_0 = 436,       /* GPIOX_0/PWM (Pin 12) */
+    .pwm_channel_1 = 441,       /* GPIOX_4/PWM (Pin 35) */
+    .uart_tx = 446,             /* GPIOX_9 - UART_C_TX */
+    .uart_rx = 445,             /* GPIOX_8 - UART_C_RX */
+    .gpio_chip = "gpiochip0",
+};
+
+/*
+ * Libre Computer Renegade (ROC-RK3328-CC)
+ *
+ * Rockchip RK3328 GPIO numbering.
+ * Reference: https://libre.computer/products/roc-rk3328-cc/
+ */
+static const pin_config_t LIBRE_RENEGADE_PINS = {
+    .i2c_bus_primary = 1,       /* /dev/i2c-1 */
+    .i2c_bus_secondary = 0,
+    .spi_bus = 0,
+    .spi_cs0 = 88,              /* GPIO2_D0 */
+    .spi_cs1 = -1,
+    .onewire_data = 100,        /* GPIO3_A4 (Pin 7) */
+    .gpio_relay_1 = 97,         /* GPIO3_A1 (Pin 11) */
+    .gpio_relay_2 = 98,         /* GPIO3_A2 (Pin 13) */
+    .gpio_relay_3 = 99,         /* GPIO3_A3 (Pin 15) */
+    .gpio_relay_4 = 101,        /* GPIO3_A5 (Pin 16) */
+    .gpio_input_1 = 104,        /* GPIO3_B0 (Pin 29) */
+    .gpio_input_2 = 105,        /* GPIO3_B1 (Pin 31) */
+    .gpio_input_3 = 106,        /* GPIO3_B2 (Pin 32) */
+    .gpio_input_4 = 107,        /* GPIO3_B3 (Pin 33) */
+    .gpio_led_status = 102,     /* GPIO3_A6 (Pin 22) */
+    .gpio_led_error = 103,      /* GPIO3_A7 (Pin 24) */
+    .pwm_channel_0 = 89,        /* GPIO2_D1/PWM2 (Pin 12) */
+    .pwm_channel_1 = 90,        /* GPIO2_D2/PWM3 (Pin 35) */
+    .uart_tx = 14,              /* UART2_TX */
+    .uart_rx = 15,              /* UART2_RX */
+    .gpio_chip = "gpiochip0",
+};
+
+/* ODROID-XU4 (Samsung Exynos 5422)
+ * Uses sysfs GPIO numbering. The XU4 has a 30-pin header (CON10).
+ * GPIO base varies by kernel version (often GPIO bank offsets).
+ * Reference: https://wiki.odroid.com/odroid-xu4/hardware/expansion_connectors
+ */
+static const pin_config_t ODROID_XU4_PINS = {
+    .i2c_bus_primary = 1,       /* /dev/i2c-1 on CON10 pins 3,5 */
+    .i2c_bus_secondary = 5,     /* /dev/i2c-5 */
+    .spi_bus = 1,               /* /dev/spidev1.0 */
+    .spi_cs0 = 173,             /* GPX1.2 */
+    .spi_cs1 = -1,
+    .onewire_data = 25,         /* GPA0.3 (Pin 7) */
+    .gpio_relay_1 = 28,         /* GPA0.6 (Pin 11) */
+    .gpio_relay_2 = 30,         /* GPA1.0 (Pin 13) */
+    .gpio_relay_3 = 31,         /* GPA1.1 (Pin 15) */
+    .gpio_relay_4 = 174,        /* GPX1.3 (Pin 16) */
+    .gpio_input_1 = 171,        /* GPX1.0 (Pin 29) */
+    .gpio_input_2 = 172,        /* GPX1.1 (Pin 31) */
+    .gpio_input_3 = 21,         /* GPA0.0 (Pin 32) */
+    .gpio_input_4 = 22,         /* GPA0.1 (Pin 33) */
+    .gpio_led_status = 29,      /* GPA0.7 (Pin 22) - optional */
+    .gpio_led_error = 33,       /* GPA1.3 (Pin 24) - optional */
+    .pwm_channel_0 = 190,       /* GPB2.0/PWM0 (Pin 12) */
+    .pwm_channel_1 = 191,       /* GPB2.1/PWM1 (Pin 35) */
+    .uart_tx = -1,              /* UART via separate connector */
+    .uart_rx = -1,
+    .gpio_chip = "gpiochip0",
+};
+
+/* ODROID-C4/N2 (Amlogic S905X3/S922X)
+ * Uses Amlogic GPIO numbering similar to Le Potato.
+ * 40-pin header compatible with RPi layout.
+ */
+static const pin_config_t ODROID_C4_PINS = {
+    .i2c_bus_primary = 2,       /* /dev/i2c-2 */
+    .i2c_bus_secondary = 3,     /* /dev/i2c-3 */
+    .spi_bus = 0,
+    .spi_cs0 = 486,             /* GPIOX_10 */
+    .spi_cs1 = -1,
+    .onewire_data = 481,        /* GPIOX_5 (Pin 7) */
+    .gpio_relay_1 = 479,        /* GPIOX_3 (Pin 11) */
+    .gpio_relay_2 = 480,        /* GPIOX_4 (Pin 13) */
+    .gpio_relay_3 = 483,        /* GPIOX_7 (Pin 15) */
+    .gpio_relay_4 = 476,        /* GPIOX_0 (Pin 16) */
+    .gpio_input_1 = 477,        /* GPIOX_1 (Pin 29) */
+    .gpio_input_2 = 478,        /* GPIOX_2 (Pin 31) */
+    .gpio_input_3 = 484,        /* GPIOX_8 (Pin 32) */
+    .gpio_input_4 = 485,        /* GPIOX_9 (Pin 33) */
+    .gpio_led_status = 482,     /* GPIOX_6 (Pin 22) */
+    .gpio_led_error = 487,      /* GPIOX_11 (Pin 24) */
+    .pwm_channel_0 = 488,       /* GPIOX_12/PWM_E (Pin 12) */
+    .pwm_channel_1 = 489,       /* GPIOX_13/PWM_F (Pin 35) */
+    .uart_tx = 495,             /* GPIOX_19 */
+    .uart_rx = 494,             /* GPIOX_18 */
+    .gpio_chip = "gpiochip0",
+};
+
 /* Generic fallback configuration */
 static const pin_config_t GENERIC_PINS = {
     .i2c_bus_primary = 1,
@@ -243,6 +371,20 @@ static const struct {
      {"Luckfox Lyra", "RK3506", "rk3506", NULL}},
     {BOARD_TYPE_LUCKFOX_PICO, "Luckfox Pico",
      {"Luckfox Pico", "RV1103", "RV1106", NULL}},
+
+    /* Libre Computer */
+    {BOARD_TYPE_LIBRE_POTATO, "Libre Computer Le Potato",
+     {"Le Potato", "AML-S905X-CC", "libretech-cc", "meson-gxl", NULL}},
+    {BOARD_TYPE_LIBRE_RENEGADE, "Libre Computer Renegade",
+     {"Renegade", "ROC-RK3328-CC", "libretech-renegade", "rk3328", NULL}},
+
+    /* Hardkernel ODROID */
+    {BOARD_TYPE_ODROID_XU4, "ODROID-XU4",
+     {"ODROID-XU4", "ODROID-XU3", "Exynos5422", "exynos5-odroidxu", NULL}},
+    {BOARD_TYPE_ODROID_C4, "ODROID-C4",
+     {"ODROID-C4", "odroid-c4", "meson-sm1-odroid", NULL}},
+    {BOARD_TYPE_ODROID_N2, "ODROID-N2",
+     {"ODROID-N2", "odroid-n2", "meson-g12b-odroid", "S922X", NULL}},
 
     /* End marker */
     {BOARD_TYPE_UNKNOWN, NULL, {NULL}}
@@ -357,6 +499,61 @@ static void set_board_capabilities(board_info_t *info) {
             };
             SAFE_STRNCPY(info->soc, "RK3506", sizeof(info->soc));
             SAFE_STRNCPY(info->manufacturer, "Luckfox", sizeof(info->manufacturer));
+            break;
+
+        case BOARD_TYPE_LIBRE_POTATO:
+            info->caps = (board_capabilities_t){
+                .has_wifi = false, .has_bluetooth = false, .has_ethernet = true,
+                .has_hdmi = true, .has_camera_csi = false, .has_display_dsi = false,
+                .i2c_bus_count = 2, .spi_bus_count = 2, .uart_count = 3,
+                .pwm_channels = 2, .gpio_count = 40, .ram_mb = 2048, .cpu_cores = 4
+            };
+            SAFE_STRNCPY(info->soc, "S905X", sizeof(info->soc));
+            SAFE_STRNCPY(info->manufacturer, "Libre Computer", sizeof(info->manufacturer));
+            break;
+
+        case BOARD_TYPE_LIBRE_RENEGADE:
+            info->caps = (board_capabilities_t){
+                .has_wifi = false, .has_bluetooth = false, .has_ethernet = true,
+                .has_hdmi = true, .has_camera_csi = false, .has_display_dsi = false,
+                .i2c_bus_count = 2, .spi_bus_count = 2, .uart_count = 4,
+                .pwm_channels = 4, .gpio_count = 40, .ram_mb = 4096, .cpu_cores = 4
+            };
+            SAFE_STRNCPY(info->soc, "RK3328", sizeof(info->soc));
+            SAFE_STRNCPY(info->manufacturer, "Libre Computer", sizeof(info->manufacturer));
+            break;
+
+        case BOARD_TYPE_ODROID_XU4:
+            info->caps = (board_capabilities_t){
+                .has_wifi = false, .has_bluetooth = false, .has_ethernet = true,
+                .has_hdmi = true, .has_camera_csi = false, .has_display_dsi = false,
+                .i2c_bus_count = 2, .spi_bus_count = 2, .uart_count = 4,
+                .pwm_channels = 2, .gpio_count = 30, .ram_mb = 2048, .cpu_cores = 8
+            };
+            SAFE_STRNCPY(info->soc, "Exynos5422", sizeof(info->soc));
+            SAFE_STRNCPY(info->manufacturer, "Hardkernel", sizeof(info->manufacturer));
+            break;
+
+        case BOARD_TYPE_ODROID_C4:
+            info->caps = (board_capabilities_t){
+                .has_wifi = false, .has_bluetooth = false, .has_ethernet = true,
+                .has_hdmi = true, .has_camera_csi = false, .has_display_dsi = false,
+                .i2c_bus_count = 2, .spi_bus_count = 2, .uart_count = 4,
+                .pwm_channels = 2, .gpio_count = 40, .ram_mb = 4096, .cpu_cores = 4
+            };
+            SAFE_STRNCPY(info->soc, "S905X3", sizeof(info->soc));
+            SAFE_STRNCPY(info->manufacturer, "Hardkernel", sizeof(info->manufacturer));
+            break;
+
+        case BOARD_TYPE_ODROID_N2:
+            info->caps = (board_capabilities_t){
+                .has_wifi = false, .has_bluetooth = false, .has_ethernet = true,
+                .has_hdmi = true, .has_camera_csi = false, .has_display_dsi = false,
+                .i2c_bus_count = 2, .spi_bus_count = 2, .uart_count = 4,
+                .pwm_channels = 2, .gpio_count = 40, .ram_mb = 4096, .cpu_cores = 6
+            };
+            SAFE_STRNCPY(info->soc, "S922X", sizeof(info->soc));
+            SAFE_STRNCPY(info->manufacturer, "Hardkernel", sizeof(info->manufacturer));
             break;
 
         default:
@@ -503,6 +700,23 @@ result_t board_get_default_pins(board_type_t type, pin_config_t *pins) {
         case BOARD_TYPE_LUCKFOX_LYRA:
         case BOARD_TYPE_LUCKFOX_PICO:
             memcpy(pins, &LUCKFOX_LYRA_PINS, sizeof(pin_config_t));
+            break;
+
+        case BOARD_TYPE_LIBRE_POTATO:
+            memcpy(pins, &LIBRE_POTATO_PINS, sizeof(pin_config_t));
+            break;
+
+        case BOARD_TYPE_LIBRE_RENEGADE:
+            memcpy(pins, &LIBRE_RENEGADE_PINS, sizeof(pin_config_t));
+            break;
+
+        case BOARD_TYPE_ODROID_XU4:
+            memcpy(pins, &ODROID_XU4_PINS, sizeof(pin_config_t));
+            break;
+
+        case BOARD_TYPE_ODROID_C4:
+        case BOARD_TYPE_ODROID_N2:
+            memcpy(pins, &ODROID_C4_PINS, sizeof(pin_config_t));
             break;
 
         default:

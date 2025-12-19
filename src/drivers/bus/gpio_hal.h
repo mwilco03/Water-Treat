@@ -44,6 +44,18 @@ result_t gpio_init(void);
 void gpio_shutdown(void);
 
 /**
+ * Check if GPIO is available and initialized
+ */
+bool gpio_is_available(void);
+
+/**
+ * Check if a specific GPIO chip exists on the system
+ * @param chip_name GPIO chip name (e.g., "gpiochip0")
+ * @return true if chip exists
+ */
+bool gpio_chip_exists(const char *chip_name);
+
+/**
  * Configure a GPIO pin
  */
 result_t gpio_configure(int pin, gpio_direction_t dir, gpio_pull_t pull);

@@ -24,6 +24,8 @@ set(SOURCES_CORE
     src/db/db_actuators.c
     src/utils/logger.c
     src/platform/board_detect.c
+    src/platform/hw_discover.c
+    src/auth/auth.c
 )
 
 # New unified driver architecture (following Linux IIO / Zephyr patterns)
@@ -77,6 +79,8 @@ set(SOURCES_TUI
     src/tui/widgets/widget_dialog.c
     src/tui/dialogs/dialog_helpers.c
     src/tui/dialogs/dialog_sensor.c
+    src/tui/dialogs/dialog_alarm.c
+    src/tui/dialogs/dialog_actuator.c
     src/tui/pages/page_system.c
     src/tui/pages/page_sensors.c
     src/tui/pages/page_network.c
@@ -86,6 +90,7 @@ set(SOURCES_TUI
     src/tui/pages/page_logging.c
     src/tui/pages/page_wizard.c
     src/tui/pages/page_actuators.c
+    src/tui/pages/page_login.c
 )
 
 # HAL (conditionally included based on features)
