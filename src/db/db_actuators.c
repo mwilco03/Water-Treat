@@ -402,6 +402,7 @@ result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         /* Found a conflict with actuator */
         conflict->has_conflict = true;
+        conflict->conflict_type = 0;  /* actuator */
         conflict->conflicting_actuator_id = sqlite3_column_int(stmt, 0);
         const char *name = (const char*)sqlite3_column_text(stmt, 1);
         if (name) {
@@ -427,11 +428,11 @@ result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
         if (sqlite3_step(stmt) == SQLITE_ROW) {
             /* Found a conflict with sensor */
             conflict->has_conflict = true;
+            conflict->conflict_type = 1;  /* sensor */
             conflict->conflicting_actuator_id = -1;  /* Indicate sensor conflict */
             const char *name = (const char*)sqlite3_column_text(stmt, 0);
             if (name) {
-                snprintf(conflict->conflicting_name, sizeof(conflict->conflicting_name),
-                         "Sensor: %s", name);
+                SAFE_STRNCPY(conflict->conflicting_name, name, sizeof(conflict->conflicting_name));
             }
             LOG_DEBUG("GPIO conflict: pin %d already used by sensor %s",
                       gpio_pin, conflict->conflicting_name);
