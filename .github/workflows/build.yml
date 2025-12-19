@@ -1,0 +1,206 @@
+# ============================================================
+# Reusable Build Workflow
+# ============================================================
+# Purpose: Shared build logic for CI and Release workflows
+# Architectures: x86_64 (native), aarch64, armv7hf (cross-compile)
+# Naming: Consistent use of x86_64, aarch64, armv7hf throughout
+# ============================================================
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        description: 'Build type (Debug or Release)'
+        type: string
+        default: 'Release'
+      run_tests:
+        description: 'Run tests on native builds'
+        type: boolean
+        default: true
+      upload_artifacts:
+        description: 'Upload build artifacts'
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: 'Days to retain artifacts'
+        type: number
+        default: 7
+      include_cross_builds:
+        description: 'Include cross-compilation builds'
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native x86_64 build - full featured with tests
+          - arch: x86_64
+            cross: false
+            packages: "build-essential cmake pkg-config libncurses5-dev libsqlite3-dev libcurl4-openssl-dev libcjson-dev libgpiod-dev libsystemd-dev"
+            toolchain: ""
+            debian_arch: ""
+            cross_packages: ""
+            optional: false
+
+          # ARM64 cross-compilation (Raspberry Pi 3/4/5, Orange Pi, Le Potato)
+          - arch: aarch64
+            cross: true
+            packages: "build-essential cmake pkg-config"
+            toolchain: "aarch64-linux-gnu"
+            debian_arch: "arm64"
+            cross_packages: "gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"
+            optional: true
+
+          # ARM32 cross-compilation (Raspberry Pi 2, Zero W, older boards)
+          - arch: armv7hf
+            cross: true
+            packages: "build-essential cmake pkg-config"
+            toolchain: "arm-linux-gnueabihf"
+            debian_arch: "armhf"
+            cross_packages: "gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf"
+            optional: true
+
+    runs-on: ubuntu-latest
+    # Cross-compilation jobs are optional (may fail due to missing sysroot libs)
+    continue-on-error: ${{ matrix.optional && inputs.include_cross_builds }}
+
+    steps:
+      - name: Skip cross-builds if disabled
+        if: ${{ matrix.cross && !inputs.include_cross_builds }}
+        run: |
+          echo "Cross-compilation builds disabled"
+          exit 0
+
+      - uses: actions/checkout@v4
+
+      # ============================================================
+      # Dependency Caching
+      # ============================================================
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ matrix.packages }} ${{ matrix.cross && matrix.cross_packages || '' }}
+          version: 1.0-${{ matrix.arch }}
+
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: cmake-${{ matrix.arch }}-${{ inputs.build_type }}-${{ hashFiles('src/**', 'include/**', 'CMakeLists.txt') }}
+          restore-keys: |
+            cmake-${{ matrix.arch }}-${{ inputs.build_type }}-
+            cmake-${{ matrix.arch }}-
+
+      # ============================================================
+      # Cross-compilation Setup
+      # ============================================================
+      - name: Setup cross-compilation environment
+        if: ${{ matrix.cross }}
+        run: |
+          # Add architecture for cross-compiled libraries
+          sudo dpkg --add-architecture ${{ matrix.debian_arch }}
+          sudo apt-get update || true
+
+          # Try to install cross-compiled development libraries (best-effort)
+          sudo apt-get install -y \
+            libncurses5-dev:${{ matrix.debian_arch }} \
+            libsqlite3-dev:${{ matrix.debian_arch }} \
+            libcurl4-openssl-dev:${{ matrix.debian_arch }} \
+            libcjson-dev:${{ matrix.debian_arch }} || echo "Some cross-libs unavailable, build may be limited"
+
+      # ============================================================
+      # CMake Configuration
+      # ============================================================
+      - name: Configure CMake (native)
+        if: ${{ !matrix.cross }}
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ inputs.build_type }} \
+            -DBUILD_TESTS=${{ inputs.run_tests && 'ON' || 'OFF' }}
+
+      - name: Configure CMake (cross-compile)
+        if: ${{ matrix.cross }}
+        run: |
+          # Generate toolchain file
+          cat > build-toolchain.cmake << 'EOF'
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR ${{ matrix.arch }})
+          set(CMAKE_C_COMPILER ${{ matrix.toolchain }}-gcc)
+          set(CMAKE_CXX_COMPILER ${{ matrix.toolchain }}-g++)
+          set(CMAKE_FIND_ROOT_PATH /usr/${{ matrix.toolchain }})
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(PKG_CONFIG_EXECUTABLE /usr/bin/pkg-config)
+          EOF
+
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ inputs.build_type }} \
+            -DCMAKE_TOOLCHAIN_FILE=build-toolchain.cmake \
+            -DBUILD_TESTS=OFF
+
+      # ============================================================
+      # Build
+      # ============================================================
+      - name: Build
+        run: cmake --build build --config ${{ inputs.build_type }} -j$(nproc)
+
+      # ============================================================
+      # Tests (native only)
+      # ============================================================
+      - name: Run tests
+        if: ${{ !matrix.cross && inputs.run_tests }}
+        run: |
+          cd build
+          ctest --output-on-failure
+
+      # ============================================================
+      # Package
+      # ============================================================
+      - name: Package binary
+        if: ${{ inputs.upload_artifacts }}
+        run: |
+          mkdir -p dist package/systemd
+
+          # Copy binary
+          cp build/profinet-monitor package/
+          chmod +x package/profinet-monitor
+
+          # Copy supporting files
+          cp -r systemd/* package/systemd/ 2>/dev/null || true
+          cp README.md LICENSE package/ 2>/dev/null || true
+          cp OPERATOR.md INSTALL.md package/ 2>/dev/null || true
+
+          # Create install script
+          cat > package/install.sh << 'INSTALL_EOF'
+          #!/bin/bash
+          set -e
+          echo "Installing Water Treatment RTU Monitor..."
+          sudo install -m 755 profinet-monitor /usr/local/bin/
+          sudo mkdir -p /etc/profinet-monitor /var/lib/profinet-monitor
+          if [ -f systemd/profinet-monitor.service ]; then
+              sudo cp systemd/profinet-monitor.service /etc/systemd/system/
+              sudo systemctl daemon-reload
+              echo "Systemd service installed. Enable with: sudo systemctl enable profinet-monitor"
+          fi
+          echo "Installation complete! Run 'profinet-monitor' to start."
+          INSTALL_EOF
+          chmod +x package/install.sh
+
+          # Create tarball
+          tar -czvf dist/water-treat-${{ matrix.arch }}.tar.gz -C package .
+
+          # Also copy standalone binary
+          cp build/profinet-monitor dist/profinet-monitor-${{ matrix.arch }}
+
+      - name: Upload artifacts
+        if: ${{ inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.arch }}
+          path: dist/
+          retention-days: ${{ inputs.artifact_retention_days }}

@@ -1,86 +1,178 @@
-name: Release Build
+# ============================================================
+# Release Workflow - Create GitHub Releases
+# ============================================================
+# Triggers: Push of version tags (v*)
+# Builds: x86_64 (native), aarch64, armv7hf (cross-compile)
+# Outputs: Tarballs, standalone binaries, SHA256 checksums
+# Features: Auto-generated release notes, prerelease detection
+# ============================================================
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  build-release:
+  # ============================================================
+  # Build Job - Uses reusable workflow
+  # ============================================================
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      build_type: 'Release'
+      run_tests: true
+      upload_artifacts: true
+      artifact_retention_days: 30
+      include_cross_builds: true
+
+  # ============================================================
+  # Release Job - Create GitHub Release
+  # ============================================================
+  release:
+    needs: build
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - arch: x86_64
-            toolchain: ""
-            package_suffix: "linux-x86_64"
-          # ARM builds require sysroot, so we do best-effort
-          # - arch: aarch64
-          #   toolchain: "toolchain/aarch64-linux-gnu.cmake"
-          #   package_suffix: "linux-arm64"
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          cmake \
-          pkg-config \
-          libncurses5-dev \
-          libsqlite3-dev \
-          libcurl4-openssl-dev \
-          libcjson-dev \
-          libgpiod-dev \
-          libsystemd-dev
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
 
-    - name: Configure CMake
-      run: |
-        cmake -B build \
-          -DCMAKE_BUILD_TYPE=Release \
-          ${{ matrix.toolchain && format('-DCMAKE_TOOLCHAIN_FILE={0}', matrix.toolchain) || '' }}
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: build-*
+          merge-multiple: false
 
-    - name: Build
-      run: cmake --build build --parallel $(nproc)
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          echo "=== Downloaded Artifacts ==="
+          find artifacts -type f -ls
 
-    - name: Create package
-      run: |
-        mkdir -p package
-        cp build/profinet-monitor package/
-        cp -r systemd package/
-        cp README.md INSTALL.md OPERATOR.md package/
-        cp -r toolchain package/
-        tar -czvf profinet-monitor-${{ github.ref_name }}-${{ matrix.package_suffix }}.tar.gz -C package .
+          # Collect all tarballs and binaries
+          for arch_dir in artifacts/build-*/; do
+            if [ -d "$arch_dir" ]; then
+              ARCH=$(basename "$arch_dir" | sed 's/build-//')
+              echo "Processing architecture: $ARCH"
 
-    - name: Upload release asset
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-${{ matrix.package_suffix }}
-        path: profinet-monitor-${{ github.ref_name }}-${{ matrix.package_suffix }}.tar.gz
-        retention-days: 30
+              # Copy and rename tarball with version
+              if [ -f "${arch_dir}water-treat-${ARCH}.tar.gz" ]; then
+                cp "${arch_dir}water-treat-${ARCH}.tar.gz" \
+                   "release/water-treat-${{ steps.version.outputs.version }}-${ARCH}.tar.gz"
+              fi
 
-  create-release:
-    needs: build-release
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
+              # Copy standalone binary with version
+              if [ -f "${arch_dir}profinet-monitor-${ARCH}" ]; then
+                cp "${arch_dir}profinet-monitor-${ARCH}" \
+                   "release/profinet-monitor-${{ steps.version.outputs.version }}-${ARCH}"
+              fi
+            fi
+          done
 
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: releases
-        pattern: release-*
-        merge-multiple: true
+          echo "=== Release Assets ==="
+          ls -la release/
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: releases/*.tar.gz
-        generate_release_notes: true
-        draft: false
-        prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          echo "=== SHA256 Checksums ==="
+          cat SHA256SUMS.txt
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Find previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          echo "=== Changelog ==="
+          if [ -n "$PREV_TAG" ]; then
+            echo "Changes since $PREV_TAG:"
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges | head -50)
+            echo "$CHANGELOG"
+
+            # Save for release notes
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGELOG" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "Initial release"
+            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ "$VERSION" == *"-rc"* ]] || [[ "$VERSION" == *"-beta"* ]] || [[ "$VERSION" == *"-alpha"* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "Detected prerelease version: $VERSION"
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "Detected stable version: $VERSION"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Water Treatment RTU ${{ steps.version.outputs.version }}
+          body: |
+            ## Water Treatment RTU Monitor ${{ steps.version.outputs.version }}
+
+            ### Downloads
+
+            | Architecture | Description | File |
+            |-------------|-------------|------|
+            | x86_64 | Intel/AMD 64-bit | `water-treat-${{ steps.version.outputs.version }}-x86_64.tar.gz` |
+            | aarch64 | ARM 64-bit (RPi 3/4/5) | `water-treat-${{ steps.version.outputs.version }}-aarch64.tar.gz` |
+            | armv7hf | ARM 32-bit (RPi 2/Zero) | `water-treat-${{ steps.version.outputs.version }}-armv7hf.tar.gz` |
+
+            ### Installation
+
+            ```bash
+            # Download and extract
+            tar -xzf water-treat-${{ steps.version.outputs.version }}-<arch>.tar.gz
+
+            # Run installer
+            ./install.sh
+            ```
+
+            ### Verify Downloads
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+
+            ### Changes
+
+            ${{ steps.changelog.outputs.changelog }}
+
+          files: release/*
+          draft: false
+          prerelease: ${{ steps.prerelease.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
