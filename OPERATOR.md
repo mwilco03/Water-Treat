@@ -35,8 +35,14 @@
 ```
 
 ### Default Credentials
-- SSH: `pi` / `raspberry` (change immediately!)
-- TUI: No authentication (local access only)
+
+**SSH Access:**
+- Username: `pi` / Password: `raspberry` (change immediately!)
+
+**TUI Login:**
+- Username: `admin` / Password: `H2OhYeah!`
+- After 3 failed attempts, a password hint is displayed
+- See README.md for instructions on changing default credentials
 
 ---
 
@@ -46,11 +52,15 @@
 
 | Board | GPIO Pins | I2C | SPI | 1-Wire | PWM | Notes |
 |-------|-----------|-----|-----|--------|-----|-------|
-| Raspberry Pi 5 | 26 | Yes | Yes | Yes | 2ch | Recommended |
+| Raspberry Pi 5 | 26 | Yes | Yes | Yes | 2ch | Recommended, uses gpiochip4 |
 | Raspberry Pi 4B | 26 | Yes | Yes | Yes | 2ch | Well tested |
 | Raspberry Pi 3B+ | 26 | Yes | Yes | Yes | 2ch | Supported |
-| Orange Pi Zero 3 | 26 | Yes | Yes | Yes | 2ch | Good alternative |
-| Luckfox Lyra | 20 | Yes | Yes | Limited | 1ch | Compact option |
+| Orange Pi Zero 3 | 26 | Yes | Yes | Yes | 2ch | Good alternative (H618) |
+| Orange Pi 2W | 26 | Yes | Yes | Yes | 2ch | Compact (H618) |
+| ODROID-XU4 | 30 | Yes | Yes | Yes | 1ch | High performance |
+| ODROID-C4 | 40 | Yes | Yes | Yes | 2ch | S905X3 SoC |
+| ODROID-N2+ | 40 | Yes | Yes | Yes | 2ch | S922X SoC |
+| Luckfox Lyra | 20 | Yes | Yes | Limited | 1ch | Compact option (RK3506) |
 
 ### Pin Header Reference (40-pin Raspberry Pi)
 
@@ -77,7 +87,7 @@
                     GND (39) (40) GPIO21
 ```
 
-### Default Pin Assignments
+### Default Pin Assignments (Raspberry Pi)
 
 | Function | GPIO | Physical Pin | Notes |
 |----------|------|--------------|-------|
@@ -92,6 +102,51 @@
 | I2C SCL | 3 | 5 | ADC/sensors |
 | PWM 0 | 18 | 12 | Variable pump |
 | PWM 1 | 13 | 33 | Variable valve |
+
+### Orange Pi Zero 3 / 2W Pin Assignments (H618)
+
+| Function | GPIO | Pin Name | Physical Pin | Notes |
+|----------|------|----------|--------------|-------|
+| Relay 1 | 73 | PI9 | 7 | Pump control |
+| Relay 2 | 74 | PI10 | 11 | Valve 1 |
+| Relay 3 | 75 | PI11 | 13 | Valve 2 |
+| Relay 4 | 76 | PI12 | 15 | Spare |
+| I2C-2 SDA | 70 | PI6 | 3 | ADC/sensors |
+| I2C-2 SCL | 69 | PI5 | 5 | ADC/sensors |
+| 1-Wire | 65 | PI1 | 12 | DS18B20 temp |
+| PWM 0 | 79 | PI15 | 32 | Variable pump |
+
+**GPIO Chip:** `gpiochip0` (all pins)
+
+### ODROID-C4 / N2+ Pin Assignments (Amlogic)
+
+| Function | GPIO | Pin Name | Physical Pin | Notes |
+|----------|------|----------|--------------|-------|
+| Relay 1 | 481 | GPIOX.3 | 7 | Pump control |
+| Relay 2 | 482 | GPIOX.4 | 11 | Valve 1 |
+| Relay 3 | 483 | GPIOX.5 | 13 | Valve 2 |
+| Relay 4 | 484 | GPIOX.6 | 15 | Spare |
+| I2C-2 SDA | 493 | GPIOX.17 | 3 | ADC/sensors |
+| I2C-2 SCL | 494 | GPIOX.18 | 5 | ADC/sensors |
+| PWM 0 | 476 | GPIOX.0 | 12 | Variable pump |
+
+**GPIO Chip:** `gpiochip1` (main GPIO banks)
+
+### ODROID-XU4 Pin Assignments (Exynos)
+
+| Function | GPIO | Pin Name | Physical Pin | Notes |
+|----------|------|----------|--------------|-------|
+| Relay 1 | 25 | GPX1.1 | 11 | Pump control |
+| Relay 2 | 31 | GPX1.7 | 13 | Valve 1 |
+| Relay 3 | 28 | GPX1.4 | 15 | Valve 2 |
+| Relay 4 | 30 | GPX1.6 | 16 | Spare |
+| I2C-1 SDA | - | I2C1_SDA | 3 | ADC/sensors |
+| I2C-1 SCL | - | I2C1_SCL | 5 | ADC/sensors |
+
+**GPIO Chip:** `gpiochip1` (GPX/GPB banks)
+
+> **Note:** The firmware auto-detects your board type and uses the appropriate pin mappings.
+> You can view detected pins in the Setup Wizard (Hardware Detection step) or by pressing 'P' in the Actuator dialog.
 
 ---
 
@@ -326,6 +381,8 @@ DS18B20 sensors are factory-calibrated. Verify with:
 
 ### Key Reference
 
+**Global Keys:**
+
 | Key | Action |
 |-----|--------|
 | F1 | System Configuration |
@@ -335,16 +392,39 @@ DS18B20 sensors are factory-calibrated. Verify with:
 | F5 | Live Status Dashboard |
 | F6 | Alarm Configuration |
 | F7 | Logging Settings |
+| F8 | Actuator Management |
 | F10 | Exit Application |
 | ↑↓ | Navigate list items |
 | ENTER | Select / Edit |
 | ESC | Cancel / Back |
 | TAB | Next field |
-| 'A' | Add new item |
+
+**Common Actions:**
+
+| Key | Action |
+|-----|--------|
+| 'A' / 'N' | Add new item |
 | 'D' | Delete selected |
 | 'E' | Edit selected |
 | 'C' | Calibrate sensor |
 | 'R' | Refresh data |
+
+**System Page (F1):**
+
+| Key | Action |
+|-----|--------|
+| Ctrl+S | Save configuration to file |
+| 'E' | Export config backup (timestamped) |
+| 'I' | Import config from backup |
+
+Config backups are saved to `/var/backup/profinet-monitor/`.
+
+**Actuator Dialog:**
+
+| Key | Action |
+|-----|--------|
+| 'P' | Open GPIO pin selector (shows board defaults) |
+| Ctrl+S | Save actuator |
 
 ### Screen Layout
 
