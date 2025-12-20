@@ -56,7 +56,7 @@ result_t logger_init(const logger_config_t *config) {
         g_logger.config.destinations = LOG_DEST_CONSOLE;
         g_logger.config.include_timestamp = true;
         g_logger.config.syslog_facility = LOG_FACILITY_DAEMON;
-        SAFE_STRNCPY(g_logger.config.syslog_ident, "profinet-monitor", sizeof(g_logger.config.syslog_ident));
+        SAFE_STRNCPY(g_logger.config.syslog_ident, "water-treat", sizeof(g_logger.config.syslog_ident));
     }
     pthread_mutex_init(&g_logger.mutex, NULL);
 
@@ -69,7 +69,7 @@ result_t logger_init(const logger_config_t *config) {
     if (g_logger.config.destinations & LOG_DEST_SYSLOG) {
         const char *ident = strlen(g_logger.config.syslog_ident) > 0
                           ? g_logger.config.syslog_ident
-                          : "profinet-monitor";
+                          : "water-treat";
         int facility = log_facility_to_syslog(g_logger.config.syslog_facility);
         openlog(ident, LOG_PID | LOG_NDELAY, facility);
         g_logger.syslog_opened = true;

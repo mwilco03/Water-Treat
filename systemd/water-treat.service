@@ -1,5 +1,5 @@
 [Unit]
-Description=PROFINET Monitor - Industrial Sensor Hub
+Description=Water-Treat RTU - Industrial Water Treatment Remote Terminal Unit
 Documentation=https://github.com/mwilco03/Water-Treat
 After=network.target local-fs.target
 Wants=network.target
@@ -10,7 +10,7 @@ Wants=network.target
 Type=notify
 NotifyAccess=main
 
-ExecStart=/usr/local/bin/profinet-monitor --daemon
+ExecStart=/usr/local/bin/water-treat --daemon
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
@@ -18,7 +18,7 @@ RestartSec=5
 # User/Group - root needed for GPIO/I2C/SPI hardware access
 User=root
 Group=root
-WorkingDirectory=/var/lib/profinet-monitor
+WorkingDirectory=/var/lib/water-treat
 
 # Watchdog - set to 0 to disable, or set interval (e.g., 30s)
 # Application must call sd_notify("WATCHDOG=1") periodically
@@ -26,10 +26,10 @@ WorkingDirectory=/var/lib/profinet-monitor
 WatchdogSec=30
 
 # Logging - send stdout/stderr to journald for centralized logging
-# View with: journalctl -u profinet-monitor -f
+# View with: journalctl -u water-treat -f
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=profinet-monitor
+SyslogIdentifier=water-treat
 
 # Resource limits (prevent runaway processes)
 MemoryMax=256M
@@ -37,7 +37,7 @@ CPUQuota=80%
 
 # Security hardening (optional - comment out if causing issues)
 ProtectSystem=strict
-ReadWritePaths=/var/lib/profinet-monitor /var/log/profinet-monitor
+ReadWritePaths=/var/lib/water-treat /var/log/water-treat
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
@@ -50,7 +50,7 @@ DeviceAllow=/dev/gpiomem rw
 DeviceAllow=/dev/mem rw
 
 # Environment file for configuration overrides (optional)
-EnvironmentFile=-/etc/profinet-monitor/environment
+EnvironmentFile=-/etc/water-treat/environment
 
 [Install]
 WantedBy=multi-user.target

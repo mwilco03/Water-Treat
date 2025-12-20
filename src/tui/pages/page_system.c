@@ -51,7 +51,7 @@ static void load_system_info(void) {
     if (cfg) {
         SAFE_STRNCPY(f->value, cfg->system.device_name, sizeof(f->value));
     } else {
-        strcpy(f->value, "profinet-monitor");
+        strcpy(f->value, "rtu-0000");
     }
     
     // Log Level
@@ -228,14 +228,14 @@ void page_system_draw(WINDOW *win) {
 static void export_config(void) {
     /* Create backup directory if it doesn't exist */
     mkdir("/var/backup", 0755);
-    mkdir("/var/backup/profinet-monitor", 0755);
+    mkdir("/var/backup/water-treat", 0755);
 
     /* Generate timestamped filename */
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char filename[256];
     snprintf(filename, sizeof(filename),
-             "/var/backup/profinet-monitor/config_%04d%02d%02d_%02d%02d%02d.conf",
+             "/var/backup/water-treat/config_%04d%02d%02d_%02d%02d%02d.conf",
              tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
              tm->tm_hour, tm->tm_min, tm->tm_sec);
 
@@ -257,7 +257,7 @@ typedef struct {
 } backup_file_t;
 
 static int scan_backup_files(backup_file_t *files, int max_files, const char *extension) {
-    const char *backup_dir = "/var/backup/profinet-monitor";
+    const char *backup_dir = "/var/backup/water-treat";
     DIR *dir = opendir(backup_dir);
     if (!dir) return 0;
 
@@ -358,7 +358,7 @@ static void import_config(void) {
     int count = scan_backup_files(files, MAX_BACKUP_FILES, "conf");
 
     if (count == 0) {
-        tui_set_status("No config files found in /var/backup/profinet-monitor/");
+        tui_set_status("No config files found in /var/backup/water-treat/");
         return;
     }
 
@@ -425,14 +425,14 @@ static void backup_database(void) {
 
     /* Create backup directory */
     mkdir("/var/backup", 0755);
-    mkdir("/var/backup/profinet-monitor", 0755);
+    mkdir("/var/backup/water-treat", 0755);
 
     /* Generate timestamped filename */
     time_t now = time(NULL);
     struct tm *tm = localtime(&now);
     char filename[256];
     snprintf(filename, sizeof(filename),
-             "/var/backup/profinet-monitor/database_%04d%02d%02d_%02d%02d%02d.db",
+             "/var/backup/water-treat/database_%04d%02d%02d_%02d%02d%02d.db",
              tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
              tm->tm_hour, tm->tm_min, tm->tm_sec);
 
@@ -451,7 +451,7 @@ static void restore_database(void) {
     int count = scan_backup_files(files, MAX_BACKUP_FILES, "db");
 
     if (count == 0) {
-        tui_set_status("No database backups found in /var/backup/profinet-monitor/");
+        tui_set_status("No database backups found in /var/backup/water-treat/");
         return;
     }
 

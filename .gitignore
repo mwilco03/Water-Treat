@@ -3,7 +3,7 @@ cmake-build-*/
 *.o
 *.a
 *.so
-profinet-monitor
+water-treat
 *.db
 *.log
 *.conf

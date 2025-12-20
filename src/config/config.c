@@ -2,6 +2,92 @@
 #include "utils/logger.h"
 #include <stdio.h>
 #include <ctype.h>
+#include <dirent.h>
+#include <unistd.h>
+
+/* ============================================================================
+ * Station ID Detection
+ * ============================================================================
+ * What: Generate unique station ID from hardware MAC address
+ * Why: Multiple RTUs need unique identifiers tied to physical hardware
+ * Format: rtu-XXXX where XXXX is last 4 hex chars of primary MAC
+ * Note: "rtu" aligns with control station / RTU architecture naming
+ */
+static void detect_station_id(char *station_name, size_t size) {
+    DIR *dir;
+    struct dirent *entry;
+    char mac_path[256];
+    char mac_addr[18] = {0};
+    FILE *f;
+
+    /* Default fallback */
+    SAFE_STRNCPY(station_name, "rtu-0000", size);
+
+    dir = opendir("/sys/class/net");
+    if (!dir) return;
+
+    /* Find first physical network interface (prefer eth*/enp* over wlan/lo) */
+    char *best_iface = NULL;
+    int best_priority = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        if (strcmp(entry->d_name, "lo") == 0) continue;
+
+        /* Priority: eth* > enp* > ens* > wlan* > others */
+        int priority = 1;
+        if (strncmp(entry->d_name, "eth", 3) == 0) priority = 5;
+        else if (strncmp(entry->d_name, "enp", 3) == 0) priority = 4;
+        else if (strncmp(entry->d_name, "ens", 3) == 0) priority = 3;
+        else if (strncmp(entry->d_name, "wlan", 4) == 0) priority = 2;
+
+        if (priority > best_priority) {
+            best_priority = priority;
+            free(best_iface);
+            best_iface = strdup(entry->d_name);
+        }
+    }
+    closedir(dir);
+
+    if (!best_iface) return;
+
+    /* Read MAC address */
+    snprintf(mac_path, sizeof(mac_path), "/sys/class/net/%s/address", best_iface);
+    free(best_iface);
+
+    f = fopen(mac_path, "r");
+    if (!f) return;
+
+    if (fgets(mac_addr, sizeof(mac_addr), f)) {
+        /* MAC format: aa:bb:cc:dd:ee:ff - extract last 4 hex chars */
+        size_t len = strlen(mac_addr);
+        if (len >= 17) {
+            /* Remove newline if present */
+            if (mac_addr[len-1] == '\n') mac_addr[len-1] = '\0';
+
+            /* Skip all-zeros MAC */
+            if (strcmp(mac_addr, "00:00:00:00:00:00") != 0) {
+                /* Extract last 4 hex digits (positions 12,13 and 15,16) */
+                char suffix[5];
+                suffix[0] = mac_addr[12];
+                suffix[1] = mac_addr[13];
+                suffix[2] = mac_addr[15];
+                suffix[3] = mac_addr[16];
+                suffix[4] = '\0';
+
+                /* Convert to lowercase */
+                for (int i = 0; i < 4; i++) {
+                    if (suffix[i] >= 'A' && suffix[i] <= 'F') {
+                        suffix[i] = suffix[i] - 'A' + 'a';
+                    }
+                }
+
+                snprintf(station_name, size, "rtu-%s", suffix);
+            }
+        }
+    }
+    fclose(f);
+}
 
 static char* trim(char *str) { char *e; while(isspace((unsigned char)*str)) str++; if(*str==0) return str; e=str+strlen(str)-1; while(e>str && isspace((unsigned char)*e)) e--; *(e+1)='\0'; return str; }
 static config_entry_t* find_entry(config_manager_t *m, const char *s, const char *k) { for(int i=0;i<m->entry_count;i++) if(strcasecmp(m->entries[i].section,s)==0 && strcasecmp(m->entries[i].key,k)==0) return &m->entries[i]; return NULL; }
@@ -31,7 +117,7 @@ result_t config_load_file(config_manager_t *m, const char *p) {
 result_t config_save_file(config_manager_t *m, const char *p) {
     CHECK_NULL(m); const char *sp = p ? p : m->config_path; if(!sp || strlen(sp)==0) return RESULT_INVALID_PARAM;
     FILE *f = fopen(sp,"w"); if(!f) return RESULT_IO_ERROR;
-    fprintf(f,"# PROFINET Monitor Configuration\n\n"); char cs[MAX_NAME_LEN]="";
+    fprintf(f,"# Water-Treat RTU Configuration\n\n"); char cs[MAX_NAME_LEN]="";
     for(int i=0;i<m->entry_count;i++) {
         if(strcmp(cs,m->entries[i].section)!=0) { if(cs[0]!='\0') fprintf(f,"\n"); fprintf(f,"[%s]\n",m->entries[i].section); SAFE_STRNCPY(cs,m->entries[i].section,sizeof(cs)); }
         fprintf(f,"%s = %s\n",m->entries[i].key,m->entries[i].value);
@@ -48,9 +134,9 @@ void config_get_defaults(app_config_t *c) {
     memset(c,0,sizeof(*c));
 
     /* System defaults */
-    SAFE_STRNCPY(c->system.device_name,"profinet-sensor-hub",sizeof(c->system.device_name));
+    detect_station_id(c->system.device_name, sizeof(c->system.device_name));
     SAFE_STRNCPY(c->system.log_level,"info",sizeof(c->system.log_level));
-    SAFE_STRNCPY(c->system.log_file,"/var/log/profinet-monitor/monitor.log",sizeof(c->system.log_file));
+    SAFE_STRNCPY(c->system.log_file,"/var/log/water-treat/monitor.log",sizeof(c->system.log_file));
     c->system.daemon_mode=false;
 
     /* Network defaults */
@@ -58,8 +144,8 @@ void config_get_defaults(app_config_t *c) {
     c->network.dhcp_enabled=true;
     /* ip_address, netmask, gateway left empty (DHCP) */
 
-    /* PROFINET defaults */
-    SAFE_STRNCPY(c->profinet.station_name,"rpi-sensor-hub",sizeof(c->profinet.station_name));
+    /* PROFINET defaults - station name derived from MAC */
+    detect_station_id(c->profinet.station_name, sizeof(c->profinet.station_name));
     SAFE_STRNCPY(c->profinet.product_name,"Water Treatment RTU",sizeof(c->profinet.product_name));
     c->profinet.vendor_id=0x0493;
     c->profinet.device_id=0x0001;
@@ -67,7 +153,7 @@ void config_get_defaults(app_config_t *c) {
     c->profinet.enabled=true;
 
     /* Database defaults */
-    SAFE_STRNCPY(c->database.path,"/var/lib/profinet-monitor/data.db",sizeof(c->database.path));
+    SAFE_STRNCPY(c->database.path,"/var/lib/water-treat/data.db",sizeof(c->database.path));
     c->database.create_if_missing=true;
     c->database.busy_timeout_ms=5000;
 
@@ -82,7 +168,7 @@ void config_get_defaults(app_config_t *c) {
     c->health.enabled=true;
     c->health.http_enabled=true;
     c->health.http_port=8080;
-    SAFE_STRNCPY(c->health.file_path,"/var/lib/profinet-monitor/health.prom",sizeof(c->health.file_path));
+    SAFE_STRNCPY(c->health.file_path,"/var/lib/water-treat/health.prom",sizeof(c->health.file_path));
     c->health.update_interval_seconds=10;
 
     /* LED indicator defaults (disabled by default) */

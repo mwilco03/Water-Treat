@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(profinet-monitor VERSION 1.0.0 LANGUAGES C)
+project(water-treat VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -7,6 +7,31 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+# ------------------------------------------------------------------------------
+# Dynamic Version from Git
+# ------------------------------------------------------------------------------
+# What: Extract version from git tags at build time
+# Why: Single source of truth - no hardcoded version strings
+# Edge cases: No tags = use PROJECT_VERSION, no git = use PROJECT_VERSION
+#
+execute_process(
+    COMMAND git describe --tags --always --dirty
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE GIT_RESULT
+)
+
+if(GIT_RESULT EQUAL 0 AND GIT_VERSION)
+    # Strip leading 'v' if present (v0.1.0 -> 0.1.0)
+    string(REGEX REPLACE "^v" "" VERSION_STRING "${GIT_VERSION}")
+else()
+    set(VERSION_STRING "${CMAKE_PROJECT_VERSION}-dev")
+endif()
+
+message(STATUS "Building ${CMAKE_PROJECT_NAME} version: ${VERSION_STRING}")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-parameter")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0 -DDEBUG")
@@ -201,50 +226,53 @@ endif()
 
 find_library(TINYEXPR_LIBRARY tinyexpr HINTS /usr/local/lib)
 
-add_executable(profinet-monitor ${SOURCES})
+add_executable(water-treat ${SOURCES})
+
+# Pass version string as compile definition
+target_compile_definitions(water-treat PRIVATE VERSION_STRING="${VERSION_STRING}")
 
 if(HAVE_PNET)
-    target_compile_definitions(profinet-monitor PRIVATE HAVE_PNET=1)
-    target_include_directories(profinet-monitor PRIVATE ${PNET_INCLUDE_DIR})
-    target_link_libraries(profinet-monitor ${PNET_LIBRARY})
+    target_compile_definitions(water-treat PRIVATE HAVE_PNET=1)
+    target_include_directories(water-treat PRIVATE ${PNET_INCLUDE_DIR})
+    target_link_libraries(water-treat ${PNET_LIBRARY})
 endif()
 
 if(TINYEXPR_LIBRARY)
-    target_compile_definitions(profinet-monitor PRIVATE HAVE_TINYEXPR=1)
-    target_link_libraries(profinet-monitor ${TINYEXPR_LIBRARY})
+    target_compile_definitions(water-treat PRIVATE HAVE_TINYEXPR=1)
+    target_link_libraries(water-treat ${TINYEXPR_LIBRARY})
 endif()
 
 if(CJSON_FOUND)
-    target_compile_definitions(profinet-monitor PRIVATE HAVE_CJSON=1)
-    target_include_directories(profinet-monitor PRIVATE ${CJSON_INCLUDE_DIRS})
-    target_link_libraries(profinet-monitor ${CJSON_LIBRARIES})
+    target_compile_definitions(water-treat PRIVATE HAVE_CJSON=1)
+    target_include_directories(water-treat PRIVATE ${CJSON_INCLUDE_DIRS})
+    target_link_libraries(water-treat ${CJSON_LIBRARIES})
 endif()
 
 # libgpiod for modern GPIO support
 if(GPIOD_FOUND)
-    target_compile_definitions(profinet-monitor PRIVATE HAVE_GPIOD=1)
-    target_include_directories(profinet-monitor PRIVATE ${GPIOD_INCLUDE_DIRS})
-    target_link_libraries(profinet-monitor ${GPIOD_LIBRARIES})
+    target_compile_definitions(water-treat PRIVATE HAVE_GPIOD=1)
+    target_include_directories(water-treat PRIVATE ${GPIOD_INCLUDE_DIRS})
+    target_link_libraries(water-treat ${GPIOD_LIBRARIES})
 endif()
 
 # systemd for sd_notify and watchdog support
 if(SYSTEMD_FOUND)
-    target_compile_definitions(profinet-monitor PRIVATE HAVE_SYSTEMD=1)
-    target_include_directories(profinet-monitor PRIVATE ${SYSTEMD_INCLUDE_DIRS})
-    target_link_libraries(profinet-monitor ${SYSTEMD_LIBRARIES})
+    target_compile_definitions(water-treat PRIVATE HAVE_SYSTEMD=1)
+    target_include_directories(water-treat PRIVATE ${SYSTEMD_INCLUDE_DIRS})
+    target_link_libraries(water-treat ${SYSTEMD_LIBRARIES})
 endif()
 
 # LED status indicator support
 if(ENABLE_LED_SUPPORT)
-    target_compile_definitions(profinet-monitor PRIVATE LED_SUPPORT=1)
+    target_compile_definitions(water-treat PRIVATE LED_SUPPORT=1)
     if(HAVE_RPI_WS281X)
-        target_compile_definitions(profinet-monitor PRIVATE HAVE_RPI_WS281X=1)
-        target_include_directories(profinet-monitor PRIVATE ${WS2811_INCLUDE_DIR})
-        target_link_libraries(profinet-monitor ${WS2811_LIBRARY})
+        target_compile_definitions(water-treat PRIVATE HAVE_RPI_WS281X=1)
+        target_include_directories(water-treat PRIVATE ${WS2811_INCLUDE_DIR})
+        target_link_libraries(water-treat ${WS2811_LIBRARY})
     endif()
 endif()
 
-target_include_directories(profinet-monitor PRIVATE
+target_include_directories(water-treat PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/drivers
@@ -256,19 +284,19 @@ target_include_directories(profinet-monitor PRIVATE
 )
 
 if(CURL_FOUND)
-    target_compile_definitions(profinet-monitor PRIVATE HAVE_CURL=1)
-    target_include_directories(profinet-monitor PRIVATE ${CURL_INCLUDE_DIRS})
-    target_link_libraries(profinet-monitor ${CURL_LIBRARIES})
+    target_compile_definitions(water-treat PRIVATE HAVE_CURL=1)
+    target_include_directories(water-treat PRIVATE ${CURL_INCLUDE_DIRS})
+    target_link_libraries(water-treat ${CURL_LIBRARIES})
 endif()
 
-target_link_libraries(profinet-monitor
+target_link_libraries(water-treat
     ${NCURSES_LIBRARIES}
     ${SQLITE3_LIBRARIES}
     Threads::Threads
     m
 )
 
-install(TARGETS profinet-monitor DESTINATION bin)
+install(TARGETS water-treat DESTINATION bin)
 
 # ============================================================================
 # Unit Tests

@@ -1,9 +1,11 @@
-# PROFINET Monitor Configuration
+# Water-Treat RTU Configuration
+# Station name and device name are auto-detected from MAC address (rtu-XXXX)
+# Override by uncommenting and setting values below
 
 [system]
-device_name = profinet-sensor-hub
+# device_name = rtu-abcd
 log_level = info
-log_file = /var/log/profinet-monitor/monitor.log
+log_file = /var/log/water-treat/monitor.log
 daemon_mode = false
 
 [network]
@@ -15,14 +17,14 @@ dhcp_enabled = true
 
 [profinet]
 enabled = true
-station_name = rpi-sensor-hub
+# station_name = rtu-abcd
 vendor_id = 0x0493
 device_id = 0x0001
-product_name = Raspberry Pi Sensor Hub
+product_name = Water Treatment RTU
 min_device_interval = 32
 
 [database]
-path = /var/lib/profinet-monitor/data.db
+path = /var/lib/water-treat/data.db
 create_if_missing = true
 busy_timeout_ms = 5000
 
@@ -39,7 +41,7 @@ remote_enabled = false
 enabled = true
 http_enabled = true
 http_port = 8080
-file_path = /var/lib/profinet-monitor/health.prom
+file_path = /var/lib/water-treat/health.prom
 update_interval_seconds = 10
 
 # Note: Modbus functionality is handled by the PROFINET Controller (SBC #1)

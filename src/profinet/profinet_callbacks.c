@@ -7,6 +7,13 @@
 #include "profinet_manager.h"
 #include "utils/logger.h"
 #include <string.h>
+#include <signal.h>
+#include <unistd.h>
+
+#ifdef LED_SUPPORT
+#include "hal/led_status.h"
+extern led_status_manager_t g_led_mgr;
+#endif
 
 #ifdef HAVE_PNET
 #include <pnet_api.h>
@@ -281,26 +288,59 @@ int profinet_reset_callback(pnet_t *net, void *arg,
                             bool should_reset_application,
                             uint16_t reset_mode) {
     UNUSED(net); UNUSED(arg);
-    
-    LOG_WARNING("PROFINET reset request: app_reset=%d, mode=%u", 
+
+    LOG_WARNING("PROFINET reset request: app_reset=%d, mode=%u",
                 should_reset_application, reset_mode);
-    
+
     if (should_reset_application) {
-        // Could trigger application restart here
-        LOG_INFO("Application reset requested");
+        switch (reset_mode) {
+            case 0:
+                /* Reset mode 0: Reload configuration (soft reset) */
+                LOG_INFO("Triggering configuration reload (SIGHUP)");
+                kill(getpid(), SIGHUP);
+                break;
+
+            case 1:
+                /* Reset mode 1: Factory reset - restart application */
+                LOG_WARNING("Factory reset requested - restarting application");
+                /* SIGTERM triggers clean shutdown; systemd will restart the service */
+                kill(getpid(), SIGTERM);
+                break;
+
+            case 2:
+                /* Reset mode 2: Reset to factory with backup (not implemented) */
+                LOG_WARNING("Factory reset with backup not implemented, performing soft reset");
+                kill(getpid(), SIGHUP);
+                break;
+
+            default:
+                LOG_WARNING("Unknown reset mode %u, performing soft reset", reset_mode);
+                kill(getpid(), SIGHUP);
+                break;
+        }
     }
-    
+
     return 0;
 }
 
 int profinet_signal_led_callback(pnet_t *net, void *arg, bool led_state) {
     UNUSED(net); UNUSED(arg);
-    
-    LOG_DEBUG("PROFINET signal LED: %s", led_state ? "ON" : "OFF");
-    
-    // Could drive physical LED here
-    // gpio_write(SIGNAL_LED_PIN, led_state);
-    
+
+    LOG_INFO("PROFINET signal LED: %s (device identification)", led_state ? "ON" : "OFF");
+
+#ifdef LED_SUPPORT
+    /* Drive system LED for device identification (blink when signaled by controller) */
+    if (g_led_mgr.initialized) {
+        if (led_state) {
+            /* Flash system LED rapidly to identify this device */
+            led_set_custom(&g_led_mgr, LED_FUNC_SYSTEM, LED_COLOR_CYAN, LED_ANIM_BLINK_FAST);
+        } else {
+            /* Restore normal system status */
+            led_set_system_status(&g_led_mgr, LED_STATUS_OK);
+        }
+    }
+#endif
+
     return 0;
 }
 

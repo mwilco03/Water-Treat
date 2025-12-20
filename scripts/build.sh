@@ -301,7 +301,7 @@ report_build_output() {
 
     if [[ -z "${project_name}" ]]; then
         warn "Could not read project name from CMake cache"
-        project_name="profinet-monitor"  # Fallback
+        project_name="water-treat"  # Fallback
     fi
 
     local binary="${BUILD_DIR}/${project_name}"
@@ -389,7 +389,7 @@ main() {
     echo ""
     echo "Next steps:"
     echo "  sudo ./scripts/install.sh  - Install to system"
-    echo "  ${BUILD_DIR}/profinet-monitor - Run directly"
+    echo "  ${BUILD_DIR}/water-treat - Run directly"
     echo "========================================"
 }
 
