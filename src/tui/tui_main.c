@@ -194,7 +194,9 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
     keypad(stdscr, TRUE);
     curs_set(0);
     timeout(TUI_REFRESH_MS);
-    
+    keypad(g_tui.main_win, TRUE); // Enable keypad input for main window
+    wtimeout(g_tui.main_win, TUI_REFRESH_MS); // Set timeout for main window
+
     // Initialize colors
     if (has_colors()) {
         start_color();
@@ -236,13 +238,22 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
 }
 
 void tui_run(void) {
-    /* Require login before accessing main interface */
+    /* Require login before accessing main interface
+     * Block input during login to prevent pulsing redraw (especially over SSH).
+     */
+    wtimeout(stdscr, -1);
     result_t login_result = page_login_run();
+    
+    /* Restore periodic refresh for the main interface */
+    wtimeout(stdscr, TUI_REFRESH_MS);
+    wtimeout(g_tui.main_win, TUI_REFRESH_MS);
+    
     if (login_result != RESULT_OK) {
         LOG_INFO("Login cancelled or failed - exiting TUI");
         return;
     }
     LOG_INFO("Login successful - starting main interface");
+
 
     g_tui.running = true;
 

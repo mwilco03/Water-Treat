@@ -726,7 +726,10 @@ result_t wizard_run(void) {
     if (!g_wizard.initialized) {
         page_wizard_init();
     }
-
+    
+    /* Block on input during wizard to prevent pulsing redraw (esp. over SSH) */
+    timeout(-1);
+    
     while (!g_wizard.completed && !g_wizard.cancelled) {
         page_wizard_draw();
         int ch = getch();
