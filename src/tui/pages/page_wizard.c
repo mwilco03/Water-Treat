@@ -13,6 +13,7 @@
 #include <ncurses.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 /* Wizard steps */
 typedef enum {
@@ -58,6 +59,10 @@ static struct {
     int current_field;
     char edit_buffer[256];
     bool editing;
+
+    /* Exit confirmation */
+    bool confirm_exit;
+    time_t confirm_exit_time;
 
 } g_wizard = {0};
 
@@ -155,7 +160,12 @@ static void draw_step_welcome(void) {
     row += 2;
 
     attron(A_BOLD);
-    mvprintw(row, 4, "Press ENTER to begin, or ESC to skip wizard");
+    //mvprintw(row, 4, "Press ENTER to begin, or ESC to skip wizard");
+    if (g_wizard.confirm_exit && (time(NULL) - g_wizard.confirm_exit_time) <= 2) {
+        mvprintw(row, 4, "Press ESC again to skip the wizard");
+    } else {
+        mvprintw(row, 4, "Press ENTER to begin, or ESC to skip wizard");
+    }
     attroff(A_BOLD);
 }
 
@@ -596,16 +606,31 @@ bool page_wizard_input(int ch) {
         return true;
     }
 
+    /* Any non-ESC key cancels pending exit confirmation on welcome screen */
+    if (g_wizard.current_step == WIZARD_STEP_WELCOME && ch != 27) {
+        g_wizard.confirm_exit = false;
+    }
+
     /* Normal navigation */
     switch (ch) {
-        case 27:  /* ESC */
-            if (g_wizard.current_step > WIZARD_STEP_WELCOME) {
-                g_wizard.current_step--;
-                g_wizard.current_field = 0;
-            } else {
-                g_wizard.cancelled = true;
-            }
+    case 27:  /* ESC */
+        if (g_wizard.current_step > WIZARD_STEP_WELCOME) {
+            /* Back one step */
+            g_wizard.current_step--;
+            g_wizard.current_field = 0;
+            g_wizard.confirm_exit = false;
             return true;
+        }
+    
+        /* Welcome screen: require double-ESC to skip/exit wizard */
+        time_t now = time(NULL);
+        if (g_wizard.confirm_exit && (now - g_wizard.confirm_exit_time) <= 2) {
+            g_wizard.cancelled = true; /* confirmed */
+        } else {
+            g_wizard.confirm_exit = true;
+            g_wizard.confirm_exit_time = now;
+        }
+        return true;
 
         case '\n':
         case KEY_ENTER:

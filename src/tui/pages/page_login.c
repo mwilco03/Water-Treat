@@ -11,6 +11,7 @@
 #include <ncurses.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 
 /* Login state */
 static struct {
@@ -22,6 +23,8 @@ static struct {
     bool show_error;
     int cursor_pos;
     int attempts;
+    bool confirm_exit;
+    time_t confirm_exit_time;
 } g_login = {0};
 
 /* Get database via TUI common */
@@ -165,7 +168,13 @@ void page_login_draw(void) {
 
     /* Draw buttons hint */
     attron(A_DIM);
-    mvprintw(field_y + 5, field_x, "TAB: Next field | ENTER: Login | ESC: Quit");
+    //mvprintw(field_y + 5, field_x, "TAB: Next field | ENTER: Login | ESC: Quit");
+    if (g_login.confirm_exit && (time(NULL) - g_login.confirm_exit_time) <= 2) {
+        mvprintw(field_y + 5, field_x, "Press ESC again to quit");
+    } else {
+        mvprintw(field_y + 5, field_x, "TAB: Next field | ENTER: Login | ESC: Quit");
+    }
+    
     attroff(A_DIM);
 
     /* Error message */
@@ -321,21 +330,29 @@ result_t page_login_run(void) {
     while (running) {
         page_login_draw();
         int ch = getch();
-
+    
         if (ch == 27) {  /* ESC */
-            running = false;
-        } else {
-            bool result = page_login_input(ch);
-            if (ch == '\n' || ch == KEY_ENTER) {
-                if (auth_is_logged_in()) {
-                    success = true;
-                    running = false;
-                }
+            time_t now = time(NULL);
+            if (g_login.confirm_exit && (now - g_login.confirm_exit_time) <= 2) {
+                running = false; /* confirmed */
+            } else {
+                g_login.confirm_exit = true;
+                g_login.confirm_exit_time = now;
             }
-            if (!result && ch == 27) {
+            continue;
+        } else {
+            /* Any other key cancels pending exit confirmation */
+            g_login.confirm_exit = false;
+        }
+    
+        bool result = page_login_input(ch);
+        if (ch == '\n' || ch == KEY_ENTER) {
+            if (auth_is_logged_in()) {
+                success = true;
                 running = false;
             }
         }
+        (void)result;
     }
 
     page_login_cleanup();
