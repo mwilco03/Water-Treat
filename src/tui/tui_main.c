@@ -253,7 +253,12 @@ void tui_run(void) {
         return;
     }
     LOG_INFO("Login successful - starting main interface");
-
+    
+    /* Login draws on stdscr; ensure we wipe any remnants before the windowed UI starts */
+    clearok(stdscr, TRUE);
+    clear();
+    refresh();
+    g_tui.needs_redraw = true;
 
     g_tui.running = true;
 

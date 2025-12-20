@@ -13,6 +13,9 @@
 #include <ctype.h>
 #include <time.h>
 
+#define LOGIN_FIELD_W  32
+#define LOGIN_BOX_W    (LOGIN_FIELD_W + 20)   /* 4 padding + 12 label offset + field + 4 padding */
+
 /* Login state */
 static struct {
     bool initialized;
@@ -111,16 +114,15 @@ static void draw_field(int y, int x, const char *label, const char *value,
     }
 
     /* Field background */
-    mvhline(y, x + 12, ' ', 24);
-
+    mvhline(y, x + 12, ' ', LOGIN_FIELD_W);
+    
     /* Field value */
     if (is_password) {
-        /* Show asterisks for password */
-        for (size_t i = 0; i < strlen(value) && i < 24; i++) {
-            mvaddch(y, x + 12 + i, '*');
+        for (size_t i = 0; i < strlen(value) && i < (size_t)LOGIN_FIELD_W; i++) {
+            mvaddch(y, x + 12 + (int)i, '*');
         }
     } else {
-        mvprintw(y, x + 12, "%-24.24s", value);
+        mvprintw(y, x + 12, "%-*.*s", LOGIN_FIELD_W, LOGIN_FIELD_W, value);
     }
 
     if (selected) {
@@ -146,9 +148,10 @@ void page_login_draw(void) {
     int logo_y = 2;
     int title_y = logo_y + 11;
     int box_y = title_y + 8;
-    int box_x = (COLS - 44) / 2;
     int box_h = 10;
-    int box_w = 44;
+    int box_w = LOGIN_BOX_W;
+    if (box_w > COLS - 4) box_w = COLS - 4;  /* keep a little margin */
+    int box_x = (COLS - box_w) / 2;
 
     /* Draw logo and title */
     draw_logo(logo_y);
