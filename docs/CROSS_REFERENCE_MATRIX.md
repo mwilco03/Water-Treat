@@ -132,7 +132,7 @@ typedef enum {
 | alarm_cnf_cb | profinet_alarm_cnf_callback() | FULL |
 | alarm_ack_cnf_cb | profinet_alarm_ack_cnf_callback() | FULL |
 | reset_cb | profinet_reset_callback() | FULL |
-| signal_led_cb | profinet_signal_led_callback() | STUB (logs only) |
+| signal_led_cb | profinet_signal_led_callback() | FULL (drives LED) |
 
 ### 6. Data Flow Verification
 
@@ -163,11 +163,7 @@ typedef enum {
    - Optional per PROFINET specification
    - I&M0 (mandatory) is fully implemented
 
-2. **Signal LED Callback** (profinet_callbacks.c:296-305)
-   - Logs state only; physical LED not driven
-   - Optional feature for device identification
-
-3. **PWM Output** (relay_output.c:81-93)
+2. **PWM Output** (relay_output.c:81-93)
    - Falls back to on/off for non-PWM hardware
    - Full PWM requires platform-specific implementation
 
@@ -192,3 +188,4 @@ typedef enum {
 - [x] Degraded mode handling (actuators maintain last state)
 - [x] Alarm transmission via pnet_alarm_send_process_alarm()
 - [x] I&M0 record for device identification
+- [x] Signal LED callback (device identification blink)

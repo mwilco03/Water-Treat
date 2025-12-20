@@ -8,6 +8,11 @@
 #include "utils/logger.h"
 #include <string.h>
 
+#ifdef LED_SUPPORT
+#include "hal/led_status.h"
+extern led_status_manager_t g_led_mgr;
+#endif
+
 #ifdef HAVE_PNET
 #include <pnet_api.h>
 
@@ -295,12 +300,22 @@ int profinet_reset_callback(pnet_t *net, void *arg,
 
 int profinet_signal_led_callback(pnet_t *net, void *arg, bool led_state) {
     UNUSED(net); UNUSED(arg);
-    
-    LOG_DEBUG("PROFINET signal LED: %s", led_state ? "ON" : "OFF");
-    
-    // Could drive physical LED here
-    // gpio_write(SIGNAL_LED_PIN, led_state);
-    
+
+    LOG_INFO("PROFINET signal LED: %s (device identification)", led_state ? "ON" : "OFF");
+
+#ifdef LED_SUPPORT
+    /* Drive system LED for device identification (blink when signaled by controller) */
+    if (g_led_mgr.initialized) {
+        if (led_state) {
+            /* Flash system LED rapidly to identify this device */
+            led_set_custom(&g_led_mgr, LED_FUNC_SYSTEM, LED_COLOR_CYAN, LED_ANIM_BLINK_FAST);
+        } else {
+            /* Restore normal system status */
+            led_set_system_status(&g_led_mgr, LED_STATUS_OK);
+        }
+    }
+#endif
+
     return 0;
 }
 
