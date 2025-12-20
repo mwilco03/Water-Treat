@@ -131,7 +131,7 @@ typedef enum {
 | alarm_ind_cb | profinet_alarm_ind_callback() | FULL |
 | alarm_cnf_cb | profinet_alarm_cnf_callback() | FULL |
 | alarm_ack_cnf_cb | profinet_alarm_ack_cnf_callback() | FULL |
-| reset_cb | profinet_reset_callback() | FULL |
+| reset_cb | profinet_reset_callback() | FULL (triggers SIGHUP/SIGTERM) |
 | signal_led_cb | profinet_signal_led_callback() | FULL (drives LED) |
 
 ### 6. Data Flow Verification
@@ -189,3 +189,4 @@ typedef enum {
 - [x] Alarm transmission via pnet_alarm_send_process_alarm()
 - [x] I&M0 record for device identification
 - [x] Signal LED callback (device identification blink)
+- [x] Reset callback (SIGHUP for reload, SIGTERM for restart)
