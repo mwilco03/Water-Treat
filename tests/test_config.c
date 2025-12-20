@@ -114,7 +114,7 @@ void test_config_section_parse(void) {
 
 /* Test key=value parsing */
 void test_config_kv_parse(void) {
-    char line[] = "station_name = rpi-sensor-hub";
+    char line[] = "station_name = rtu-abcd";
     char *key = NULL;
     char *value = NULL;
 
@@ -128,22 +128,20 @@ void test_config_kv_parse(void) {
     TEST_ASSERT_NOT_NULL(key);
     TEST_ASSERT_NOT_NULL(value);
     TEST_ASSERT_STR_EQ("station_name", key);
-    TEST_ASSERT_STR_EQ("rpi-sensor-hub", value);
+    TEST_ASSERT_STR_EQ("rtu-abcd", value);
 }
 
 /* Test default values */
 void test_config_defaults(void) {
-    /* These should match config.c defaults */
-    char default_device_name[] = "profinet-sensor-hub";
+    /* These should match config.c defaults
+     * Note: device_name and station_name are now auto-detected from MAC (rtu-XXXX format)
+     * Fallback is rtu-0000 if MAC detection fails */
     char default_interface[] = "eth0";
-    char default_station_name[] = "rpi-sensor-hub";
     int default_vendor_id = 0x0493;
     int default_device_id = 0x0001;
     int default_log_interval = 60;
 
-    TEST_ASSERT_STR_EQ("profinet-sensor-hub", default_device_name);
     TEST_ASSERT_STR_EQ("eth0", default_interface);
-    TEST_ASSERT_STR_EQ("rpi-sensor-hub", default_station_name);
     TEST_ASSERT_EQ(0x0493, default_vendor_id);
     TEST_ASSERT_EQ(0x0001, default_device_id);
     TEST_ASSERT_EQ(60, default_log_interval);
@@ -153,7 +151,7 @@ void test_config_defaults(void) {
 void test_config_health_defaults(void) {
     int default_http_port = 8080;
     int default_update_interval = 10;
-    char default_file_path[] = "/var/lib/profinet-monitor/health.prom";
+    char default_file_path[] = "/var/lib/water-treat/health.prom";
 
     TEST_ASSERT_EQ(8080, default_http_port);
     TEST_ASSERT_EQ(10, default_update_interval);

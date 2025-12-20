@@ -672,7 +672,7 @@ bool page_wizard_input(int ch) {
                 config_set_string(&g_config_mgr, "network", "dhcp_enabled", g_wizard.use_dhcp ? "true" : "false");
 
                 /* Save to file */
-                config_save_file(&g_config_mgr, "/etc/profinet-monitor/profinet-monitor.conf");
+                config_save_file(&g_config_mgr, "/etc/water-treat/water-treat.conf");
 
                 g_wizard.current_step = WIZARD_STEP_COMPLETE;
             } else if (g_wizard.current_step == WIZARD_STEP_COMPLETE) {

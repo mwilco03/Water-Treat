@@ -30,17 +30,26 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
 
     memset(result, 0, sizeof(*result));
 
-    /* Check for default values that should be changed */
-    if (strcmp(config->profinet.station_name, "rpi-sensor-hub") == 0) {
-        result->flags |= CONFIG_WARN_DEFAULT_STATION_NAME;
-        result->warning_count++;
-        add_message(result, "WARNING: Using default PROFINET station name 'rpi-sensor-hub'");
+    /* Check for auto-generated station names (rtu-XXXX pattern)
+     * These are derived from MAC address and are valid, but user may want custom name */
+    bool is_auto_station = (strncmp(config->profinet.station_name, "rtu-", 4) == 0 &&
+                            strlen(config->profinet.station_name) == 8);
+    if (is_auto_station) {
+        /* Not an error/warning - auto-generated names are valid for multi-RTU deployments */
+        /* Only warn if it's the fallback rtu-0000 (MAC detection failed) */
+        if (strcmp(config->profinet.station_name, "rtu-0000") == 0) {
+            result->flags |= CONFIG_WARN_DEFAULT_STATION_NAME;
+            result->warning_count++;
+            add_message(result, "WARNING: MAC-based station ID detection failed, using fallback");
+        }
     }
 
-    if (strcmp(config->system.device_name, "profinet-sensor-hub") == 0) {
+    bool is_auto_device = (strncmp(config->system.device_name, "rtu-", 4) == 0 &&
+                           strlen(config->system.device_name) == 8);
+    if (is_auto_device && strcmp(config->system.device_name, "rtu-0000") == 0) {
         result->flags |= CONFIG_WARN_DEFAULT_DEVICE_NAME;
         result->warning_count++;
-        add_message(result, "WARNING: Using default device name 'profinet-sensor-hub'");
+        add_message(result, "WARNING: MAC-based device name detection failed, using fallback");
     }
 
     /* Check PROFINET status */
@@ -116,12 +125,16 @@ void config_validation_log(const config_validation_result_t *result) {
 bool config_is_first_run(const app_config_t *config) {
     if (!config) return true;
 
-    /* Check if critical settings are still at defaults */
-    bool is_default_station = (strcmp(config->profinet.station_name, "rpi-sensor-hub") == 0);
-    bool is_default_device = (strcmp(config->system.device_name, "profinet-sensor-hub") == 0);
+    /* With MAC-based auto-detection, first run is determined differently:
+     * - If station name is rtu-0000 (fallback), likely first run with issue
+     * - If no config file was loaded, first run
+     * - Otherwise, auto-detected names are valid
+     */
+    bool is_fallback_station = (strcmp(config->profinet.station_name, "rtu-0000") == 0);
+    bool is_fallback_device = (strcmp(config->system.device_name, "rtu-0000") == 0);
 
-    /* If both are defaults, likely first run */
-    return is_default_station && is_default_device;
+    /* If both are fallback (MAC detection failed), likely first run or network issue */
+    return is_fallback_station && is_fallback_device;
 }
 
 /* ============================================================================

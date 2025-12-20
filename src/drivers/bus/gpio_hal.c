@@ -33,7 +33,7 @@
  * ========================================================================== */
 
 #define MAX_GPIO_PINS       64
-#define GPIO_CONSUMER_NAME  "profinet-monitor"
+#define GPIO_CONSUMER_NAME  "water-treat"
 
 typedef struct {
     int pin;

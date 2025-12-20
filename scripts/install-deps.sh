@@ -432,14 +432,24 @@ build_libgpiod_v1() {
 
     success "libgpiod v${version} installed to ${prefix}"
 
+    # Update PKG_CONFIG_PATH to include /usr/local/lib/pkgconfig
+    # This is critical - env.sh was sourced before this directory existed
+    if [[ -d "${prefix}/lib/pkgconfig" ]]; then
+        if [[ ":${PKG_CONFIG_PATH:-}:" != *":${prefix}/lib/pkgconfig:"* ]]; then
+            export PKG_CONFIG_PATH="${prefix}/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+            detail "Updated PKG_CONFIG_PATH to include ${prefix}/lib/pkgconfig"
+        fi
+    fi
+
     # Verify it's now findable
     if pkg-config --exists libgpiod 2>/dev/null; then
         local new_ver
         new_ver="$(pkg-config --modversion libgpiod)"
         detail "Verified: pkg-config finds libgpiod ${new_ver}"
     else
+        # This should not happen now, but provide guidance if it does
         non_breaking "pkg-config doesn't find libgpiod after install"
-        non_breaking "You may need to set PKG_CONFIG_PATH=/usr/local/lib/pkgconfig"
+        non_breaking "Manually set: export PKG_CONFIG_PATH=${prefix}/lib/pkgconfig:\$PKG_CONFIG_PATH"
     fi
 
     return 0

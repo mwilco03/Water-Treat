@@ -83,7 +83,7 @@ static void draw_status_bar(void) {
     wattron(g_tui.status_bar, A_BOLD | COLOR_PAIR(TUI_COLOR_HEADER));
     mvwhline(g_tui.status_bar, 0, 0, ' ', max_x);
     
-    mvwprintw(g_tui.status_bar, 0, 2, "PROFINET Monitor v%s", VERSION_STRING);
+    mvwprintw(g_tui.status_bar, 0, 2, "Water-Treat RTU v%s", VERSION_STRING);
     
     if (g_tui.app_config) {
         mvwprintw(g_tui.status_bar, 0, 30, "| %s", g_tui.app_config->system.device_name);

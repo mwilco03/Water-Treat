@@ -106,8 +106,8 @@ declare -A MANIFEST=()
 find_manifest() {
     # Known manifest locations (based on common project names)
     local -a possible_paths=(
-        "/etc/profinet-monitor/.install-manifest"
         "/etc/water-treat/.install-manifest"
+        "/etc/profinet-monitor/.install-manifest"  # Legacy support
     )
 
     # Also search /etc for any manifest files
@@ -159,7 +159,7 @@ discover_from_system() {
     info "No manifest found, discovering from system..."
 
     # Look for our service files
-    local -a service_patterns=("profinet-monitor" "water-treat")
+    local -a service_patterns=("water-treat" "profinet-monitor")
 
     for name in "${service_patterns[@]}"; do
         local service_file="/etc/systemd/system/${name}.service"

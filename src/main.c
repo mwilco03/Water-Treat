@@ -1,7 +1,8 @@
 /**
- * PROFINET Monitor - Main Entry Point
+ * Water-Treat RTU - Main Entry Point
  *
- * Raspberry Pi sensor hub with PROFINET interface.
+ * Industrial water treatment Remote Terminal Unit.
+ * Hardware-agnostic sensor hub with optional PROFINET interface.
  * Integrates sensor polling, alarm management, data logging,
  * PROFINET communication, and TUI interface.
  */
@@ -26,6 +27,8 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <pwd.h>
 #include "auth/auth.h"
 
 #ifdef HAVE_SYSTEMD
@@ -83,9 +86,9 @@ static void setup_signal_handlers(void) {
 
 static const char* find_config_file(void) {
     static const char *paths[] = {
-        "/etc/profinet-monitor/profinet-monitor.conf",
-        "/etc/profinet-monitor.conf",
-        "./profinet-monitor.conf",
+        "/etc/water-treat/water-treat.conf",
+        "/etc/water-treat.conf",
+        "./water-treat.conf",
         NULL
     };
 
@@ -129,21 +132,123 @@ static result_t load_configuration(const char *config_path) {
  * Subsystem Initialization
  * ========================================================================== */
 
-static result_t init_database(void) {
-    // Ensure database directory exists
-    char *dir = strdup(g_app_config.database.path);
-    if (dir) {
-        char *last_slash = strrchr(dir, '/');
-        if (last_slash) {
-            *last_slash = '\0';
-            mkdir(dir, 0755);
-        }
-        free(dir);
+/**
+ * mkdir_p - Create directory and all parent directories (like mkdir -p)
+ *
+ * What: Recursively creates directories
+ * Why: Single mkdir() only creates leaf; we need full path creation
+ * Returns: 0 on success, -1 on failure
+ */
+static int mkdir_p(const char *path, mode_t mode) {
+    char tmp[MAX_PATH_LEN];
+    char *p = NULL;
+    size_t len;
+
+    SAFE_STRNCPY(tmp, path, sizeof(tmp));
+    len = strlen(tmp);
+    if (len == 0) return -1;
+
+    /* Remove trailing slash */
+    if (tmp[len - 1] == '/') {
+        tmp[len - 1] = '\0';
     }
 
-    result_t r = database_init(&g_db, g_app_config.database.path);
+    /* Create each directory in path */
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+
+    /* Create final directory */
+    if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * get_user_data_dir - Get user-specific data directory for fallback
+ *
+ * What: Returns ~/.local/share/water-treat/ or ./data/
+ * Why: Fallback when /var/lib/water-treat/ is not writable
+ */
+static const char* get_user_data_dir(void) {
+    static char path[MAX_PATH_LEN] = {0};
+
+    if (path[0] != '\0') return path;
+
+    /* Try XDG_DATA_HOME first */
+    const char *xdg = getenv("XDG_DATA_HOME");
+    if (xdg && xdg[0] != '\0') {
+        snprintf(path, sizeof(path), "%s/water-treat", xdg);
+        return path;
+    }
+
+    /* Fall back to ~/.local/share/water-treat */
+    const char *home = getenv("HOME");
+    if (!home) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw) home = pw->pw_dir;
+    }
+
+    if (home && home[0] != '\0') {
+        snprintf(path, sizeof(path), "%s/.local/share/water-treat", home);
+        return path;
+    }
+
+    /* Ultimate fallback: current directory */
+    snprintf(path, sizeof(path), "./data");
+    return path;
+}
+
+static result_t init_database(void) {
+    const char *db_path = g_app_config.database.path;
+    char dir_path[MAX_PATH_LEN];
+    bool using_fallback = false;
+
+    /* Extract directory from database path */
+    SAFE_STRNCPY(dir_path, db_path, sizeof(dir_path));
+    char *last_slash = strrchr(dir_path, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+    } else {
+        dir_path[0] = '.';
+        dir_path[1] = '\0';
+    }
+
+    /* Try to create the configured directory */
+    if (mkdir_p(dir_path, 0755) != 0) {
+        /* Directory creation failed - likely permission issue */
+        LOG_WARNING("Cannot create directory %s: %s", dir_path, strerror(errno));
+
+        /* Try user-specific fallback */
+        const char *user_dir = get_user_data_dir();
+        if (mkdir_p(user_dir, 0755) == 0) {
+            static char fallback_path[MAX_PATH_LEN];
+            snprintf(fallback_path, sizeof(fallback_path), "%s/data.db", user_dir);
+            db_path = fallback_path;
+            using_fallback = true;
+            LOG_INFO("Using fallback database location: %s", db_path);
+        } else {
+            LOG_ERROR("Cannot create fallback directory %s: %s", user_dir, strerror(errno));
+            LOG_ERROR("Run with sudo or install properly: sudo ./scripts/install.sh");
+            return RESULT_IO_ERROR;
+        }
+    }
+
+    /* Initialize database */
+    result_t r = database_init(&g_db, db_path);
     if (r != RESULT_OK) {
-        LOG_ERROR("Failed to initialize database at %s", g_app_config.database.path);
+        LOG_ERROR("Failed to initialize database at %s", db_path);
+        if (!using_fallback) {
+            LOG_ERROR("Check directory permissions or run: sudo ./scripts/install.sh");
+        }
         return r;
     }
 
@@ -152,9 +257,12 @@ static result_t init_database(void) {
         LOG_ERROR("Auth init failed");
         return r;
     }
-    
-    LOG_INFO("Database initialized: %s", g_app_config.database.path);
-    DB_EVENT_INFO(&g_db, "system", "PROFINET Monitor started");
+
+    LOG_INFO("Database initialized: %s", db_path);
+    if (using_fallback) {
+        LOG_WARNING("Using non-standard database location (install properly for production)");
+    }
+    DB_EVENT_INFO(&g_db, "system", "Water-Treat RTU started");
 
     return RESULT_OK;
 }
@@ -437,7 +545,7 @@ static void shutdown_subsystems(void) {
     }
 
     if (database_is_connected(&g_db)) {
-        DB_EVENT_INFO(&g_db, "system", "PROFINET Monitor stopped");
+        DB_EVENT_INFO(&g_db, "system", "Water-Treat RTU stopped");
         database_close(&g_db);
         LOG_INFO("Database closed");
     }
@@ -461,8 +569,8 @@ static void print_usage(const char *prog_name) {
 }
 
 static void print_version(void) {
-    printf("PROFINET Monitor v%s\n", VERSION_STRING);
-    printf("Raspberry Pi Sensor Hub with PROFINET Interface\n");
+    printf("Water-Treat RTU v%s\n", VERSION_STRING);
+    printf("Industrial Water Treatment Remote Terminal Unit\n");
     printf("Build: %s %s\n", __DATE__, __TIME__);
 }
 
@@ -526,7 +634,7 @@ int main(int argc, char *argv[]) {
     };
     logger_init(&log_cfg);
 
-    LOG_INFO("Starting PROFINET Monitor v%s", VERSION_STRING);
+    LOG_INFO("Starting Water-Treat RTU v%s", VERSION_STRING);
 
     // Setup signal handlers
     setup_signal_handlers();
@@ -719,6 +827,6 @@ int main(int argc, char *argv[]) {
 
     logger_shutdown();
 
-    printf("\nPROFINET Monitor stopped.\n");
+    printf("\nWater-Treat RTU stopped.\n");
     return 0;
 }

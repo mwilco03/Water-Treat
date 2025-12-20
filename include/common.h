@@ -10,7 +10,10 @@
 #include <time.h>
 #include <errno.h>
 
-#define VERSION_STRING "1.0.0"
+/* VERSION_STRING is defined by CMake from git tags */
+#ifndef VERSION_STRING
+#define VERSION_STRING "0.1.0-dev"
+#endif
 #define MAX_NAME_LEN 64
 #define MAX_PATH_LEN 256
 #define MAX_CONFIG_VALUE_LEN 512
