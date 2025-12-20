@@ -6,6 +6,7 @@
 #include "db/db_modules.h"
 #include "formula_evaluator.h"
 #include <pthread.h>
+#include "sensors/drivers/driver_web_poll.h"
 
 typedef enum {
     SENSOR_INSTANCE_PHYSICAL,
@@ -54,17 +55,9 @@ typedef union {
         float vref;
         bool initialized;
     } mcp3008;
-    struct {
-        char url[256];
-        char method[16];
-        char headers[256];
-        char json_path[128];
-        char post_body[512];
-        void *curl;
-        float last_value;
-        time_t last_fetch;
-        bool cache_on_error;
-    } web_poll;
+
+    web_poll_device_t web_poll;
+
 } sensor_driver_ctx_t;
 
 typedef struct {

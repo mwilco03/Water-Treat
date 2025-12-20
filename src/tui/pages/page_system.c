@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include "tui/tui_main.h"
 
 #define MAX_FIELDS 10
 

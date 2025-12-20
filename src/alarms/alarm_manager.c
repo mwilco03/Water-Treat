@@ -11,6 +11,7 @@
 #include "utils/logger.h"
 #include <pthread.h>
 #include <math.h>
+#include <unistd.h>
 
 /* External actuator manager for safety interlocks */
 extern actuator_manager_t g_actuator_mgr;

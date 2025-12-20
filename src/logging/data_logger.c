@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #ifdef HAVE_CURL
 #include <curl/curl.h>

@@ -23,6 +23,8 @@ typedef enum {
     TUI_COLOR_INPUT
 } tui_color_t;
 
+void tui_set_status(const char *fmt, ...);
+
 // Context management - extended with sensor and LED manager access
 void tui_set_context(database_t *db, config_manager_t *config, app_config_t *app_config);
 void tui_set_sensor_manager(sensor_manager_t *sensor_mgr);
