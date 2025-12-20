@@ -263,7 +263,17 @@ static void draw_step_network(void) {
     }
 
     row += 2;
-    mvprintw(row, 4, "Use UP/DOWN to navigate, ENTER to edit, SPACE to toggle");
+    //mvprintw(row, 4, "Use UP/DOWN to navigate, ENTER to edit, SPACE to toggle");
+    /* Add a Continue pseudo-field so user can advance to next step */
+    int max_field = g_wizard.use_dhcp ? 1 : 4;
+    int continue_field = max_field + 1;
+    
+    bool cont_selected = (g_wizard.current_field == continue_field);
+    if (cont_selected) attron(A_REVERSE | A_BOLD);
+    mvprintw(row++, 4, "[ Continue ]");
+    if (cont_selected) attroff(A_REVERSE | A_BOLD);
+    
+    mvprintw(row, 4, "Use UP/DOWN to navigate, ENTER to edit, SPACE to toggle (select [Continue] to advance)");
 }
 
 static void draw_step_profinet(void) {
@@ -286,7 +296,17 @@ static void draw_step_profinet(void) {
     attroff(COLOR_PAIR(3));
 
     row += 2;
-    mvprintw(row, 4, "Use UP/DOWN to navigate, ENTER to edit");
+    //mvprintw(row, 4, "Use UP/DOWN to navigate, ENTER to edit");
+    /* Add a Continue pseudo-field so user can advance to next step */
+    int max_field = 1;
+    int continue_field = max_field + 1;
+    
+    bool cont_selected = (g_wizard.current_field == continue_field);
+    if (cont_selected) attron(A_REVERSE | A_BOLD);
+    mvprintw(row++, 4, "[ Continue ]");
+    if (cont_selected) attroff(A_REVERSE | A_BOLD);
+    
+    mvprintw(row, 4, "Use UP/DOWN to navigate, ENTER to edit (select [Continue] to advance)");
 }
 
 static void draw_step_sensors(void) {
@@ -589,6 +609,25 @@ bool page_wizard_input(int ch) {
 
         case '\n':
         case KEY_ENTER:
+            /* If we're on the Continue pseudo-field, advance to next step */
+            if (g_wizard.current_step == WIZARD_STEP_NETWORK) {
+                int max_field = g_wizard.use_dhcp ? 1 : 4;
+                int continue_field = max_field + 1;
+                if (g_wizard.current_field == continue_field) {
+                    g_wizard.current_step++;
+                    g_wizard.current_field = 0;
+                    return true;
+                }
+            } else if (g_wizard.current_step == WIZARD_STEP_PROFINET) {
+                int max_field = 1;
+                int continue_field = max_field + 1;
+                if (g_wizard.current_field == continue_field) {
+                    g_wizard.current_step++;
+                    g_wizard.current_field = 0;
+                    return true;
+                }
+            }
+
             if (g_wizard.current_step == WIZARD_STEP_CONFIRM) {
                 /* Save configuration */
                 SAFE_STRNCPY(g_app_config.system.device_name, g_wizard.device_name, sizeof(g_app_config.system.device_name));
@@ -642,31 +681,55 @@ bool page_wizard_input(int ch) {
             return true;
 
         case KEY_UP:
-            if (g_wizard.current_field > 0) {
-                g_wizard.current_field--;
-            }
-            return true;
+            if (g_wizard.current_step == WIZARD_STEP_NETWORK) {
+                   int max_field = g_wizard.use_dhcp ? 1 : 4;
+                   int continue_field = max_field + 1;
+                   if (g_wizard.current_field == 0) g_wizard.current_field = continue_field;
+                   else g_wizard.current_field--;
+                   return true;
+               } else if (g_wizard.current_step == WIZARD_STEP_PROFINET) {
+                   int max_field = 1;
+                   int continue_field = max_field + 1;
+                   if (g_wizard.current_field == 0) g_wizard.current_field = continue_field;
+                   else g_wizard.current_field--;
+                   return true;
+               }
+           
+               if (g_wizard.current_field > 0) g_wizard.current_field--;
+               return true;
 
         case KEY_DOWN:
-        case '\t':
+        case '\t': {
             g_wizard.current_field++;
-            /* Limit based on step */
+        
             if (g_wizard.current_step == WIZARD_STEP_NETWORK) {
                 int max_field = g_wizard.use_dhcp ? 1 : 4;
-                if (g_wizard.current_field > max_field) {
+                int continue_field = max_field + 1;
+                if (g_wizard.current_field > continue_field) {
                     g_wizard.current_field = 0;
                 }
             } else if (g_wizard.current_step == WIZARD_STEP_PROFINET) {
-                if (g_wizard.current_field > 1) {
+                int max_field = 1;
+                int continue_field = max_field + 1;
+                if (g_wizard.current_field > continue_field) {
                     g_wizard.current_field = 0;
                 }
             }
+        
             return true;
+        }
 
         case ' ':
             /* Toggle checkbox */
             if (g_wizard.current_step == WIZARD_STEP_NETWORK && g_wizard.current_field == 1) {
                 g_wizard.use_dhcp = !g_wizard.use_dhcp;
+            
+                /* Clamp selection to valid range (including Continue) */
+                int max_field = g_wizard.use_dhcp ? 1 : 4;
+                int continue_field = max_field + 1;
+                if (g_wizard.current_field > continue_field) {
+                    g_wizard.current_field = continue_field;
+                }
             }
             return true;
 
