@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <sys/stat.h>
+#include "auth/auth.h"
 
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-daemon.h>
@@ -146,11 +147,20 @@ static result_t init_database(void) {
         return r;
     }
 
+    r = auth_init(&g_db);
+    if (r != RESULT_OK) {
+        LOG_ERROR("Auth init failed");
+        return r;
+    }
+    
     LOG_INFO("Database initialized: %s", g_app_config.database.path);
     DB_EVENT_INFO(&g_db, "system", "PROFINET Monitor started");
 
     return RESULT_OK;
 }
+
+
+
 
 static result_t init_profinet(void) {
     if (!g_app_config.profinet.enabled) {
