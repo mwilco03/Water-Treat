@@ -20,7 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known Issues
 
-- **Health File Write Error**: `[ERROR] Failed to open health file: /var/lib/water-treat/health.prom.tmp` appears when `/var/lib/water-treat/` directory doesn't exist. **Fix**: Run `sudo ./scripts/install.sh` which creates required directories.
+- **Health File Write Error**: `[ERROR] Failed to open health file: /var/lib/water-treat/health.prom.tmp` spams every 10 seconds when directory doesn't exist.
+  - **Call chain**: `main.c:init_health_check()` → `health_check_start()` → `update_thread_func()` → `health_check_write_file()` (every `update_interval_seconds`)
+  - **Default path**: Hardcoded in `config.c:171` as `/var/lib/water-treat/health.prom`
+  - **Fix**: Run `sudo ./scripts/install.sh` (creates directory at line 212)
+  - **Workaround**: Set `file_path =` (empty) in config, or `mkdir -p /var/lib/water-treat`
 
 - **TUI Screen Glitching**: Main interface flickers on Trixie. Yeddo's fixes (`770b08e`, `be229e3`) for login/wizard pulsing are present and working. The 100ms main loop refresh is by design, but interacts poorly with Trixie's ncurses 6.5+. Further investigation needed.
 
