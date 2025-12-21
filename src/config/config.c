@@ -164,11 +164,13 @@ void config_get_defaults(app_config_t *c) {
     c->logging.destination=1; /* Local */
     c->logging.remote_enabled=false;
 
-    /* Health check defaults */
+    /* Health check defaults
+     * Use /run (tmpfs) for metrics file to avoid SD card wear on embedded
+     * systems. /run is RAM-backed, cleared on reboot - ideal for metrics. */
     c->health.enabled=true;
     c->health.http_enabled=true;
     c->health.http_port=8080;
-    SAFE_STRNCPY(c->health.file_path,"/var/lib/water-treat/health.prom",sizeof(c->health.file_path));
+    SAFE_STRNCPY(c->health.file_path,"/run/water-treat/health.prom",sizeof(c->health.file_path));
     c->health.update_interval_seconds=10;
 
     /* LED indicator defaults (disabled by default) */

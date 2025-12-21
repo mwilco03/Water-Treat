@@ -14,23 +14,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Core functionality: Operational
   - Status: Usable but not fully stable
 
+### Added
+
+- **bootstrap.sh**: New single-command bootstrap script for quick project setup
+  - Pre-flight checks verify system requirements before build
+  - Handles dependency installation, build, and optional install
+  - Usage: `./scripts/bootstrap.sh` (build) or `./scripts/bootstrap.sh --install`
+
 ### Fixed
 
 - **INSTALL.md directory mismatch**: Documentation referenced `/var/lib/profinet-monitor` but application uses `/var/lib/water-treat`. Fixed directory paths in post-installation instructions.
 
+- **TUI screen corruption from logging**: Console logging (stderr) was corrupting ncurses display. Changed logger to file-only mode for both TUI and daemon modes. Errors now go to log file only, preserving terminal integrity. (`main.c:637-647`)
+
+- **Health file error spam**: Error message spammed every 10 seconds when directory didn't exist. Now:
+  - Rate-limited: First error logged, then only every 5 minutes
+  - Auto-creates directory if possible (graceful degradation)
+  - Changed log level from ERROR to WARNING
+  - (`health_check.c:368-416`)
+
+### Changed
+
+- **Health metrics default path**: Changed from `/var/lib/water-treat/health.prom` to `/run/water-treat/health.prom` (tmpfs). Benefits:
+  - Reduces SD card wear on embedded systems (RAM-backed)
+  - 8,640 writes/day now go to tmpfs instead of flash
+  - Cleared on reboot (appropriate for metrics)
+  - (`config.c:167-174`)
+
 ### Known Issues
 
-- **Health File Write Error**: `[ERROR] Failed to open health file: /var/lib/water-treat/health.prom.tmp` spams every 10 seconds when directory doesn't exist.
-  - **Call chain**: `main.c:init_health_check()` → `health_check_start()` → `update_thread_func()` → `health_check_write_file()` (every `update_interval_seconds`)
-  - **Default path**: Hardcoded in `config.c:171` as `/var/lib/water-treat/health.prom`
-  - **Fix**: Run `sudo ./scripts/install.sh` (creates directory at line 212)
-  - **Workaround**: Set `file_path =` (empty) in config, or `mkdir -p /var/lib/water-treat`
-
-- **TUI Screen Glitching**: Main interface flickers on Trixie. Yeddo's fixes (`770b08e`, `be229e3`) for login/wizard pulsing are present and working. The 100ms main loop refresh is by design, but interacts poorly with Trixie's ncurses 6.5+. Further investigation needed.
+- **TUI Screen Glitching**: Main interface may flicker on Trixie (ncurses 6.5+). Yeddo's fixes (`770b08e`, `be229e3`) for login/wizard pulsing are present. The 100ms main loop refresh is by design. Further investigation needed for full compatibility.
 
 ### Notes
 
 This release marks initial testing on Debian Trixie (testing). While the application builds and runs, users may experience visual artifacts in the terminal UI. The glitching is cosmetic and does not affect core functionality.
+
+### Embedded System Considerations
+
+This release includes optimizations for memory-constrained embedded systems:
+- Health metrics now use tmpfs by default (no SD card wear)
+- Rate-limited error logging reduces log file growth
+- Pre-flight checks in bootstrap.sh verify system requirements early
 
 ## [0.2.1] - 2025-12-19
 

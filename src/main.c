@@ -634,9 +634,13 @@ int main(int argc, char *argv[]) {
     if (verbose_level >= 2) log_level = LOG_LEVEL_TRACE;
     else if (verbose_level >= 1) log_level = LOG_LEVEL_DEBUG;
 
+    /* TUI mode: file-only logging to prevent ncurses corruption
+     * Console output from LOG_ERROR writes to stderr, which overlays
+     * ncurses display causing visual glitches. In TUI mode we log
+     * exclusively to file. Daemon mode also uses file-only. */
     logger_config_t log_cfg = {
         .level = log_level,
-        .destinations = daemon_mode ? LOG_DEST_FILE : (LOG_DEST_CONSOLE | LOG_DEST_FILE),
+        .destinations = LOG_DEST_FILE,  /* File-only: TUI + daemon safe */
         .include_timestamp = true,
         .include_source = true
     };

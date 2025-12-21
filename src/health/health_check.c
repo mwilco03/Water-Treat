@@ -21,10 +21,12 @@ static int config_to_json(char *buffer, size_t buffer_size);
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/sysinfo.h>
 #include <fcntl.h>
+#include <errno.h>
 
 /* ============================================================================
  * Module State
@@ -336,9 +338,64 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         snap.memory_usage_percent);
 }
 
+/**
+ * mkdir_p_health - Create directory and parents for health file
+ *
+ * What: Recursively creates directories (like mkdir -p)
+ * Why: Health file directory may not exist on first run
+ */
+static int mkdir_p_health(const char *path) {
+    char tmp[MAX_PATH_LEN];
+    char *p = NULL;
+    size_t len;
+
+    SAFE_STRNCPY(tmp, path, sizeof(tmp));
+    len = strlen(tmp);
+    if (len == 0) return -1;
+
+    /* Remove trailing slash */
+    if (tmp[len - 1] == '/') tmp[len - 1] = '\0';
+
+    /* Create each directory in path */
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return -1;
+            *p = '/';
+        }
+    }
+    return (mkdir(tmp, 0755) != 0 && errno != EEXIST) ? -1 : 0;
+}
+
 result_t health_check_write_file(const char *path) {
+    /* Rate-limiting for repeated errors */
+    static int error_count = 0;
+    static time_t last_error_log = 0;
+
     if (!path || strlen(path) == 0) {
         return RESULT_INVALID_PARAM;
+    }
+
+    /* Extract and ensure directory exists */
+    char dir_path[MAX_PATH_LEN];
+    SAFE_STRNCPY(dir_path, path, sizeof(dir_path));
+    char *last_slash = strrchr(dir_path, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        if (access(dir_path, W_OK) != 0) {
+            /* Try to create directory */
+            if (mkdir_p_health(dir_path) != 0) {
+                time_t now = time(NULL);
+                error_count++;
+                /* Rate limit: log first error, then every 5 minutes */
+                if (error_count == 1 || (now - last_error_log) >= 300) {
+                    LOG_WARNING("Health file directory not writable: %s (error #%d)",
+                               dir_path, error_count);
+                    last_error_log = now;
+                }
+                return RESULT_IO_ERROR;
+            }
+        }
     }
 
     /* Write to temp file first, then rename (atomic) */
@@ -347,9 +404,18 @@ result_t health_check_write_file(const char *path) {
 
     FILE *fp = fopen(tmp_path, "w");
     if (!fp) {
-        LOG_ERROR("Failed to open health file: %s", tmp_path);
+        time_t now = time(NULL);
+        error_count++;
+        /* Rate limit: log first error, then every 5 minutes */
+        if (error_count == 1 || (now - last_error_log) >= 300) {
+            LOG_WARNING("Failed to open health file: %s (error #%d)", tmp_path, error_count);
+            last_error_log = now;
+        }
         return RESULT_IO_ERROR;
     }
+
+    /* Reset error count on success */
+    error_count = 0;
 
     char buffer[4096];
     int len = health_check_to_prometheus(buffer, sizeof(buffer));
