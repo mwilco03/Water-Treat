@@ -23,6 +23,9 @@
 #define TUI_REFRESH_MS      100
 #define STATUS_BAR_HEIGHT   1
 #define FOOTER_HEIGHT       1
+#define MAX_SCREEN_HISTORY  16
+#define TUI_MSG_RING_SIZE   32
+#define TUI_MSG_MAX_LEN     256
 
 typedef enum {
     PAGE_SYSTEM = 0,
@@ -45,21 +48,38 @@ typedef struct {
     void (*cleanup)(void);
 } page_def_t;
 
+/* Message ring buffer entry for TUI log messages */
+typedef struct {
+    char message[TUI_MSG_MAX_LEN];
+    int level;
+    time_t timestamp;
+} tui_msg_entry_t;
+
 static struct {
     WINDOW *main_win;
     WINDOW *status_bar;
     WINDOW *footer;
-    
+
     tui_page_t current_page;
     bool running;
+    bool initialized;  /* True after tui_init(), false after tui_shutdown() */
     bool needs_redraw;
-    
+
     database_t *db;
     config_manager_t *config;
     app_config_t *app_config;
-    
+
     char status_message[256];
     time_t status_time;
+
+    /* Screen history for ESC navigation */
+    tui_page_t history_stack[MAX_SCREEN_HISTORY];
+    int history_top;
+
+    /* Message ring buffer for log messages when TUI is active */
+    tui_msg_entry_t msg_ring[TUI_MSG_RING_SIZE];
+    int msg_ring_head;
+    int msg_ring_count;
 } g_tui = {0};
 
 static page_def_t pages[PAGE_COUNT] = {
@@ -102,10 +122,10 @@ static void draw_status_bar(void) {
 
 static void draw_footer(void) {
     int max_x = getmaxx(g_tui.footer);
-    
+
     wattron(g_tui.footer, COLOR_PAIR(TUI_COLOR_HEADER));
     mvwhline(g_tui.footer, 0, 0, ' ', max_x);
-    
+
     int x = 2;
     for (int i = 0; i < PAGE_COUNT; i++) {
         if ((tui_page_t)i == g_tui.current_page) {
@@ -117,9 +137,13 @@ static void draw_footer(void) {
         }
         x += strlen(pages[i].title) + 5;
     }
-    
+
+    /* Show ESC:Back if we have navigation history, otherwise ESC:Exit */
+    if (g_tui.history_top > 0) {
+        mvwprintw(g_tui.footer, 0, max_x - 20, "ESC:Back");
+    }
     mvwprintw(g_tui.footer, 0, max_x - 10, "F10:Quit");
-    
+
     wattroff(g_tui.footer, COLOR_PAIR(TUI_COLOR_HEADER));
     wrefresh(g_tui.footer);
 }
@@ -141,22 +165,62 @@ static void draw_page_header(void) {
     }
 }
 
+/* Push current page onto history stack before switching */
+static void history_push(tui_page_t page) {
+    if (g_tui.history_top < MAX_SCREEN_HISTORY - 1) {
+        g_tui.history_stack[g_tui.history_top++] = page;
+    }
+}
+
+/* Pop previous page from history stack */
+static tui_page_t history_pop(void) {
+    if (g_tui.history_top > 0) {
+        return g_tui.history_stack[--g_tui.history_top];
+    }
+    return PAGE_COUNT;  /* Invalid - signals we're at root */
+}
+
 static void switch_page(tui_page_t new_page) {
     if (new_page == g_tui.current_page || new_page >= PAGE_COUNT) return;
-    
-    // Cleanup current page
+
+    /* Push current page onto history before switching */
+    history_push(g_tui.current_page);
+
+    /* Cleanup current page */
     if (pages[g_tui.current_page].cleanup) {
         pages[g_tui.current_page].cleanup();
     }
-    
+
     g_tui.current_page = new_page;
-    
-    // Initialize new page
+
+    /* Initialize new page */
     if (pages[g_tui.current_page].init) {
         pages[g_tui.current_page].init(g_tui.main_win);
     }
-    
+
     g_tui.needs_redraw = true;
+}
+
+/* Navigate back to previous screen (for ESC key) */
+static bool navigate_back(void) {
+    tui_page_t prev = history_pop();
+    if (prev < PAGE_COUNT) {
+        /* Cleanup current page */
+        if (pages[g_tui.current_page].cleanup) {
+            pages[g_tui.current_page].cleanup();
+        }
+
+        g_tui.current_page = prev;
+
+        /* Initialize previous page */
+        if (pages[g_tui.current_page].init) {
+            pages[g_tui.current_page].init(g_tui.main_win);
+        }
+
+        g_tui.needs_redraw = true;
+        return true;  /* Successfully navigated back */
+    }
+    return false;  /* At root, no previous screen */
 }
 
 static void handle_resize(void) {
@@ -232,8 +296,9 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
     }
     
     g_tui.needs_redraw = true;
+    g_tui.initialized = true;
     LOG_INFO("TUI initialized");
-    
+
     return RESULT_OK;
 }
 
@@ -289,7 +354,7 @@ void tui_run(void) {
             continue;
         }
         
-        // Global keys
+        /* Global keys */
         switch (ch) {
             case KEY_F(1): switch_page(PAGE_SYSTEM); break;
             case KEY_F(2): switch_page(PAGE_SENSORS); break;
@@ -307,8 +372,33 @@ void tui_run(void) {
             case KEY_RESIZE:
                 handle_resize();
                 break;
+            case 27:  /* ESC key */
+                /*
+                 * ESC always goes back one level. At root, show quit confirmation.
+                 * This is consistent with IO_CONFIGURATION_UI_SPEC.md requirements.
+                 */
+                {
+                    /* Check if this is a genuine ESC press (not an escape sequence) */
+                    nodelay(g_tui.main_win, TRUE);
+                    int next_ch = wgetch(g_tui.main_win);
+                    nodelay(g_tui.main_win, FALSE);
+
+                    if (next_ch == ERR) {
+                        /* Pure ESC key press - navigate back */
+                        if (!navigate_back()) {
+                            /* At root screen - show quit confirmation */
+                            if (tui_confirm(g_tui.main_win, "Exit Water-Treat RTU?")) {
+                                g_tui.running = false;
+                            }
+                        }
+                    } else {
+                        /* Escape sequence - put back and let ncurses handle */
+                        ungetch(next_ch);
+                    }
+                }
+                break;
             default:
-                // Pass to current page
+                /* Pass to current page */
                 if (pages[g_tui.current_page].handle_input) {
                     pages[g_tui.current_page].handle_input(g_tui.main_win, ch);
                     g_tui.needs_redraw = true;
@@ -319,16 +409,20 @@ void tui_run(void) {
 }
 
 void tui_shutdown(void) {
-    // Cleanup current page
+    /* Mark TUI as inactive BEFORE cleanup so logger stops routing here */
+    g_tui.initialized = false;
+    g_tui.running = false;
+
+    /* Cleanup current page */
     if (pages[g_tui.current_page].cleanup) {
         pages[g_tui.current_page].cleanup();
     }
-    
-    // Destroy windows
+
+    /* Destroy windows */
     if (g_tui.status_bar) delwin(g_tui.status_bar);
     if (g_tui.main_win) delwin(g_tui.main_win);
     if (g_tui.footer) delwin(g_tui.footer);
-    
+
     endwin();
     LOG_INFO("TUI shutdown");
 }
@@ -352,4 +446,39 @@ void tui_quit(void) {
 
 bool tui_is_running(void) {
     return g_tui.running;
+}
+
+bool tui_is_active(void) {
+    /*
+     * Returns true if TUI is initialized and should receive log messages.
+     * The logger checks this to route messages through the TUI message area
+     * instead of writing directly to stdout/stderr (which corrupts the display).
+     */
+    return g_tui.initialized;
+}
+
+void tui_log_message(int level, const char *message) {
+    /*
+     * Route log messages through TUI instead of direct console write.
+     * Messages are stored in a ring buffer and displayed in the status area.
+     *
+     * This function is called by the logger when tui_is_active() returns true.
+     */
+    if (!g_tui.initialized || !message) return;
+
+    /* Add to ring buffer */
+    tui_msg_entry_t *entry = &g_tui.msg_ring[g_tui.msg_ring_head];
+    SAFE_STRNCPY(entry->message, message, TUI_MSG_MAX_LEN);
+    entry->level = level;
+    entry->timestamp = time(NULL);
+
+    g_tui.msg_ring_head = (g_tui.msg_ring_head + 1) % TUI_MSG_RING_SIZE;
+    if (g_tui.msg_ring_count < TUI_MSG_RING_SIZE) {
+        g_tui.msg_ring_count++;
+    }
+
+    /* Also update status bar for immediate visibility */
+    SAFE_STRNCPY(g_tui.status_message, message, sizeof(g_tui.status_message));
+    g_tui.status_time = time(NULL);
+    g_tui.needs_redraw = true;
 }

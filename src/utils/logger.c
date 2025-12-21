@@ -1,4 +1,5 @@
 #include "logger.h"
+#include "tui/tui_main.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,12 +116,22 @@ void logger_log(log_level_t level, const char *file, int line, const char *func,
     char msg[4096];
     vsnprintf(msg, sizeof(msg), fmt, args);
 
-    /* Console output with colors */
+    /* Console output with colors
+     *
+     * CRITICAL: When TUI is active, we MUST NOT write to stdout/stderr
+     * as this corrupts the ncurses display. Route through TUI message area instead.
+     */
     if (g_logger.config.destinations & LOG_DEST_CONSOLE) {
-        FILE *out = (level >= LOG_LEVEL_WARNING) ? stderr : stdout;
-        if (ts[0]) fprintf(out, "%s ", ts);
-        fprintf(out, "%s[%-5s]\033[0m %s\n", level_colors[level], level_names[level], msg);
-        fflush(out);
+        if (tui_is_active()) {
+            /* Route through TUI message area - never write directly to console */
+            tui_log_message(level, msg);
+        } else {
+            /* TUI not active - safe to write to console */
+            FILE *out = (level >= LOG_LEVEL_WARNING) ? stderr : stdout;
+            if (ts[0]) fprintf(out, "%s ", ts);
+            fprintf(out, "%s[%-5s]\033[0m %s\n", level_colors[level], level_names[level], msg);
+            fflush(out);
+        }
     }
 
     /* File output */
