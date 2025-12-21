@@ -33,6 +33,15 @@ chpasswd:
 
 ssh_pwauth: true
 
+write_files:
+  - path: /etc/motd
+    content: |
+      Water-Treat RTU
+
+      First boot - provisioning will start shortly.
+      Logs: /var/log/water-treat/first-boot.log
+    permissions: '0644'
+
 package_update: true
 packages:
   - git
