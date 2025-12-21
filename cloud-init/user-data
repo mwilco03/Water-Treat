@@ -20,7 +20,15 @@ users:
     lock_passwd: false
     sudo: ALL=(ALL) NOPASSWD:ALL
 
+enable_ssh: true
 ssh_pwauth: true
+
+# Raspberry Pi-specific (cc_raspberry_pi module)
+rpi:
+    spi: true
+    i2c: true
+    serial: true
+    onewire: true
 
 # Filesystem expansion
 growpart:
