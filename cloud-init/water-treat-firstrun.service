@@ -1,0 +1,15 @@
+[Unit]
+Description=Water-Treat RTU First Boot Provisioning
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/water-treat/first-boot.ok
+
+[Service]
+Type=oneshot
+ExecStart=/opt/water-treat-firstrun.sh
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

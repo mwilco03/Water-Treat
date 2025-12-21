@@ -278,7 +278,10 @@ touch "$STATE_DIR/first-boot.ok"
 touch /home/admin/.provisioning-complete
 chown admin:admin /home/admin/.provisioning-complete
 
-# Remove firstrun from boot partition (don't run again)
+# Disable firstrun service (don't run again)
+systemctl disable water-treat-firstrun.service 2>/dev/null || true
+
+# Remove firstrun script from boot partition if present
 rm -f /boot/firmware/firstrun.sh 2>/dev/null || true
 rm -f /boot/firstrun.sh 2>/dev/null || true
 
