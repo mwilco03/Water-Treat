@@ -222,21 +222,29 @@ static result_t init_database(void) {
         dir_path[1] = '\0';
     }
 
-    /* Try to create the configured directory */
+    /* Try to create the configured directory and verify it's writable */
+    bool need_fallback = false;
     if (mkdir_p(dir_path, 0755) != 0) {
         /* Directory creation failed - likely permission issue */
         LOG_WARNING("Cannot create directory %s: %s", dir_path, strerror(errno));
+        need_fallback = true;
+    } else if (access(dir_path, W_OK) != 0) {
+        /* Directory exists but is not writable */
+        LOG_WARNING("Directory %s exists but is not writable", dir_path);
+        need_fallback = true;
+    }
 
+    if (need_fallback) {
         /* Try user-specific fallback */
         const char *user_dir = get_user_data_dir();
-        if (mkdir_p(user_dir, 0755) == 0) {
+        if (mkdir_p(user_dir, 0755) == 0 && access(user_dir, W_OK) == 0) {
             static char fallback_path[MAX_PATH_LEN];
             snprintf(fallback_path, sizeof(fallback_path), "%s/data.db", user_dir);
             db_path = fallback_path;
             using_fallback = true;
             LOG_INFO("Using fallback database location: %s", db_path);
         } else {
-            LOG_ERROR("Cannot create fallback directory %s: %s", user_dir, strerror(errno));
+            LOG_ERROR("Cannot create/access fallback directory %s: %s", user_dir, strerror(errno));
             LOG_ERROR("Run with sudo or install properly: sudo ./scripts/install.sh");
             return RESULT_IO_ERROR;
         }
