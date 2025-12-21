@@ -6,554 +6,279 @@
 # Why: Enables zero-touch provisioning of RTU devices
 #
 # Architecture:
-#   - cloud-init: Creates user, installs git, writes provision script
-#   - provision script: Does the actual work (clone, build, install)
-#   - systemd timer: Handles retries with bounded cadence
-#
-# This separation ensures:
-#   - cloud-init does minimal work (fast, reliable)
-#   - Provisioning logic is in bash (easier to debug/modify)
-#   - Timer survives reboots, doesn't spam, has backoff
+#   - cloud-init: Creates user, installs git, runs provisioning
+#   - runcmd: Does the actual work (clone, validate, install)
+#   - Retry on reboot if network unavailable
 #
 
-# ------------------------------------------------------------------------------
-# User Configuration
-# ------------------------------------------------------------------------------
-# What: Create the admin user with SSH access
-# Why: Enables remote management of the RTU
-#
+hostname: rtu
+locale: en_US.UTF-8
+keyboard:
+  layout: us
+timezone: America/New_York
 
 users:
   - name: admin
-    groups: sudo
+    groups: [sudo, gpio, i2c, spi, dialout]
     shell: /bin/bash
-    sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: false
-    passwd: $6$rounds=4096$saltsalt$mMmGBOvwFwF7jQDG8Cl8DUxk6xUy1KQZy6.gZJE6xJG.0l9RqXlFqY8O0TxfWWvnGBN7fJLlzYGqDNc.hqvMd1
+    sudo: ALL=(ALL) NOPASSWD:ALL
 
-# ------------------------------------------------------------------------------
-# Package Installation
-# ------------------------------------------------------------------------------
-# What: Install only git - let install-deps.sh handle the rest
-# Why: Single source of truth for dependencies
-#      install-deps.sh handles cross-distro package mapping
-#      Avoids duplication and drift between lists
-#
+chpasswd:
+  list: |
+    admin:H2OhYeah!
+  expire: false
 
+ssh_pwauth: true
+
+package_update: true
 packages:
   - git
 
-# ------------------------------------------------------------------------------
-# Provision Script
-# ------------------------------------------------------------------------------
-# What: Main provisioning logic, written to disk by cloud-init
-# Why: Separation of concerns - cloud-init bootstraps, script does work
-#
-# Key features:
-#   - No set -e: explicit guards instead
-#   - Network connectivity check before network ops
-#   - State marker prevents re-run after success
-#   - Failure count with backoff after threshold
-#   - Friendly MOTD for field technicians
-#   - Hostname from MAC (matches config.c logic)
-#
-
-write_files:
-  # --------------------------------------------------------------------------
-  # Provisioning Script
-  # --------------------------------------------------------------------------
-  - path: /opt/water-treat-provision.sh
-    permissions: '0755'
-    content: |
-      #!/usr/bin/env bash
-      #
-      # water-treat-provision.sh - RTU provisioning script
-      #
-      # What: Clone, build, and install Water-Treat RTU software
-      # Why: Automates deployment on first boot
-      #
-      # Invoked by: water-treat-provision.timer (systemd)
-      # Logs to: /var/log/water-treat-provision.log
-      #
-      # Exit codes:
-      #   0 - Success or already provisioned
-      #   1 - Failure (will retry via timer)
-      #
-
-      # No set -e: we use explicit guards per operation
-      # This prevents DNS hiccups or slow mirrors from causing exit
-      set -uo pipefail
-
-      # --------------------------------------------------------------------------
-      # Configuration
-      # --------------------------------------------------------------------------
-
-      readonly REPO_URL="https://github.com/mwilco03/Water-Treat.git"
-      readonly INSTALL_DIR="/opt/Water-Treat"
-      readonly STATE_DIR="/var/lib/water-treat"
-      readonly LOG_FILE="/var/log/water-treat-provision.log"
-      readonly MARKER="${STATE_DIR}/provisioned.ok"
-      readonly FAIL_COUNT_FILE="${STATE_DIR}/fail.count"
-      readonly MAX_FAILURES=20
-
-      # --------------------------------------------------------------------------
-      # Logging Helper
-      # --------------------------------------------------------------------------
-      # What: Consistent logging with timestamps
-      # Why: Clean, readable output that tees to file
-      #
-
-      log() {
-          local level="$1"
-          shift
-          local msg="$*"
-          local timestamp
-          timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-          echo "[${timestamp}] [${level}] ${msg}" | tee -a "${LOG_FILE}"
-      }
-
-      log_info()  { log "INFO"  "$@"; }
-      log_warn()  { log "WARN"  "$@"; }
-      log_error() { log "ERROR" "$@"; }
-      log_ok()    { log "OK"    "$@"; }
-
-      # --------------------------------------------------------------------------
-      # MOTD Management
-      # --------------------------------------------------------------------------
-      # What: Update message of the day for field technicians
-      # Why: Friendly, actionable status visible at SSH login
-      #
-
-      update_motd() {
-          local message="$1"
-          cat > /etc/motd <<EOF
-
-      ========================================
-      ${message}
-      ========================================
-
-      EOF
-      }
-
-      # --------------------------------------------------------------------------
-      # Hostname Detection
-      # --------------------------------------------------------------------------
-      # What: Generate hostname from primary MAC address
-      # Why: Matches config.c detect_station_id() logic exactly
-      # Format: rtu-XXXX (last 4 hex chars of MAC)
-      #
-      # Priority: eth* > enp* > ens* > wlan* (skip loopback)
-      #
-
-      detect_hostname() {
-          local best_iface=""
-          local best_priority=0
-          local iface priority
-
-          for iface in /sys/class/net/*; do
-              [[ -d "${iface}" ]] || continue
-              iface="$(basename "${iface}")"
-              [[ "${iface}" == "lo" ]] && continue
-
-              # Priority matches config.c: eth* > enp* > ens* > wlan* > others
-              priority=1
-              case "${iface}" in
-                  eth*)  priority=5 ;;
-                  enp*)  priority=4 ;;
-                  ens*)  priority=3 ;;
-                  wlan*) priority=2 ;;
-              esac
-
-              if [[ ${priority} -gt ${best_priority} ]]; then
-                  best_priority=${priority}
-                  best_iface="${iface}"
-              fi
-          done
-
-          if [[ -z "${best_iface}" ]]; then
-              echo "rtu-0000"
-              return
-          fi
-
-          # Read MAC and extract last 4 hex digits
-          local mac_file="/sys/class/net/${best_iface}/address"
-          if [[ -r "${mac_file}" ]]; then
-              local mac
-              mac="$(cat "${mac_file}")"
-              # MAC format: aa:bb:cc:dd:ee:ff
-              # Extract positions 12,13 (ee) and 15,16 (ff)
-              if [[ ${#mac} -ge 17 && "${mac}" != "00:00:00:00:00:00" ]]; then
-                  local suffix="${mac:12:2}${mac:15:2}"
-                  # Convert to lowercase
-                  suffix="${suffix,,}"
-                  echo "rtu-${suffix}"
-                  return
-              fi
-          fi
-
-          echo "rtu-0000"
-      }
-
-      # --------------------------------------------------------------------------
-      # Network Connectivity Check
-      # --------------------------------------------------------------------------
-      # What: Verify we can actually reach the network
-      # Why: network-online.target fires before DNS/routes are ready on many systems
-      #
-
-      check_network() {
-          log_info "Checking network connectivity..."
-
-          # Try DNS resolution first
-          if ! getent hosts github.com >/dev/null 2>&1; then
-              log_warn "DNS resolution failed for github.com"
-              return 1
-          fi
-
-          # Try a lightweight HTTP request
-          if ! curl -sf --connect-timeout 10 --max-time 30 \
-               -o /dev/null "https://github.com" 2>/dev/null; then
-              log_warn "Cannot reach github.com"
-              return 1
-          fi
-
-          log_ok "Network connectivity confirmed"
-          return 0
-      }
-
-      # --------------------------------------------------------------------------
-      # Failure Tracking
-      # --------------------------------------------------------------------------
-      # What: Track consecutive failures and pause after threshold
-      # Why: Prevents log spam, conserves resources, signals need for intervention
-      #
-
-      get_fail_count() {
-          if [[ -f "${FAIL_COUNT_FILE}" ]]; then
-              cat "${FAIL_COUNT_FILE}" 2>/dev/null || echo 0
-          else
-              echo 0
-          fi
-      }
-
-      increment_fail_count() {
-          local count
-          count="$(get_fail_count)"
-          echo $((count + 1)) > "${FAIL_COUNT_FILE}"
-      }
-
-      clear_fail_count() {
-          rm -f "${FAIL_COUNT_FILE}"
-      }
-
-      # --------------------------------------------------------------------------
-      # Cleanup on Success
-      # --------------------------------------------------------------------------
-      # What: Remove provisioning infrastructure after successful install
-      # Why: Clean system, no lingering timers or scripts
-      #
-
-      cleanup_provisioning() {
-          log_info "Cleaning up provisioning infrastructure..."
-
-          # Stop and disable the timer
-          systemctl stop water-treat-provision.timer 2>/dev/null || true
-          systemctl disable water-treat-provision.timer 2>/dev/null || true
-
-          # Remove systemd units
-          rm -f /etc/systemd/system/water-treat-provision.service
-          rm -f /etc/systemd/system/water-treat-provision.timer
-          systemctl daemon-reload 2>/dev/null || true
-
-          # Clear failure count
-          clear_fail_count
-
-          # Note: Keep the provision script for reference/debugging
-          # It won't run again due to marker file
-
-          log_ok "Cleanup complete"
-      }
-
-      # --------------------------------------------------------------------------
-      # Main Provisioning Logic
-      # --------------------------------------------------------------------------
-
-      main() {
-          local hostname
-          hostname="$(detect_hostname)"
-
-          # Ensure state directory exists
-          mkdir -p "${STATE_DIR}"
-
-          log_info "=== Water-Treat RTU Provisioning ==="
-          log_info "Hostname: ${hostname}"
-
-          # ----------------------------------------------------------------------
-          # Check: Already provisioned?
-          # ----------------------------------------------------------------------
-          if [[ -f "${MARKER}" ]]; then
-              log_info "Already provisioned (marker exists)"
-              exit 0
-          fi
-
-          # ----------------------------------------------------------------------
-          # Check: Too many failures?
-          # ----------------------------------------------------------------------
-          local fail_count
-          fail_count="$(get_fail_count)"
-
-          if [[ ${fail_count} -ge ${MAX_FAILURES} ]]; then
-              log_error "Provisioning paused after ${fail_count} failures"
-              update_motd "Water-Treat RTU: ${hostname}
-
-      Provisioning paused after repeated failures.
-
-      To investigate:
-        cat /var/log/water-treat-provision.log
-
-      To retry:
-        rm ${FAIL_COUNT_FILE}
-        systemctl start water-treat-provision.service
-
-      Manual help may be needed."
-              exit 0
-          fi
-
-          # ----------------------------------------------------------------------
-          # Check: Network ready?
-          # ----------------------------------------------------------------------
-          if ! check_network; then
-              log_warn "Network not ready, will retry"
-              update_motd "Water-Treat RTU: ${hostname}
-
-      Network not ready yet.
-
-      Provisioning will retry automatically.
-      You can still SSH in and look around.
-
-      Check status:
-        journalctl -u water-treat-provision
-
-      Or just wait a few minutes."
-              increment_fail_count
-              exit 1
-          fi
-
-          # ----------------------------------------------------------------------
-          # Provisioning: In Progress MOTD
-          # ----------------------------------------------------------------------
-          update_motd "Water-Treat RTU: ${hostname}
-
-      Setting up Water-Treat RTU...
-
-      This takes a few minutes.
-      Progress: tail -f /var/log/water-treat-provision.log"
-
-          # ----------------------------------------------------------------------
-          # Clone Repository
-          # ----------------------------------------------------------------------
-          log_info "Cloning repository..."
-
-          if [[ -d "${INSTALL_DIR}" ]]; then
-              log_info "Directory exists, updating..."
-              if ! git -C "${INSTALL_DIR}" pull --ff-only 2>&1 | tee -a "${LOG_FILE}"; then
-                  log_warn "Pull failed, removing and re-cloning..."
-                  rm -rf "${INSTALL_DIR}"
-              fi
-          fi
-
-          if [[ ! -d "${INSTALL_DIR}" ]]; then
-              if ! git clone "${REPO_URL}" "${INSTALL_DIR}" 2>&1 | tee -a "${LOG_FILE}"; then
-                  log_error "Failed to clone repository"
-                  increment_fail_count
-                  exit 1
-              fi
-          fi
-
-          log_ok "Repository ready"
-
-          # ----------------------------------------------------------------------
-          # Set Hostname
-          # ----------------------------------------------------------------------
-          log_info "Setting hostname to ${hostname}..."
-
-          if ! hostnamectl set-hostname "${hostname}" 2>/dev/null; then
-              # Fallback for systems without hostnamectl
-              echo "${hostname}" > /etc/hostname
-              hostname "${hostname}" 2>/dev/null || true
-          fi
-
-          log_ok "Hostname set"
-
-          # ----------------------------------------------------------------------
-          # Install Dependencies
-          # ----------------------------------------------------------------------
-          log_info "Installing dependencies..."
-
-          if ! "${INSTALL_DIR}/scripts/install-deps.sh" 2>&1 | tee -a "${LOG_FILE}"; then
-              log_error "Dependency installation failed"
-              increment_fail_count
-              exit 1
-          fi
-
-          log_ok "Dependencies installed"
-
-          # ----------------------------------------------------------------------
-          # Build Application
-          # ----------------------------------------------------------------------
-          log_info "Building application..."
-
-          if ! "${INSTALL_DIR}/scripts/build.sh" 2>&1 | tee -a "${LOG_FILE}"; then
-              log_error "Build failed"
-              increment_fail_count
-              exit 1
-          fi
-
-          log_ok "Build complete"
-
-          # ----------------------------------------------------------------------
-          # Install Application
-          # ----------------------------------------------------------------------
-          log_info "Installing application..."
-
-          if ! "${INSTALL_DIR}/scripts/install.sh" 2>&1 | tee -a "${LOG_FILE}"; then
-              log_error "Installation failed"
-              increment_fail_count
-              exit 1
-          fi
-
-          log_ok "Application installed"
-
-          # ----------------------------------------------------------------------
-          # Enable and Start Service
-          # ----------------------------------------------------------------------
-          log_info "Enabling water-treat service..."
-
-          systemctl daemon-reload
-
-          if ! systemctl enable water-treat 2>&1 | tee -a "${LOG_FILE}"; then
-              log_warn "Could not enable service (non-breaking)"
-          fi
-
-          if ! systemctl start water-treat 2>&1 | tee -a "${LOG_FILE}"; then
-              log_warn "Could not start service (non-breaking)"
-          fi
-
-          # ----------------------------------------------------------------------
-          # Mark Success
-          # ----------------------------------------------------------------------
-          log_info "Writing success marker..."
-          date -Iseconds > "${MARKER}"
-
-          # ----------------------------------------------------------------------
-          # Cleanup and Final MOTD
-          # ----------------------------------------------------------------------
-          cleanup_provisioning
-
-          update_motd "Water-Treat RTU: ${hostname}
-      Provisioned: $(date '+%Y-%m-%d %H:%M')
-
-      Service commands:
-        systemctl status water-treat
-        systemctl restart water-treat
-        journalctl -u water-treat -f
-
-      Source: ${INSTALL_DIR}"
-
-          log_ok "=== Provisioning Complete ==="
-          exit 0
-      }
-
-      main "$@"
-
-  # --------------------------------------------------------------------------
-  # Systemd Service Unit
-  # --------------------------------------------------------------------------
-  # What: One-shot service that runs the provisioning script
-  # Why: Enables systemd management and logging
-  #
-  - path: /etc/systemd/system/water-treat-provision.service
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=Water-Treat RTU Provisioning
-      After=network-online.target
-      Wants=network-online.target
-
-      [Service]
-      Type=oneshot
-      ExecStart=/opt/water-treat-provision.sh
-      StandardOutput=journal
-      StandardError=journal
-
-      # Don't restart on failure - timer handles retries
-      RemainAfterExit=no
-
-  # --------------------------------------------------------------------------
-  # Systemd Timer Unit
-  # --------------------------------------------------------------------------
-  # What: Timer that triggers provisioning retries
-  # Why: Bounded cadence, survives reboots, doesn't spam
-  #
-  # Behavior:
-  #   - First run: 30 seconds after boot
-  #   - Retries: every 5 minutes
-  #   - Stops: after success (timer disabled by script)
-  #
-  - path: /etc/systemd/system/water-treat-provision.timer
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=Water-Treat RTU Provisioning Timer
-
-      [Timer]
-      # First attempt 30 seconds after boot
-      OnBootSec=30
-      # Retry every 5 minutes if needed
-      OnUnitActiveSec=5min
-      # Persist across reboots
-      Persistent=true
-
-      [Install]
-      WantedBy=timers.target
-
-# ------------------------------------------------------------------------------
-# Initial MOTD
-# ------------------------------------------------------------------------------
-# What: Set MOTD before provisioning runs
-# Why: User sees status immediately on first SSH
-#
-
-  - path: /etc/motd
-    permissions: '0644'
-    content: |
-
-      ========================================
-      Water-Treat RTU
-
-      First boot - provisioning will start shortly.
-
-      Check progress:
-        journalctl -u water-treat-provision -f
-
-      Or wait a few minutes and reconnect.
-      ========================================
-
-
-# ------------------------------------------------------------------------------
-# Run Commands
-# ------------------------------------------------------------------------------
-# What: Enable the provisioning timer on first boot
-# Why: Timer triggers the actual provisioning work
-#
-
 runcmd:
-  # Create state directory
-  - mkdir -p /var/lib/water-treat
+  - |
+    ####################################################################
+    # Water-Treat RTU First Boot Provisioning
+    # Non-breaking, warning-based, retry-on-reboot
+    ####################################################################
 
-  # Reload systemd to pick up new units
-  - systemctl daemon-reload
+    # ----- Always create required paths FIRST -----
+    mkdir -p /var/log/water-treat
+    mkdir -p /var/lib/water-treat
+    mkdir -p /opt
+    mkdir -p /home/admin
 
-  # Enable and start the provisioning timer
-  - systemctl enable water-treat-provision.timer
-  - systemctl start water-treat-provision.timer
+    # ----- Logging -----
+    exec > >(tee -a /var/log/water-treat/first-boot.log) 2>&1
+    echo "===== Provisioning attempt: $(date) ====="
+
+    # ----- Constants -----
+    STATE_DIR=/var/lib/water-treat
+    INSTALL_ROOT=/opt/Water-Treat
+    STAGING=/opt/.water-treat-staging
+    MOTD_FILE=/etc/motd
+    FAIL_COUNT_FILE=$STATE_DIR/fail.count
+    MAX_FAILURES=20
+
+    # ----- Failure Tracking -----
+    get_fail_count() {
+      if [ -f "$FAIL_COUNT_FILE" ]; then
+        cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0
+      else
+        echo 0
+      fi
+    }
+
+    increment_fail_count() {
+      count=$(get_fail_count)
+      echo $((count + 1)) > "$FAIL_COUNT_FILE"
+    }
+
+    clear_fail_count() {
+      rm -f "$FAIL_COUNT_FILE"
+    }
+
+    # ----- Idempotency -----
+    if [ -f "$STATE_DIR/first-boot.ok" ]; then
+      echo "Provisioning already completed - exiting cleanly."
+      exit 0
+    fi
+
+    # ----- Check failure threshold -----
+    fail_count=$(get_fail_count)
+    if [ "$fail_count" -ge "$MAX_FAILURES" ]; then
+      echo "Provisioning paused after $fail_count failures"
+      cat > "$MOTD_FILE" <<EOF
+Water-Treat RTU
+
+Provisioning paused after repeated failures.
+
+To investigate:
+  cat /var/log/water-treat/first-boot.log
+
+To retry:
+  rm $FAIL_COUNT_FILE
+  rm $STATE_DIR/first-boot.failed
+  reboot
+
+Manual help may be needed.
+EOF
+      exit 0
+    fi
+
+    # ----- SSH: ensure enabled, never fatal -----
+    systemctl enable ssh || true
+    systemctl start ssh || true
+
+    # ----- Hostname with MAC suffix -----
+    # Priority: eth* > enp* > ens* > wlan*
+    BEST_IFACE=""
+    BEST_PRIORITY=0
+
+    for iface in /sys/class/net/*; do
+      [ -d "$iface" ] || continue
+      name=$(basename "$iface")
+      [ "$name" = "lo" ] && continue
+
+      priority=1
+      case "$name" in
+        eth*)  priority=5 ;;
+        enp*)  priority=4 ;;
+        ens*)  priority=3 ;;
+        wlan*) priority=2 ;;
+      esac
+
+      if [ "$priority" -gt "$BEST_PRIORITY" ]; then
+        BEST_PRIORITY=$priority
+        BEST_IFACE=$name
+      fi
+    done
+
+    if [ -n "$BEST_IFACE" ]; then
+      MAC_ADDR=$(cat /sys/class/net/$BEST_IFACE/address 2>/dev/null)
+      if [ -n "$MAC_ADDR" ] && [ "$MAC_ADDR" != "00:00:00:00:00:00" ]; then
+        # Extract last 4 hex chars (positions 12-13 and 15-16 in aa:bb:cc:dd:ee:ff)
+        MAC_SUFFIX=$(echo "$MAC_ADDR" | sed 's/://g' | tail -c 5)
+        MAC_SUFFIX=$(echo "$MAC_SUFFIX" | tr '[:upper:]' '[:lower:]')
+      fi
+    fi
+
+    if [ -n "$MAC_SUFFIX" ]; then
+      hostnamectl set-hostname "rtu-${MAC_SUFFIX}" || true
+      echo "Hostname set to rtu-${MAC_SUFFIX}"
+    fi
+
+    # ----- Friendly MOTD warning (default state) -----
+    cat > "$MOTD_FILE" <<'EOF'
+Water-Treat RTU
+
+Hey - we ain't been online yet.
+
+You can still:
+  - Log in
+  - Configure networking
+  - Inspect hardware
+  - SSH into the system
+
+Once the network is up, provisioning will automatically
+retry on the next boot.
+
+No action required if this is expected.
+EOF
+
+    # ----- Bounded network check (non-fatal) -----
+    echo "Checking for network (max 60s)..."
+    NET_OK=0
+    for i in $(seq 1 30); do
+      if getent hosts github.com >/dev/null 2>&1; then
+        NET_OK=1
+        break
+      fi
+      sleep 2
+    done
+
+    if [ "$NET_OK" -ne 1 ]; then
+      echo "Network not available - deferring install"
+      increment_fail_count
+      touch "$STATE_DIR/first-boot.failed"
+      exit 0
+    fi
+
+    # ----- Network is up: update MOTD -----
+    cat > "$MOTD_FILE" <<'EOF'
+Water-Treat RTU
+
+Setting up Water-Treat RTU...
+
+This takes a few minutes.
+Progress: tail -f /var/log/water-treat/first-boot.log
+EOF
+
+    # ----- Network is up: staged install -----
+    echo "Network detected - starting staged install"
+
+    rm -rf "$STAGING"
+    if ! git clone https://github.com/mwilco03/Water-Treat.git "$STAGING"; then
+      echo "Git clone failed - will retry on next boot"
+      increment_fail_count
+      touch "$STATE_DIR/first-boot.failed"
+      exit 0
+    fi
+
+    # ----- Validate clone -----
+    if [ ! -f "$STAGING/scripts/install.sh" ]; then
+      echo "Validation failed - will retry on next boot"
+      rm -rf "$STAGING"
+      increment_fail_count
+      touch "$STATE_DIR/first-boot.failed"
+      exit 0
+    fi
+
+    # ----- Activate atomically -----
+    rm -rf "$INSTALL_ROOT"
+    mv "$STAGING" "$INSTALL_ROOT"
+    chown -R admin:admin "$INSTALL_ROOT"
+
+    # ----- Install dependencies -----
+    echo "Installing dependencies..."
+    if ! "$INSTALL_ROOT/scripts/install-deps.sh"; then
+      echo "Dependency install failed - will retry on next boot"
+      increment_fail_count
+      touch "$STATE_DIR/first-boot.failed"
+      exit 0
+    fi
+
+    # ----- Build application -----
+    echo "Building application..."
+    if ! "$INSTALL_ROOT/scripts/build.sh"; then
+      echo "Build failed - will retry on next boot"
+      increment_fail_count
+      touch "$STATE_DIR/first-boot.failed"
+      exit 0
+    fi
+
+    # ----- Install application -----
+    echo "Installing application..."
+    if ! "$INSTALL_ROOT/scripts/install.sh"; then
+      echo "Install failed - will retry on next boot"
+      increment_fail_count
+      touch "$STATE_DIR/first-boot.failed"
+      exit 0
+    fi
+
+    # ----- Enable and start service -----
+    systemctl daemon-reload
+    systemctl enable water-treat || true
+    systemctl start water-treat || true
+
+    # ----- Success cleanup -----
+    rm -f "$STATE_DIR/first-boot.failed"
+    clear_fail_count
+    touch "$STATE_DIR/first-boot.ok"
+    touch /home/admin/.cloud-init-complete
+    chown admin:admin /home/admin/.cloud-init-complete
+
+    # ----- Final MOTD -----
+    HOSTNAME=$(hostname)
+    cat > "$MOTD_FILE" <<EOF
+Water-Treat RTU: $HOSTNAME
+Provisioned: $(date '+%Y-%m-%d %H:%M')
+
+Service commands:
+  systemctl status water-treat
+  systemctl restart water-treat
+  journalctl -u water-treat -f
+
+Source: $INSTALL_ROOT
+EOF
+
+    echo "===== Provisioning completed successfully ====="
+
+final_message: |
+  Water-Treat RTU provisioning attempted.
+
+  If networking was unavailable, provisioning will retry
+  automatically on the next boot.
+
+  Logs:
+    /var/log/water-treat/first-boot.log
