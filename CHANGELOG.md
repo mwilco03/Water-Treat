@@ -14,9 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Core functionality: Operational
   - Status: Usable but not fully stable
 
+### Fixed
+
+- **INSTALL.md directory mismatch**: Documentation referenced `/var/lib/profinet-monitor` but application uses `/var/lib/water-treat`. Fixed directory paths in post-installation instructions.
+
 ### Known Issues
 
-- **Health Status Display Glitch**: The TUI causes screen rendering issues (flickering/glitching) on Trixie. Investigation findings:
+- **Health File Write Error**: `[ERROR] Failed to open health file: /var/lib/water-treat/health.prom.tmp` appears when `/var/lib/water-treat/` directory doesn't exist. **Fix**: Run post-installation directory creation commands from INSTALL.md.
+
+- **TUI Screen Glitching**: The TUI causes screen rendering issues (flickering/glitching) on Trixie. Investigation findings:
   - **Root cause**: Aggressive 100ms full-redraw loop in `tui_main.c:286-289` combined with multiple `wrefresh()` calls per frame
   - **ncurses difference**: Trixie ships ncurses 6.5+ which has stricter terminal handling than Bookworm's ncurses 6.4
   - **Contributing factors**: Overlapping metric collection between health_check.c (background thread) and page_status.c

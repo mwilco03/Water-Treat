@@ -497,18 +497,18 @@ ls /sys/bus/w1/devices/
 ### Create System User
 
 ```bash
-sudo useradd -r -s /bin/false profinet-monitor
-sudo usermod -aG gpio,i2c,spi profinet-monitor
+sudo useradd -r -s /bin/false water-treat
+sudo usermod -aG gpio,i2c,spi water-treat
 ```
 
 ### Create Directories
 
 ```bash
-sudo mkdir -p /etc/profinet-monitor
-sudo mkdir -p /var/lib/profinet-monitor
-sudo mkdir -p /var/log/profinet-monitor
-sudo mkdir -p /var/backup/profinet-monitor
-sudo chown -R profinet-monitor:profinet-monitor /var/lib/profinet-monitor
+sudo mkdir -p /etc/water-treat
+sudo mkdir -p /var/lib/water-treat
+sudo mkdir -p /var/log/water-treat
+sudo mkdir -p /var/backup/water-treat
+sudo chown -R water-treat:water-treat /var/lib/water-treat
 ```
 
 ### Install Systemd Service
