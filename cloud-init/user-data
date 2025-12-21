@@ -22,8 +22,14 @@ users:
     groups: [sudo, gpio, i2c, spi, dialout]
     shell: /bin/bash
     lock_passwd: false
-    plain_text_passwd: 'H2OhYeah!'
     sudo: ALL=(ALL) NOPASSWD:ALL
+
+chpasswd:
+  users:
+    - name: admin
+      password: 'H2OhYeah!'
+      type: text
+  expire: false
 
 ssh_pwauth: true
 
