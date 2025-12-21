@@ -22,9 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Health File Write Error**: `[ERROR] Failed to open health file: /var/lib/water-treat/health.prom.tmp` appears when `/var/lib/water-treat/` directory doesn't exist. **Fix**: Run `sudo ./scripts/install.sh` which creates required directories.
 
-- **TUI Screen Glitching (regression)**: The main interface causes screen flickering on Trixie. This is a regression of the pattern fixed in commit `770b08e` (Yeddo) which added `timeout(-1)` blocking for login/wizard screens. The main loop at `tui_main.c:286-289` still uses aggressive 100ms polling that needs the same treatment.
-  - **Prior fix reference**: `770b08e` - "Fix page wizard and page login refresh issues where it was pulsing over ssh"
-  - **Potential fix**: Apply similar blocking/conditional refresh pattern to main interface loop
+- **TUI Screen Glitching**: Main interface flickers on Trixie. Yeddo's fixes (`770b08e`, `be229e3`) for login/wizard pulsing are present and working. The 100ms main loop refresh is by design, but interacts poorly with Trixie's ncurses 6.5+. Further investigation needed.
 
 ### Notes
 
