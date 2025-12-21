@@ -257,8 +257,9 @@ int profinet_alarm_ind_callback(pnet_t *net, void *arg,
                                 const uint8_t *data) {
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(data_usi); UNUSED(data);
     
+    // p-net v0.2.0 uses slot_nbr/subslot_nbr instead of slot/subslot
     LOG_WARNING("PROFINET alarm indication: slot=%u.%u, type=0x%04X, len=%u",
-                alarm_arg->slot, alarm_arg->subslot, 
+                alarm_arg->slot_nbr, alarm_arg->subslot_nbr,
                 alarm_arg->alarm_type, data_len);
     
     return 0;
