@@ -227,10 +227,15 @@ install_packages() {
 
     # Resolve all package names for this distro
     local -a resolved_packages=()
+    local -A seen_packages=()
     for pkg in "${required_packages[@]}"; do
         # resolve_package may return multiple packages (e.g., build-essential on dnf)
         for resolved in $(resolve_package "$pkg"); do
-            resolved_packages+=("$resolved")
+            # Deduplicate (e.g., 'make' appears in build-essential expansion AND standalone)
+            if [[ -z "${seen_packages[$resolved]:-}" ]]; then
+                seen_packages[$resolved]=1
+                resolved_packages+=("$resolved")
+            fi
         done
     done
 
@@ -578,37 +583,40 @@ build_pnet() {
         return 1
     }
 
-    # Clone at specific version tag
+    # Clone at specific version tag with submodules
     detail "Cloning p-net repository (${pnet_version})..."
-    if ! git clone --quiet --depth 1 --branch "${pnet_version}" "${repo}" p-net 2>/dev/null; then
-        # Fallback: full clone then checkout tag
-        if ! git clone --quiet "${repo}" p-net; then
-            breaking "Failed to clone p-net repository"
-            error "Check network connectivity to github.com"
-            return 1
-        fi
-        cd p-net || return 1
-        if ! git checkout --quiet "${pnet_version}"; then
-            breaking "Failed to checkout ${pnet_version}"
-            return 1
-        fi
-        # Initialize submodules for fallback path
-        if ! git submodule update --init --recursive >/dev/null 2>&1; then
-            breaking "Failed to initialize git submodules"
-            return 1
+    if ! git clone --quiet --depth 1 --branch "${pnet_version}" --recurse-submodules "${repo}" p-net 2>/dev/null; then
+        # Fallback: full clone then checkout tag (older git or network issues)
+        detail "Shallow clone failed, trying full clone..."
+        if ! git clone --quiet --recurse-submodules "${repo}" p-net; then
+            # Last resort: clone without submodules, then init separately
+            if ! git clone --quiet "${repo}" p-net; then
+                breaking "Failed to clone p-net repository"
+                error "Check network connectivity to github.com"
+                return 1
+            fi
+            cd p-net || return 1
+            if ! git checkout --quiet "${pnet_version}"; then
+                breaking "Failed to checkout ${pnet_version}"
+                return 1
+            fi
+            detail "Initializing submodules..."
+            if ! git submodule update --init --recursive >/dev/null 2>&1; then
+                breaking "Failed to initialize git submodules"
+                return 1
+            fi
+        else
+            cd p-net || return 1
+            if ! git checkout --quiet "${pnet_version}"; then
+                breaking "Failed to checkout ${pnet_version}"
+                return 1
+            fi
         fi
     else
         cd p-net || {
             breaking "Cannot enter p-net directory"
             return 1
         }
-    fi
-
-    # Initialize submodules (cmake/tools is required)
-    detail "Initializing submodules..."
-    if ! git submodule update --init --recursive >/dev/null 2>&1; then
-        breaking "Failed to initialize git submodules"
-        return 1
     fi
 
     # Create build directory
@@ -620,11 +628,14 @@ build_pnet() {
 
     # Configure with CMake
     detail "Configuring with CMake..."
+    local use_ninja=false
+    if command -v ninja &>/dev/null; then
+        use_ninja=true
+    fi
+
     local cmake_cmd="cmake"
     local generator_args=""
-
-    # Prefer Ninja if available
-    if command -v ninja &>/dev/null; then
+    if [[ "${use_ninja}" == "true" ]]; then
         generator_args="-G Ninja"
     fi
 
@@ -646,7 +657,7 @@ build_pnet() {
     # Build
     detail "Compiling..."
     local build_cmd="make -j$(nproc)"
-    if command -v ninja &>/dev/null; then
+    if [[ "${use_ninja}" == "true" ]]; then
         build_cmd="ninja"
     fi
 
@@ -661,7 +672,7 @@ build_pnet() {
     # Install
     detail "Installing to ${prefix}..."
     local install_cmd="make install"
-    if command -v ninja &>/dev/null; then
+    if [[ "${use_ninja}" == "true" ]]; then
         install_cmd="ninja install"
     fi
 
