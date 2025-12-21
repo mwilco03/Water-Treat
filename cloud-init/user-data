@@ -41,8 +41,10 @@ packages:
   - git
   - openssh-server
 
-# Create directories before write_files
+# bootcmd runs early - generate locale and create directories
 bootcmd:
+  - sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+  - locale-gen en_US.UTF-8
   - mkdir -p /var/lib/water-treat
   - mkdir -p /var/log/water-treat
 
