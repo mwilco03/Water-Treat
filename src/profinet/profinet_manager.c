@@ -40,14 +40,15 @@ typedef struct {
 #ifdef HAVE_PNET
     pnet_t *pnet;
     pnet_cfg_t pnet_cfg;
+    uint32_t arep;  // Application relationship endpoint (set on connect)
 #endif
-    
+
     database_t *db;
     profinet_config_t config;
-    
+
     profinet_slot_t slots[MAX_PROFINET_SLOTS];
     int slot_count;
-    
+
     pthread_t tick_thread;
     pthread_mutex_t mutex;
     volatile bool running;
@@ -243,14 +244,20 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     return RESULT_OK;
 }
 
+// Static buffer for network interface name (p-net v0.2.0 uses const char *)
+static char g_netif_name[64] = "eth0";
+
 result_t profinet_manager_start(const char *interface) {
     if (!g_pn.initialized) return RESULT_NOT_INITIALIZED;
     if (g_pn.running) return RESULT_OK;
-    
+
 #ifdef HAVE_PNET
-    // Set network interface
-    strncpy(g_pn.pnet_cfg.if_cfg.main_netif_name, interface ? interface : "eth0",
-            sizeof(g_pn.pnet_cfg.if_cfg.main_netif_name) - 1);
+    // Set network interface (use static buffer since if_cfg expects const char *)
+    if (interface) {
+        strncpy(g_netif_name, interface, sizeof(g_netif_name) - 1);
+        g_netif_name[sizeof(g_netif_name) - 1] = '\0';
+    }
+    g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
     
     // Initialize p-net
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
@@ -270,7 +277,7 @@ result_t profinet_manager_start(const char *interface) {
         }
         
         ret = pnet_plug_submodule(g_pn.pnet, 0, slot->slot, slot->subslot,
-                                  slot->submodule_ident,
+                                  slot->module_ident, slot->submodule_ident,
                                   PNET_DIR_INPUT,
                                   slot->input_size, slot->output_size);
         if (ret != 0) {
@@ -281,41 +288,43 @@ result_t profinet_manager_start(const char *interface) {
         slot->plugged = true;
         LOG_DEBUG("Plugged slot %d.%d", slot->slot, slot->subslot);
     }
-    
-    // Set device to ready
-    pnet_set_state(g_pn.pnet, true);
-    
+
+    // p-net v0.2.0: Device state machine is handled internally by the stack
+    // The device becomes ready for connections after modules are plugged
+
     // Start tick thread
     g_pn.running = true;
     if (pthread_create(&g_pn.tick_thread, NULL, profinet_tick_thread, NULL) != 0) {
         LOG_ERROR("Failed to create PROFINET tick thread");
-        pnet_close(g_pn.pnet);
+        // p-net v0.2.0: No explicit close function, just clean up handle
         g_pn.pnet = NULL;
         g_pn.running = false;
         return RESULT_ERROR;
     }
     
     g_pn.state = PROFINET_STATE_READY;
-    LOG_INFO("PROFINET stack started on interface %s", interface ? interface : "eth0");
+    LOG_INFO("PROFINET stack started on interface %s", g_netif_name);
 #else
+    UNUSED(interface);
     LOG_WARNING("PROFINET support not compiled in (HAVE_PNET not defined)");
     g_pn.running = true;
     g_pn.state = PROFINET_STATE_READY;
 #endif
-    
+
     return RESULT_OK;
 }
 
 result_t profinet_manager_stop(void) {
     if (!g_pn.running) return RESULT_OK;
-    
+
     g_pn.running = false;
-    
+
 #ifdef HAVE_PNET
     pthread_join(g_pn.tick_thread, NULL);
-    
+
+    // p-net v0.2.0: No explicit close/destroy function
+    // Just nullify the handle; resources freed on process exit
     if (g_pn.pnet) {
-        pnet_close(g_pn.pnet);
         g_pn.pnet = NULL;
     }
 #endif
@@ -457,23 +466,28 @@ result_t profinet_manager_get_stats(profinet_stats_t *stats) {
     return RESULT_OK;
 }
 
-result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type, 
+result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
                                      const uint8_t *data, size_t data_len) {
 #ifdef HAVE_PNET
     if (!g_pn.pnet || !g_pn.connected) return RESULT_NOT_INITIALIZED;
-    
-    pnet_alarm_argument_t alarm_arg = {0};
-    alarm_arg.slot = slot;
-    alarm_arg.subslot = subslot;
-    alarm_arg.alarm_type = alarm_type;
-    alarm_arg.payload_length = data_len;
-    
-    int ret = pnet_alarm_send_process_alarm(g_pn.pnet, 0, &alarm_arg, data, data_len);
+
+    // p-net v0.2.0 API: positional arguments instead of struct
+    // pnet_alarm_send_process_alarm(pnet, arep, api, slot, subslot, usi, len, data)
+    int ret = pnet_alarm_send_process_alarm(
+        g_pn.pnet,
+        g_pn.arep,           // arep from connection
+        0,                   // api (always 0 for standard PROFINET)
+        (uint16_t)slot,
+        (uint16_t)subslot,
+        alarm_type,          // User Structure Identifier (USI)
+        (uint16_t)data_len,
+        data
+    );
     if (ret != 0) {
         LOG_ERROR("Failed to send PROFINET alarm");
         return RESULT_ERROR;
     }
-    
+
     LOG_INFO("Sent PROFINET alarm: slot=%d, type=0x%04X", slot, alarm_type);
     return RESULT_OK;
 #else
@@ -483,10 +497,20 @@ result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
 }
 
 /* Called from callbacks */
-void profinet_manager_set_connected(bool connected) {
+void profinet_manager_set_connected(bool connected, uint32_t arep) {
     g_pn.connected = connected;
     g_pn.state = connected ? PROFINET_STATE_CONNECTED : PROFINET_STATE_READY;
-    
+
+#ifdef HAVE_PNET
+    if (connected) {
+        g_pn.arep = arep;
+    } else {
+        g_pn.arep = 0;
+    }
+#else
+    UNUSED(arep);
+#endif
+
     if (connected && g_pn.on_connect) {
         g_pn.on_connect(g_pn.callback_ctx);
     } else if (!connected && g_pn.on_disconnect) {

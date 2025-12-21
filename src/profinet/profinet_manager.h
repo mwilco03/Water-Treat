@@ -21,9 +21,13 @@ typedef struct {
     int plugged_modules;
 } profinet_stats_t;
 
-// PROFINET IOXS values
+// PROFINET IOXS values (fallback if not defined by p-net)
+#ifndef PNET_IOXS_BAD
 #define PNET_IOXS_BAD  0x00
+#endif
+#ifndef PNET_IOXS_GOOD
 #define PNET_IOXS_GOOD 0x80
+#endif
 
 typedef void (*profinet_connect_cb_t)(void *ctx);
 typedef void (*profinet_disconnect_cb_t)(void *ctx);
@@ -57,7 +61,7 @@ result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
 const char* profinet_state_to_string(profinet_state_t state);
 
 // Internal callbacks used by profinet_callbacks.c
-void profinet_manager_set_connected(bool connected);
+void profinet_manager_set_connected(bool connected, uint32_t arep);
 void profinet_manager_handle_output_data(int slot, int subslot, const uint8_t *data, size_t len);
 
 #endif

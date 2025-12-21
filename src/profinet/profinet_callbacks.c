@@ -83,11 +83,11 @@ int profinet_state_callback(pnet_t *net, void *arg,
     }
     
     LOG_INFO("PROFINET state: %s (arep=%u)", event_str, arep);
-    
+
     if (event == PNET_EVENT_APPLRDY) {
-        profinet_manager_set_connected(true);
+        profinet_manager_set_connected(true, arep);
     } else if (event == PNET_EVENT_ABORT) {
-        profinet_manager_set_connected(false);
+        profinet_manager_set_connected(false, 0);
     }
     
     return 0;
@@ -104,9 +104,9 @@ int profinet_connect_callback(pnet_t *net, void *arg,
 int profinet_release_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
     UNUSED(net); UNUSED(arg); UNUSED(result);
-    
+
     LOG_INFO("PROFINET release (arep=%u)", arep);
-    profinet_manager_set_connected(false);
+    profinet_manager_set_connected(false, 0);
     return 0;
 }
 
