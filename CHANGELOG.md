@@ -14,13 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Core functionality: Operational
   - Status: Usable but not fully stable
 
-### Added
-
-- **bootstrap.sh**: New single-command bootstrap script for quick project setup
-  - Pre-flight checks verify system requirements before build
-  - Handles dependency installation, build, and optional install
-  - Usage: `./scripts/bootstrap.sh` (build) or `./scripts/bootstrap.sh --install`
-
 ### Fixed
 
 - **INSTALL.md directory mismatch**: Documentation referenced `/var/lib/profinet-monitor` but application uses `/var/lib/water-treat`. Fixed directory paths in post-installation instructions.
@@ -31,12 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rate-limited: First error logged, then only every 5 minutes
   - Auto-creates directory if possible (graceful degradation)
   - Changed log level from ERROR to WARNING
-  - (`health_check.c:368-416`)
+  - (`health_check.c:339-416`)
 
 - **Logger silent failure on missing directory**: Log file would silently fail to open if parent directory didn't exist. Now:
   - Auto-creates parent directories before opening file
   - Warns to stderr if directory creation fails
-  - (`logger.c:23-63, 108-121`)
+  - (`logger.c:23-63, 107-121`)
 
 ### Changed
 
@@ -56,10 +49,8 @@ This release marks initial testing on Debian Trixie (testing). While the applica
 
 ### Embedded System Considerations
 
-This release includes optimizations for memory-constrained embedded systems:
-- Health metrics now use tmpfs by default (no SD card wear)
+- Health metrics use tmpfs by default (no SD card wear)
 - Rate-limited error logging reduces log file growth
-- Pre-flight checks in bootstrap.sh verify system requirements early
 
 ## [0.2.1] - 2025-12-19
 
