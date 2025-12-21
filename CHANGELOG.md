@@ -33,15 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Changed log level from ERROR to WARNING
   - (`health_check.c:368-416`)
 
-- **Hardware interface error spam**: I2C, SPI, GPIO, and 1-Wire errors could spam logs during sensor polling when hardware was disconnected or flaky. Now rate-limited:
-  - First error logged immediately, subsequent errors only every 5 minutes
-  - Error count tracked per subsystem (I2C read/write, SPI, GPIO read/write, 1-Wire)
-  - Reset on successful operation
-  - (`hw_interface.c:14-45, 81-152, 208-223, 367-424, 488-524`)
-
-- **Web polling error spam**: HTTP/curl errors and JSON parsing failures could spam logs when network was unreliable. Now rate-limited with same pattern.
-  - (`driver_web_poll.c:17-23, 84-141, 189-207`)
-
 - **Logger silent failure on missing directory**: Log file would silently fail to open if parent directory didn't exist. Now:
   - Auto-creates parent directories before opening file
   - Warns to stderr if directory creation fails
