@@ -34,7 +34,7 @@ static void* sensor_worker_thread(void *arg) {
             uint64_t now_ms = get_time_ms();
             uint64_t elapsed_ms = now_ms - instance->last_read_ms;
             
-            if (elapsed_ms >= instance->poll_rate_ms) {
+            if (elapsed_ms >= (uint64_t)instance->poll_rate_ms) {
                 float value;
                 result_t result = sensor_instance_read(instance, &value);
                 
@@ -44,23 +44,22 @@ static void* sensor_worker_thread(void *arg) {
                     mgr->successful_reads++;
 
                     // Check alarm rules for this sensor value
-                    bool has_alarm = false;
-                    bool has_warning = false;
                     if (alarm_manager_is_running()) {
-                        // Check alarms (module_id is sensor database ID)
                         alarm_manager_check_value(instance->module_id, value);
-
-                        // Check if there are active alarms for this sensor
-                        int critical_count = 0, high_count = 0;
-                        alarm_manager_get_active_by_severity(ALARM_SEVERITY_CRITICAL, &critical_count);
-                        alarm_manager_get_active_by_severity(ALARM_SEVERITY_HIGH, &high_count);
-                        has_alarm = (critical_count > 0);
-                        has_warning = (high_count > 0);
                     }
 
 #ifdef LED_SUPPORT
                     // Update LED status for this sensor slot (slots 1-4 map to sensor LEDs 0-3)
                     if (g_led_mgr.initialized && instance->slot >= 1 && instance->slot <= 4) {
+                        bool has_alarm = false;
+                        bool has_warning = false;
+                        if (alarm_manager_is_running()) {
+                            int critical_count = 0, high_count = 0;
+                            alarm_manager_get_active_by_severity(ALARM_SEVERITY_CRITICAL, &critical_count);
+                            alarm_manager_get_active_by_severity(ALARM_SEVERITY_HIGH, &high_count);
+                            has_alarm = (critical_count > 0);
+                            has_warning = (high_count > 0);
+                        }
                         int led_index = instance->slot - 1;
                         led_set_sensor_status(&g_led_mgr, led_index, has_alarm, has_warning, false);
                     }

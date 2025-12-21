@@ -16,7 +16,7 @@
 
 typedef struct {
     char device_id[20];
-    char device_path[128];
+    char device_path[512];
     bool initialized;
     float last_temp;
     uint64_t last_read_time;

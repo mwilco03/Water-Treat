@@ -43,13 +43,24 @@ typedef enum {
     SENSOR_TYPE_WEB_POLL, SENSOR_TYPE_CALCULATED, SENSOR_TYPE_STATIC
 } sensor_type_t;
 
+/* SAFE_STRNCPY: Safe string copy with guaranteed null termination.
+ * Uses memcpy to avoid GCC -Wstringop-truncation false positives when
+ * source and destination buffers have the same size. */
 #define SAFE_STRNCPY(dst, src, size) do { \
-    if ((src) != NULL) { strncpy((dst), (src), (size) - 1); (dst)[(size) - 1] = '\0'; } \
-    else { (dst)[0] = '\0'; } \
+    if ((src) != NULL) { \
+        size_t _srclen = strlen(src); \
+        size_t _copylen = (_srclen < (size) - 1) ? _srclen : (size) - 1; \
+        memcpy((dst), (src), _copylen); \
+        (dst)[_copylen] = '\0'; \
+    } else { \
+        (dst)[0] = '\0'; \
+    } \
 } while(0)
 
 #define SAFE_SNPRINTF(dst, size, fmt, ...) snprintf((dst), (size), (fmt), ##__VA_ARGS__)
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+
+/* MIN/MAX macros - use (a) and (b) directly to avoid type issues */
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define CLAMP(val, min, max) (MIN(MAX((val), (min)), (max)))

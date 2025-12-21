@@ -66,8 +66,8 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
         add_message(result, "WARNING: Health check endpoint is disabled");
     }
 
-    /* Validate port numbers */
-    if (config->health.http_port == 0 || config->health.http_port > 65535) {
+    /* Validate port numbers (http_port is uint16_t, so max is 65535) */
+    if (config->health.http_port == 0) {
         result->flags |= CONFIG_ERROR_INVALID_PORT;
         result->error_count++;
         add_message(result, "ERROR: Invalid health HTTP port");

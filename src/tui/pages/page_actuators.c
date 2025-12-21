@@ -21,7 +21,7 @@
 #include <ncurses.h>
 #include <string.h>
 
-#define MAX_ACTUATORS 32
+#define MAX_ACTUATORS_DISPLAY 32
 #define VISIBLE_ROWS 12
 
 /* External actuator manager from main.c */
@@ -42,7 +42,7 @@ typedef struct {
 
 static struct {
     WINDOW *win;
-    actuator_item_t actuators[MAX_ACTUATORS];
+    actuator_item_t actuators[MAX_ACTUATORS_DISPLAY];
     int actuator_count;
     int selected;
     int scroll_offset;
@@ -86,7 +86,7 @@ static void load_actuators(void) {
         return;
     }
 
-    for (int i = 0; i < count && i < MAX_ACTUATORS; i++) {
+    for (int i = 0; i < count && i < MAX_ACTUATORS_DISPLAY; i++) {
         actuator_item_t *a = &g_page.actuators[g_page.actuator_count];
         a->id = actuators[i].id;
         a->slot = actuators[i].slot;
@@ -290,119 +290,6 @@ static void emergency_stop(void) {
             tui_set_status("Emergency stop failed!");
         }
     }
-}
-
-static void show_add_dialog(void) {
-    WINDOW *dialog = newwin(16, 55, 4, 12);
-    box(dialog, 0, 0);
-
-    wattron(dialog, A_BOLD);
-    mvwprintw(dialog, 0, 18, " Add Actuator ");
-    wattroff(dialog, A_BOLD);
-
-    /* Form fields */
-    char name[64] = "New Actuator";
-    int slot = 10;
-    int gpio_pin = 17;
-    int type_sel = 0;
-    const char *types[] = {"Pump", "Valve", "Relay"};
-
-    int field = 0;
-    bool done = false;
-
-    while (!done) {
-        /* Draw form */
-        mvwprintw(dialog, 2, 2, "Name:      ");
-        wattron(dialog, field == 0 ? A_REVERSE : 0);
-        mvwprintw(dialog, 2, 13, "%-30s", name);
-        wattroff(dialog, A_REVERSE);
-
-        mvwprintw(dialog, 4, 2, "Slot:      ");
-        wattron(dialog, field == 1 ? A_REVERSE : 0);
-        mvwprintw(dialog, 4, 13, "%-10d", slot);
-        wattroff(dialog, A_REVERSE);
-
-        mvwprintw(dialog, 6, 2, "GPIO Pin:  ");
-        wattron(dialog, field == 2 ? A_REVERSE : 0);
-        mvwprintw(dialog, 6, 13, "%-10d", gpio_pin);
-        wattroff(dialog, A_REVERSE);
-
-        mvwprintw(dialog, 8, 2, "Type:      ");
-        wattron(dialog, field == 3 ? A_REVERSE : 0);
-        mvwprintw(dialog, 8, 13, "%-10s", types[type_sel]);
-        wattroff(dialog, A_REVERSE);
-
-        mvwprintw(dialog, 12, 2, "Enter: Edit field  Tab: Next  Esc: Cancel");
-        mvwprintw(dialog, 13, 2, "Ctrl+S: Save");
-
-        wrefresh(dialog);
-
-        int ch = wgetch(dialog);
-        switch (ch) {
-            case KEY_UP:
-                if (field > 0) field--;
-                break;
-            case KEY_DOWN:
-            case '\t':
-                if (field < 3) field++;
-                else field = 0;
-                break;
-            case '\n':
-            case KEY_ENTER:
-                if (field == 0) {
-                    tui_get_string(dialog, 2, 13, name, 30, name);
-                } else if (field == 1) {
-                    tui_get_int(dialog, 4, 13, &slot, 1, 63);
-                } else if (field == 2) {
-                    tui_get_int(dialog, 6, 13, &gpio_pin, 0, 27);
-                } else if (field == 3) {
-                    type_sel = (type_sel + 1) % 3;
-                }
-                break;
-            case 19:  /* Ctrl+S */
-                {
-                    database_t *db = tui_get_database();
-                    if (db) {
-                        /* Check for GPIO pin conflict */
-                        gpio_conflict_t conflict;
-                        if (db_actuator_gpio_conflict_check(db, gpio_pin,
-                                "gpiochip0", 0, &conflict) == RESULT_OK &&
-                            conflict.has_conflict) {
-                            /* Show error in dialog */
-                            wattron(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
-                            mvwprintw(dialog, 10, 2, "ERROR: GPIO %d used by '%s'",
-                                      gpio_pin, conflict.conflicting_name);
-                            wattroff(dialog, COLOR_PAIR(TUI_COLOR_ERROR));
-                            wrefresh(dialog);
-                            break;
-                        }
-
-                        db_actuator_t act = {0};
-                        SAFE_STRNCPY(act.name, name, sizeof(act.name));
-                        act.slot = slot;
-                        act.gpio_pin = gpio_pin;
-                        act.type = type_sel;
-                        act.active_low = false;
-                        act.pwm_frequency_hz = (type_sel == ACTUATOR_TYPE_PWM) ? 1000 : 0;
-
-                        int new_id;
-                        if (db_actuator_create(db, &act, &new_id) == RESULT_OK) {
-                            tui_set_status("Added actuator: %s", name);
-                            load_actuators();
-                            done = true;
-                        } else {
-                            tui_set_status("Failed to add actuator");
-                        }
-                    }
-                }
-                break;
-            case 27:  /* Escape */
-                done = true;
-                break;
-        }
-    }
-
-    delwin(dialog);
 }
 
 void page_actuators_init(WINDOW *win) {

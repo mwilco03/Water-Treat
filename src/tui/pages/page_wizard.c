@@ -74,24 +74,6 @@ extern app_config_t g_app_config;
  * Helper Functions
  * ========================================================================== */
 
-static void wizard_draw_box(int y, int x, int h, int w, const char *title) {
-    /* Draw border */
-    mvhline(y, x, ACS_HLINE, w);
-    mvhline(y + h - 1, x, ACS_HLINE, w);
-    mvvline(y, x, ACS_VLINE, h);
-    mvvline(y, x + w - 1, ACS_VLINE, h);
-    mvaddch(y, x, ACS_ULCORNER);
-    mvaddch(y, x + w - 1, ACS_URCORNER);
-    mvaddch(y + h - 1, x, ACS_LLCORNER);
-    mvaddch(y + h - 1, x + w - 1, ACS_LRCORNER);
-
-    /* Draw title */
-    if (title) {
-        int title_x = x + (w - strlen(title) - 4) / 2;
-        mvprintw(y, title_x, "[ %s ]", title);
-    }
-}
-
 static void wizard_draw_progress(int y) {
     int total = WIZARD_STEP_COUNT - 1;  /* Exclude COMPLETE */
     int current = g_wizard.current_step;
