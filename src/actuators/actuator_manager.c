@@ -8,8 +8,7 @@
 #include "alarms/alarm_manager.h"
 #include "db/db_events.h"
 #include "db/db_modules.h"
-#include "sensors/drivers/driver_pump.h"
-#include "sensors/drivers/driver_solenoid.h"
+#include "drivers/digital/relay_output.h"
 #include "utils/logger.h"
 #include <pthread.h>
 #include <string.h>
@@ -40,39 +39,19 @@ static actuator_instance_t* find_actuator_by_slot(actuator_manager_t *mgr, int s
 }
 
 static result_t apply_actuator_state(actuator_instance_t *act) {
+    output_driver_t *drv = (output_driver_t *)act->driver_handle;
+    if (!drv) return RESULT_NOT_INITIALIZED;
+
     result_t r = RESULT_OK;
 
-    switch (act->config.type) {
-        case ACTUATOR_TYPE_PUMP: {
-            water_pump_t *pump = (water_pump_t *)act->driver_handle;
-            if (!pump) return RESULT_NOT_INITIALIZED;
-
-            if (act->state == ACTUATOR_STATE_ON) {
-                if (act->config.pwm_capable && act->pwm_duty < 100) {
-                    r = pump_set_speed(pump, act->pwm_duty);
-                }
-                r = pump_start(pump);
-            } else {
-                r = pump_stop(pump);
-            }
-            break;
+    if (act->state == ACTUATOR_STATE_ON) {
+        if (act->config.pwm_capable && act->pwm_duty < 100) {
+            r = output_set_pwm(drv, (float)act->pwm_duty / 100.0f);
+        } else {
+            r = output_set(drv, true);
         }
-
-        case ACTUATOR_TYPE_VALVE: {
-            solenoid_valve_t *valve = (solenoid_valve_t *)act->driver_handle;
-            if (!valve) return RESULT_NOT_INITIALIZED;
-
-            if (act->state == ACTUATOR_STATE_ON) {
-                r = solenoid_open(valve);
-            } else {
-                r = solenoid_close(valve);
-            }
-            break;
-        }
-
-        default:
-            LOG_WARNING("Unknown actuator type: %d", act->config.type);
-            return RESULT_NOT_SUPPORTED;
+    } else {
+        r = output_set(drv, false);
     }
 
     if (r == RESULT_OK) {
@@ -91,39 +70,35 @@ static result_t apply_actuator_state(actuator_instance_t *act) {
 }
 
 static result_t init_actuator_driver(actuator_instance_t *act) {
-    result_t r = RESULT_OK;
+    output_config_t cfg = {0};
+
+    SAFE_STRNCPY(cfg.name, act->config.name, sizeof(cfg.name));
+    cfg.gpio_pin = act->config.gpio_pin;
+    cfg.active_low = act->config.active_low;
 
     switch (act->config.type) {
-        case ACTUATOR_TYPE_PUMP: {
-            water_pump_t *pump = calloc(1, sizeof(water_pump_t));
-            if (!pump) return RESULT_NO_MEMORY;
-
-            r = pump_init(pump, act->config.gpio_pin, act->config.pwm_capable);
-            if (r != RESULT_OK) {
-                free(pump);
-                return r;
-            }
-            act->driver_handle = pump;
+        case ACTUATOR_TYPE_PUMP:
+            cfg.type = act->config.pwm_capable ? OUTPUT_TYPE_PWM : OUTPUT_TYPE_RELAY;
+            cfg.pwm_frequency_hz = act->config.pwm_frequency_hz > 0 ?
+                                   act->config.pwm_frequency_hz : 1000;
             break;
-        }
-
-        case ACTUATOR_TYPE_VALVE: {
-            solenoid_valve_t *valve = calloc(1, sizeof(solenoid_valve_t));
-            if (!valve) return RESULT_NO_MEMORY;
-
-            r = solenoid_init(valve, act->config.gpio_pin, act->config.active_low);
-            if (r != RESULT_OK) {
-                free(valve);
-                return r;
-            }
-            act->driver_handle = valve;
+        case ACTUATOR_TYPE_VALVE:
+            cfg.type = OUTPUT_TYPE_RELAY;
             break;
-        }
-
         default:
-            LOG_WARNING("No driver for actuator type: %d", act->config.type);
-            return RESULT_NOT_SUPPORTED;
+            cfg.type = OUTPUT_TYPE_RELAY;
+            break;
     }
+
+    cfg.max_on_time_sec = act->config.max_on_time_sec;
+
+    output_driver_t *drv = NULL;
+    result_t r = output_create(&drv, &cfg);
+    if (r != RESULT_OK) {
+        return r;
+    }
+
+    act->driver_handle = drv;
 
     LOG_INFO("Initialized actuator driver: %s (GPIO %d)",
              act->config.name, act->config.gpio_pin);
@@ -138,18 +113,7 @@ static void destroy_actuator_driver(actuator_instance_t *act) {
     act->state = ACTUATOR_STATE_OFF;
     apply_actuator_state(act);
 
-    switch (act->config.type) {
-        case ACTUATOR_TYPE_PUMP:
-            pump_destroy((water_pump_t *)act->driver_handle);
-            break;
-        case ACTUATOR_TYPE_VALVE:
-            solenoid_destroy((solenoid_valve_t *)act->driver_handle);
-            break;
-        default:
-            break;
-    }
-
-    free(act->driver_handle);
+    output_destroy((output_driver_t *)act->driver_handle);
     act->driver_handle = NULL;
 }
 

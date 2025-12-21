@@ -190,7 +190,7 @@ int profinet_write_callback(pnet_t *net, void *arg,
               slot, subslot, idx, write_length);
     
     // Handle parameterization data
-    if (idx >= 0x0000 && idx <= 0x7FFF) {
+    if (idx <= 0x7FFF) {
         // Record data write
         LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes", 
                  slot, subslot, idx, write_length);
@@ -258,7 +258,7 @@ int profinet_alarm_ind_callback(pnet_t *net, void *arg,
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(data_usi); UNUSED(data);
     
     LOG_WARNING("PROFINET alarm indication: slot=%u.%u, type=0x%04X, len=%u",
-                alarm_arg->slot, alarm_arg->subslot, 
+                alarm_arg->slot_nbr, alarm_arg->subslot_nbr,
                 alarm_arg->alarm_type, data_len);
     
     return 0;

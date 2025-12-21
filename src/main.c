@@ -238,7 +238,7 @@ static result_t init_database(void) {
         /* Try user-specific fallback */
         const char *user_dir = get_user_data_dir();
         if (mkdir_p(user_dir, 0755) == 0 && access(user_dir, W_OK) == 0) {
-            static char fallback_path[MAX_PATH_LEN];
+            static char fallback_path[512];  /* Larger than MAX_PATH_LEN to fit suffix */
             snprintf(fallback_path, sizeof(fallback_path), "%s/data.db", user_dir);
             db_path = fallback_path;
             using_fallback = true;

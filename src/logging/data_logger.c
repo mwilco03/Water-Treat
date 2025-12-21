@@ -102,10 +102,12 @@ static data_logger_t g_logger = {0};
  * Internal Functions
  * ========================================================================== */
 
+#ifdef HAVE_CURL
 static size_t logger_curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
     UNUSED(contents); UNUSED(userp);
     return size * nmemb;
 }
+#endif
 
 static result_t init_curl(void) {
     if (g_logger.curl) return RESULT_OK;
@@ -331,9 +333,9 @@ result_t data_logger_init(database_t *db, const data_logger_config_t *config) {
     pthread_cond_init(&g_logger.cond, NULL);
     
     // Set up remote logging
-    if (config->remote_enabled && config->remote_url && strlen(config->remote_url) > 0) {
+    if (config->remote_enabled && strlen(config->remote_url) > 0) {
         g_logger.remote_url = strdup(config->remote_url);
-        if (config->api_key && strlen(config->api_key) > 0) {
+        if (strlen(config->api_key) > 0) {
             g_logger.api_key = strdup(config->api_key);
         }
         g_logger.remote_available = true;

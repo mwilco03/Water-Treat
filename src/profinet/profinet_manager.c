@@ -240,8 +240,10 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     return RESULT_OK;
 }
 
+#ifdef HAVE_PNET
 // Static buffer for network interface name (p-net v0.2.0 uses const char *)
 static char g_netif_name[64] = "eth0";
+#endif
 
 result_t profinet_manager_start(const char *interface) {
     if (!g_pn.initialized) return RESULT_NOT_INITIALIZED;

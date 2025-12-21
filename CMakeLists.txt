@@ -33,7 +33,13 @@ endif()
 
 message(STATUS "Building ${CMAKE_PROJECT_NAME} version: ${VERSION_STRING}")
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-parameter")
+# Compiler flags:
+# -Wall -Wextra: Enable most warnings
+# -Wno-unused-parameter: Allow unused parameters (common in callbacks)
+# -Wno-stringop-truncation: Suppress strncpy truncation warnings (handled by SAFE_STRNCPY)
+# -Wno-format-truncation: Suppress snprintf truncation warnings (acceptable for display strings)
+# -Wno-sign-compare: Suppress sign comparison warnings in MIN/MAX macros with mixed types
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-parameter -Wno-stringop-truncation -Wno-format-truncation -Wno-sign-compare")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0 -DDEBUG")
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 
@@ -69,13 +75,8 @@ set(SOURCES_DRIVERS_LEGACY
     src/sensors/drivers/driver_dht22.c
     src/sensors/drivers/driver_web_poll.c
     src/sensors/drivers/driver_tcs34725.c
-    src/sensors/drivers/driver_turbidity.c   # Deprecated: use analog_sensor.c
-    src/sensors/drivers/driver_tds.c         # Deprecated: use analog_sensor.c
-    src/sensors/drivers/driver_ph.c          # Deprecated: use analog_sensor.c
     src/sensors/drivers/driver_hx711.c
     src/sensors/drivers/driver_float_switch.c
-    src/sensors/drivers/driver_solenoid.c    # Deprecated: use relay_output.c
-    src/sensors/drivers/driver_pump.c        # Deprecated: use relay_output.c
     src/sensors/drivers/driver_bme280.c
     src/sensors/drivers/driver_jsn_sr04t.c
 )

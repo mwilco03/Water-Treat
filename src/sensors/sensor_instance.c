@@ -14,15 +14,6 @@
 #include <stdlib.h>
 #include <math.h>
 
-// Helper: Parse I2C address from string
-static uint8_t parse_i2c_address(const char *addr_str) {
-    unsigned int addr = 0;
-    if (addr_str && strlen(addr_str) > 0) {
-        sscanf(addr_str, "0x%x", &addr);
-    }
-    return (uint8_t)addr;
-}
-
 // Helper: Parse SPI bus.device from string
 static void parse_spi_device(const char *device_str, int *bus, int *device) {
     *bus = 0;
@@ -131,7 +122,6 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
             strcmp(sensor.adc_type, "ADS1015") == 0) {
             instance->driver_type = ADC_DRIVER_ADS1115;
             if (strcmp(sensor.interface, "i2c") == 0) {
-                uint8_t addr = parse_i2c_address(sensor.address);
                 result = driver_ads1115_init(&instance->driver_handle, sensor.address,
                                             sensor.bus, sensor.channel, sensor.gain);
             }

@@ -268,7 +268,7 @@ void hwif_gpio_unexport(gpio_pin_t *pin) {
         if (unexport_fd >= 0) {
             char pin_str[8];
             SAFE_SNPRINTF(pin_str, sizeof(pin_str), "%d", pin->pin);
-            write(unexport_fd, pin_str, strlen(pin_str));
+            ssize_t written __attribute__((unused)) = write(unexport_fd, pin_str, strlen(pin_str));
             close(unexport_fd);
         }
         pin->exported = false;
@@ -360,10 +360,10 @@ result_t hwif_gpio_write(gpio_pin_t *pin, bool value) {
 result_t hwif_gpio_wait_for_edge(gpio_pin_t *pin, int timeout_ms) {
     struct pollfd pfd;
     char buf[4];
-    
+
     // Clear any pending interrupt
     lseek(pin->value_fd, 0, SEEK_SET);
-    read(pin->value_fd, buf, sizeof(buf));
+    ssize_t bytes_read __attribute__((unused)) = read(pin->value_fd, buf, sizeof(buf));
     
     pfd.fd = pin->value_fd;
     pfd.events = POLLPRI | POLLERR;

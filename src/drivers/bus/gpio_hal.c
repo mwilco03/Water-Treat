@@ -431,7 +431,7 @@ void gpio_shutdown(void) {
                 if (fd >= 0) {
                     char buf[16];
                     snprintf(buf, sizeof(buf), "%d", state->pin);
-                    (void)write(fd, buf, strlen(buf));
+                    ssize_t written __attribute__((unused)) = write(fd, buf, strlen(buf));
                     close(fd);
                 }
             }
@@ -625,7 +625,7 @@ result_t gpio_wait_edge(int pin, int timeout_ms, bool *value) {
     /* Clear pending interrupt */
     char buf[4];
     lseek(state->value_fd, 0, SEEK_SET);
-    (void)read(state->value_fd, buf, sizeof(buf));
+    ssize_t bytes_read __attribute__((unused)) = read(state->value_fd, buf, sizeof(buf));
 
     struct pollfd pfd = {
         .fd = state->value_fd,
@@ -747,20 +747,6 @@ static result_t pwm_export(int chip, int channel) {
 
     close(fd);
     usleep(100000);  /* 100ms for sysfs to create the channel directory */
-    return RESULT_OK;
-}
-
-static result_t pwm_unexport(int chip, int channel) {
-    char path[128];
-    snprintf(path, sizeof(path), PWM_UNEXPORT_PATH_FMT, chip);
-
-    int fd = open(path, O_WRONLY);
-    if (fd < 0) return RESULT_ERROR;
-
-    char buf[16];
-    int len = snprintf(buf, sizeof(buf), "%d", channel);
-    write(fd, buf, len);
-    close(fd);
     return RESULT_OK;
 }
 

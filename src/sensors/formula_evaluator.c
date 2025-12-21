@@ -212,7 +212,7 @@ static float simple_eval(const char *formula, const float *values, int count) {
 result_t formula_evaluator_evaluate(formula_evaluator_t *eval,
                                     const float *variable_values,
                                     float *result) {
-    if (!eval->formula || eval->variable_count <= 0) {
+    if (eval->formula[0] == '\0' || eval->variable_count <= 0) {
         return RESULT_ERROR;
     }
 

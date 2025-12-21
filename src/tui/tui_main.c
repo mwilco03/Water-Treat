@@ -108,11 +108,11 @@ static void draw_footer(void) {
     
     int x = 2;
     for (int i = 0; i < PAGE_COUNT; i++) {
-        if (i == g_tui.current_page) {
+        if ((tui_page_t)i == g_tui.current_page) {
             wattron(g_tui.footer, A_REVERSE);
         }
         mvwprintw(g_tui.footer, 0, x, "F%d:%s", i + 1, pages[i].title);
-        if (i == g_tui.current_page) {
+        if ((tui_page_t)i == g_tui.current_page) {
             wattroff(g_tui.footer, A_REVERSE);
         }
         x += strlen(pages[i].title) + 5;
