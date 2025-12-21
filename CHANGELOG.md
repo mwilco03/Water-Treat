@@ -16,11 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known Issues
 
-- **Health Status Display Glitch**: The health status indicator in the TUI causes screen rendering issues (flickering/glitching). This is a suspected regression that may be related to ncurses terminal handling or refresh rate conflicts with the health check polling. Workaround: The application remains functional despite visual artifacts.
+- **Health Status Display Glitch**: The TUI causes screen rendering issues (flickering/glitching) on Trixie. Investigation findings:
+  - **Root cause**: Aggressive 100ms full-redraw loop in `tui_main.c:286-289` combined with multiple `wrefresh()` calls per frame
+  - **ncurses difference**: Trixie ships ncurses 6.5+ which has stricter terminal handling than Bookworm's ncurses 6.4
+  - **Contributing factors**: Overlapping metric collection between health_check.c (background thread) and page_status.c
+  - **Workaround**: Application remains functional despite visual artifacts
+  - **Potential fix**: Migrate to `wnoutrefresh()` + single `doupdate()` pattern, conditional refresh on data change
 
 ### Notes
 
-This release marks initial testing on Debian Trixie (testing). While the application builds and runs, users may experience visual artifacts in the terminal UI related to the health status display component.
+This release marks initial testing on Debian Trixie (testing). While the application builds and runs, users may experience visual artifacts in the terminal UI. The glitching is cosmetic and does not affect core functionality.
 
 ## [0.2.1] - 2025-12-19
 
