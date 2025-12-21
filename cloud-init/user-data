@@ -36,12 +36,45 @@ packages:
 
 write_files:
   - path: /etc/motd
+    permissions: '0644'
     content: |
       Water-Treat RTU
 
       First boot - provisioning will start shortly.
       Logs: /var/log/water-treat/first-boot.log
+
+  - path: /var/lib/water-treat/motd-waiting
     permissions: '0644'
+    content: |
+      Water-Treat RTU
+
+      Network not available yet.
+
+      You can still log in and configure networking.
+      Provisioning will retry on next boot.
+
+  - path: /var/lib/water-treat/motd-provisioning
+    permissions: '0644'
+    content: |
+      Water-Treat RTU
+
+      Setting up...
+      Progress: tail -f /var/log/water-treat/first-boot.log
+
+  - path: /var/lib/water-treat/motd-failed
+    permissions: '0644'
+    content: |
+      Water-Treat RTU
+
+      Provisioning paused after repeated failures.
+
+      To investigate:
+        cat /var/log/water-treat/first-boot.log
+
+      To retry:
+        rm /var/lib/water-treat/fail.count
+        sudo cloud-init clean --logs
+        sudo reboot
 
 runcmd:
   - |
@@ -63,7 +96,6 @@ runcmd:
     STATE_DIR=/var/lib/water-treat
     INSTALL_ROOT=/opt/Water-Treat
     STAGING=/opt/.water-treat-staging
-    MOTD_FILE=/etc/motd
     FAIL_COUNT_FILE=$STATE_DIR/fail.count
     MAX_FAILURES=20
 
@@ -95,19 +127,7 @@ runcmd:
     fail_count=$(get_fail_count)
     if [ "$fail_count" -ge "$MAX_FAILURES" ]; then
       echo "Provisioning paused after $fail_count failures"
-      cat > "$MOTD_FILE" <<'MOTD'
-    Water-Treat RTU
-
-    Provisioning paused after repeated failures.
-
-    To investigate:
-      cat /var/log/water-treat/first-boot.log
-
-    To retry:
-      rm /var/lib/water-treat/fail.count
-      sudo cloud-init clean --logs
-      sudo reboot
-    MOTD
+      cp "$STATE_DIR/motd-failed" /etc/motd
       exit 0
     fi
 
@@ -148,14 +168,7 @@ runcmd:
     fi
 
     # ----- MOTD: Waiting for network -----
-    cat > "$MOTD_FILE" <<'MOTD'
-    Water-Treat RTU
-
-    Network not available yet.
-
-    You can still log in and configure networking.
-    Provisioning will retry on next boot.
-    MOTD
+    cp "$STATE_DIR/motd-waiting" /etc/motd
 
     # ----- Network check (60s max) -----
     echo "Checking for network (max 60s)..."
@@ -176,12 +189,7 @@ runcmd:
     fi
 
     # ----- MOTD: Provisioning -----
-    cat > "$MOTD_FILE" <<'MOTD'
-    Water-Treat RTU
-
-    Setting up...
-    Progress: tail -f /var/log/water-treat/first-boot.log
-    MOTD
+    cp "$STATE_DIR/motd-provisioning" /etc/motd
 
     # ----- Staged install -----
     echo "Network detected - starting staged install"
@@ -245,13 +253,7 @@ runcmd:
 
     # ----- Final MOTD -----
     HOSTNAME=$(hostname)
-    cat > "$MOTD_FILE" <<MOTD
-    Water-Treat RTU: $HOSTNAME
-    Provisioned: $(date '+%Y-%m-%d %H:%M')
-
-    Service: systemctl status water-treat
-    Logs: journalctl -u water-treat -f
-    Source: $INSTALL_ROOT
-    MOTD
+    printf "Water-Treat RTU: %s\nProvisioned: %s\n\nService: systemctl status water-treat\nLogs: journalctl -u water-treat -f\nSource: %s\n" \
+      "$HOSTNAME" "$(date '+%Y-%m-%d %H:%M')" "$INSTALL_ROOT" > /etc/motd
 
     echo "===== Provisioning completed successfully ====="
