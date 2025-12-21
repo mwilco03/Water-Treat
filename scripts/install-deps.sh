@@ -428,7 +428,9 @@ build_libgpiod_v1() {
     fi
 
     # Update library cache
-    ldconfig
+    if ! ldconfig; then
+        non_breaking "ldconfig failed - library cache may be stale"
+    fi
 
     success "libgpiod v${version} installed to ${prefix}"
 
