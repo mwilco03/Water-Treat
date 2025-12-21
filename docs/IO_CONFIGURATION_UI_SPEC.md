@@ -19,6 +19,124 @@
 
 ---
 
+## TUI Navigation Architecture
+
+The TUI implements two distinct navigation models that coexist:
+
+### Model 1: Linear Screen Cycling (←/→/Tab)
+
+Screens are arranged in a fixed ring for quick browsing:
+
+```
+    ┌──────────────────────────────────────────────────────────────┐
+    │                                                              │
+    ▼                                                              │
+ System → Sensors → Network → PROFINET → Status → Alarms → Logging → Actuators
+    ▲                                                                    │
+    │                                                                    │
+    └────────────────────────────────────────────────────────────────────┘
+```
+
+| Key | Action | Wraps? |
+|-----|--------|--------|
+| ← | Previous screen | Yes (System → Actuators) |
+| → | Next screen | Yes (Actuators → System) |
+| Tab | Same as → | Yes |
+| Shift+Tab | Same as ← | Yes |
+
+**Implementation**: `cycle_page()` in `tui_main.c` - switches pages WITHOUT modifying history stack.
+
+### Model 2: History Stack Navigation (F-keys/ESC)
+
+Tracks intentional navigation for backtracking:
+
+```
+    Action                    History Stack
+    ──────                    ─────────────
+    Start on Status           [Status]
+    Press F2 (Sensors)        [Status, Sensors]
+    Press F8 (Actuators)      [Status, Sensors, Actuators]
+    Press ESC                 [Status, Sensors]        ← Back to Sensors
+    Press ESC                 [Status]                 ← Back to Status
+    Press ESC                 []                       ← Show quit dialog
+```
+
+| Key | Action | Modifies History? |
+|-----|--------|-------------------|
+| F1-F8 | Jump to specific page | YES (push) |
+| ESC | Return to previous page | YES (pop) |
+
+**Implementation**: `switch_page()` pushes to history, `navigate_back()` pops.
+
+### Key Design Decision: Cycling Does NOT Push to History
+
+Rationale for SCADA/industrial context:
+- Operators often scan through screens checking status (browsing)
+- ESC should return to their "work" screen, not retrace scanning steps
+- F-keys represent **intentional** task switching
+- Arrow keys represent **casual** browsing
+
+Example:
+```
+User flow: Status → (F8) → Actuators → (←) → Logging → (←) → Alarms → (ESC)
+Result: Returns to Status (F8 origin), NOT Logging
+
+History never saw Logging or Alarms - only the F8 jump was recorded.
+```
+
+### Model 3: Page-Level Selection (↑/↓)
+
+Within each page, Up/Down arrows navigate items:
+
+| Key | Scope | Purpose |
+|-----|-------|---------|
+| ↑ | Page-specific | Previous item in list |
+| ↓ | Page-specific | Next item in list |
+| PgUp | Page-specific | Scroll up one page |
+| PgDn | Page-specific | Scroll down one page |
+| Enter | Page-specific | Select/edit current item |
+
+**Implementation**: Keys fall through to `page_*_input()` handlers.
+
+### Complete Navigation Reference
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Main Input Loop                              │
+│                   (tui_main.c tui_run)                          │
+├─────────────────────────────────────────────────────────────────┤
+│   F1-F8     → switch_page()      Screen jump (history push)     │
+│   ←/→/Tab   → cycle_page()       Screen cycle (no history)      │
+│   ESC       → navigate_back()    History pop (or quit dialog)   │
+│   F10/q     → quit               Exit application               │
+│   default   → page_*_input()     Delegate to current page       │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ ↑/↓/Enter/PgUp/PgDn
+┌─────────────────────────────────────────────────────────────────┐
+│                   Page Input Handlers                            │
+│            (page_sensors.c, page_alarms.c, etc.)                │
+├─────────────────────────────────────────────────────────────────┤
+│   ↑/↓       → Item selection within list                        │
+│   PgUp/PgDn → Fast scroll                                       │
+│   Enter     → Open edit dialog for selected item                │
+│   a/A       → Add new item (page-specific)                      │
+│   d/D       → Delete selected item (page-specific)              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Footer Help Bar
+
+The footer displays context-sensitive navigation hints:
+
+```
+F1:System F2:Sensors ... F8:Actuators    <->:Cycle ESC:Back F10:Quit
+                                         ▲
+                                         └─ Arrow key cycling hint
+```
+
+---
+
 ## The Flow
 
 ```
