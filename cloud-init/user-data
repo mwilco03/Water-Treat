@@ -14,21 +14,13 @@ timezone: America/New_York
 
 users:
   - name: admin
-    plain_text_password: H2OhYeah!
+    plain_text_passwd: H2OhYeah!
     groups: users,adm,dialout,audio,netdev,video,plugdev,gpio,spi,i2c,render,sudo
     shell: /bin/bash
     lock_passwd: false
     sudo: ALL=(ALL) NOPASSWD:ALL
 
 ssh_pwauth: true
-enable_ssh: true
-
-# Raspberry Pi-specific (cc_raspberry_pi module)
-rpi:
-    spi: true
-    i2c: true
-    serial: true
-    onewire: true
 
 # Filesystem expansion
 growpart:
@@ -41,12 +33,16 @@ packages:
   - git
   - openssh-server
 
-# bootcmd runs early - generate locale and create directories
+# bootcmd runs early - generate locale, create directories, enable interfaces
 bootcmd:
   - sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
   - locale-gen en_US.UTF-8
   - mkdir -p /var/lib/water-treat
   - mkdir -p /var/log/water-treat
+  - raspi-config nonint do_spi 0
+  - raspi-config nonint do_i2c 0
+  - raspi-config nonint do_serial_hw 0
+  - raspi-config nonint do_onewire 0
 
 write_files:
   - path: /etc/motd
@@ -90,163 +86,168 @@ write_files:
         sudo cloud-init clean --logs
         sudo reboot
 
-runcmd:
-  - |
-    ####################################################################
-    # Water-Treat RTU First Boot Provisioning
-    # Non-blocking, warning-based, retry-on-reboot
-    ####################################################################
+  - path: /var/lib/water-treat/provision.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      ####################################################################
+      # Water-Treat RTU First Boot Provisioning
+      # Non-blocking, warning-based, retry-on-reboot
+      ####################################################################
 
-    exec > >(tee -a /var/log/water-treat/first-boot.log) 2>&1
-    echo "===== Provisioning attempt: $(date) ====="
+      exec > >(tee -a /var/log/water-treat/first-boot.log) 2>&1
+      echo "===== Provisioning attempt: $(date) ====="
 
-    STATE_DIR=/var/lib/water-treat
-    INSTALL_ROOT=/opt/Water-Treat
-    STAGING=/opt/.water-treat-staging
-    FAIL_COUNT_FILE=$STATE_DIR/fail.count
-    MAX_FAILURES=20
+      STATE_DIR=/var/lib/water-treat
+      INSTALL_ROOT=/opt/Water-Treat
+      STAGING=/opt/.water-treat-staging
+      FAIL_COUNT_FILE=$STATE_DIR/fail.count
+      MAX_FAILURES=20
 
-    get_fail_count() {
-      if [ -f "$FAIL_COUNT_FILE" ]; then
-        cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0
-      else
-        echo 0
+      get_fail_count() {
+        if [ -f "$FAIL_COUNT_FILE" ]; then
+          cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0
+        else
+          echo 0
+        fi
+      }
+
+      increment_fail_count() {
+        count=$(get_fail_count)
+        echo $((count + 1)) > "$FAIL_COUNT_FILE"
+      }
+
+      clear_fail_count() {
+        rm -f "$FAIL_COUNT_FILE"
+      }
+
+      if [ -f "$STATE_DIR/first-boot.ok" ]; then
+        echo "Provisioning already completed - exiting cleanly."
+        exit 0
       fi
-    }
 
-    increment_fail_count() {
-      count=$(get_fail_count)
-      echo $((count + 1)) > "$FAIL_COUNT_FILE"
-    }
-
-    clear_fail_count() {
-      rm -f "$FAIL_COUNT_FILE"
-    }
-
-    if [ -f "$STATE_DIR/first-boot.ok" ]; then
-      echo "Provisioning already completed - exiting cleanly."
-      exit 0
-    fi
-
-    fail_count=$(get_fail_count)
-    if [ "$fail_count" -ge "$MAX_FAILURES" ]; then
-      echo "Provisioning paused after $fail_count failures"
-      cp "$STATE_DIR/motd-failed" /etc/motd
-      exit 0
-    fi
-
-    BEST_IFACE=""
-    BEST_PRIORITY=0
-
-    for iface in /sys/class/net/*; do
-      [ -d "$iface" ] || continue
-      name=$(basename "$iface")
-      [ "$name" = "lo" ] && continue
-
-      priority=1
-      case "$name" in
-        eth*)  priority=5 ;;
-        enp*)  priority=4 ;;
-        ens*)  priority=3 ;;
-        wlan*) priority=2 ;;
-      esac
-
-      if [ "$priority" -gt "$BEST_PRIORITY" ]; then
-        BEST_PRIORITY=$priority
-        BEST_IFACE=$name
+      fail_count=$(get_fail_count)
+      if [ "$fail_count" -ge "$MAX_FAILURES" ]; then
+        echo "Provisioning paused after $fail_count failures"
+        cp "$STATE_DIR/motd-failed" /etc/motd
+        exit 0
       fi
-    done
 
-    if [ -n "$BEST_IFACE" ]; then
-      MAC_ADDR=$(cat /sys/class/net/$BEST_IFACE/address 2>/dev/null)
-      if [ -n "$MAC_ADDR" ] && [ "$MAC_ADDR" != "00:00:00:00:00:00" ]; then
-        MAC_SUFFIX=$(echo "$MAC_ADDR" | sed 's/://g' | tail -c 5)
-        MAC_SUFFIX=$(echo "$MAC_SUFFIX" | tr '[:upper:]' '[:lower:]')
+      BEST_IFACE=""
+      BEST_PRIORITY=0
+
+      for iface in /sys/class/net/*; do
+        [ -d "$iface" ] || continue
+        name=$(basename "$iface")
+        [ "$name" = "lo" ] && continue
+
+        priority=1
+        case "$name" in
+          eth*)  priority=5 ;;
+          enp*)  priority=4 ;;
+          ens*)  priority=3 ;;
+          wlan*) priority=2 ;;
+        esac
+
+        if [ "$priority" -gt "$BEST_PRIORITY" ]; then
+          BEST_PRIORITY=$priority
+          BEST_IFACE=$name
+        fi
+      done
+
+      if [ -n "$BEST_IFACE" ]; then
+        MAC_ADDR=$(cat /sys/class/net/$BEST_IFACE/address 2>/dev/null)
+        if [ -n "$MAC_ADDR" ] && [ "$MAC_ADDR" != "00:00:00:00:00:00" ]; then
+          MAC_SUFFIX=$(echo "$MAC_ADDR" | sed 's/://g' | tail -c 5)
+          MAC_SUFFIX=$(echo "$MAC_SUFFIX" | tr '[:upper:]' '[:lower:]')
+        fi
       fi
-    fi
 
-    if [ -n "$MAC_SUFFIX" ]; then
-      hostnamectl set-hostname "rtu-${MAC_SUFFIX}" || true
-      echo "Hostname set to rtu-${MAC_SUFFIX}"
-    fi
-
-    cp "$STATE_DIR/motd-waiting" /etc/motd
-
-    echo "Checking for network (max 60s)..."
-    NET_OK=0
-    for i in $(seq 1 30); do
-      if getent hosts github.com >/dev/null 2>&1; then
-        NET_OK=1
-        break
+      if [ -n "$MAC_SUFFIX" ]; then
+        hostnamectl set-hostname "rtu-${MAC_SUFFIX}" || true
+        echo "Hostname set to rtu-${MAC_SUFFIX}"
       fi
-      sleep 2
-    done
 
-    if [ "$NET_OK" -ne 1 ]; then
-      echo "Network not available - deferring install"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
+      cp "$STATE_DIR/motd-waiting" /etc/motd
 
-    cp "$STATE_DIR/motd-provisioning" /etc/motd
+      echo "Checking for network (max 60s)..."
+      NET_OK=0
+      for i in $(seq 1 30); do
+        if getent hosts github.com >/dev/null 2>&1; then
+          NET_OK=1
+          break
+        fi
+        sleep 2
+      done
 
-    echo "Network detected - starting staged install"
+      if [ "$NET_OK" -ne 1 ]; then
+        echo "Network not available - deferring install"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
 
-    rm -rf "$STAGING"
-    if ! git clone https://github.com/mwilco03/Water-Treat.git "$STAGING"; then
-      echo "Git clone failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
+      cp "$STATE_DIR/motd-provisioning" /etc/motd
 
-    if [ ! -f "$STAGING/scripts/install.sh" ]; then
-      echo "Validation failed - will retry on next boot"
+      echo "Network detected - starting staged install"
+
       rm -rf "$STAGING"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
+      if ! git clone https://github.com/mwilco03/Water-Treat.git "$STAGING"; then
+        echo "Git clone failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
 
-    rm -rf "$INSTALL_ROOT"
-    mv "$STAGING" "$INSTALL_ROOT"
-    chown -R admin:admin "$INSTALL_ROOT"
+      if [ ! -f "$STAGING/scripts/install.sh" ]; then
+        echo "Validation failed - will retry on next boot"
+        rm -rf "$STAGING"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
 
-    echo "Installing dependencies..."
-    if ! "$INSTALL_ROOT/scripts/install-deps.sh"; then
-      echo "Dependency install failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
+      rm -rf "$INSTALL_ROOT"
+      mv "$STAGING" "$INSTALL_ROOT"
+      chown -R admin:admin "$INSTALL_ROOT"
 
-    echo "Building application..."
-    if ! sudo -u admin "$INSTALL_ROOT/scripts/build.sh"; then
-      echo "Build failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
+      echo "Installing dependencies..."
+      if ! "$INSTALL_ROOT/scripts/install-deps.sh"; then
+        echo "Dependency install failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
 
-    echo "Installing application..."
-    if ! "$INSTALL_ROOT/scripts/install.sh"; then
-      echo "Install failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
+      echo "Building application..."
+      if ! sudo -u admin "$INSTALL_ROOT/scripts/build.sh"; then
+        echo "Build failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
 
-    systemctl daemon-reload
-    systemctl enable water-treat || true
-    systemctl start water-treat || true
+      echo "Installing application..."
+      if ! "$INSTALL_ROOT/scripts/install.sh"; then
+        echo "Install failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
 
-    rm -f "$STATE_DIR/first-boot.failed"
-    clear_fail_count
-    touch "$STATE_DIR/first-boot.ok"
+      systemctl daemon-reload
+      systemctl enable water-treat || true
+      systemctl start water-treat || true
 
-    HOSTNAME=$(hostname)
-    printf "Water-Treat RTU: %s\nProvisioned: %s\n\nService: systemctl status water-treat\nLogs: journalctl -u water-treat -f\nSource: %s\n" \
-      "$HOSTNAME" "$(date '+%Y-%m-%d %H:%M')" "$INSTALL_ROOT" > /etc/motd
+      rm -f "$STATE_DIR/first-boot.failed"
+      clear_fail_count
+      touch "$STATE_DIR/first-boot.ok"
 
-    echo "===== Provisioning completed successfully ====="
+      HOSTNAME=$(hostname)
+      printf "Water-Treat RTU: %s\nProvisioned: %s\n\nService: systemctl status water-treat\nLogs: journalctl -u water-treat -f\nSource: %s\n" \
+        "$HOSTNAME" "$(date '+%Y-%m-%d %H:%M')" "$INSTALL_ROOT" > /etc/motd
+
+      echo "===== Provisioning completed successfully ====="
+
+runcmd:
+  - /var/lib/water-treat/provision.sh
