@@ -618,11 +618,14 @@ sudo modprobe i2c-dev
 | RPi 4B (Bookworm) | 6.1+ | 1.6+ | 12+ | Tested |
 | RPi 5 (Bookworm) | 6.1+ | 2.0+ | 12+ | Tested |
 | RPi 3B+ (Bullseye) | 5.15 | 1.6 | 10 | Tested |
+| RPi (Trixie/Debian 13) | 6.6+ | 2.1+ | 13+ | Functional* |
 | Orange Pi Zero 3 | 5.15+ | 1.6+ | 11+ | Tested |
 | ODROID-C4 | 5.10+ | 1.6+ | 10+ | Tested |
 | Luckfox Lyra | 5.10 | 1.6 | 11 | Beta |
 
+\* **Trixie Note**: Builds and runs but has known issues with health status display causing screen glitching. See [CHANGELOG.md](CHANGELOG.md) for details.
+
 ---
 
-*Document Version: 1.0.0*
-*Last Updated: 2024-12-19*
+*Document Version: 1.1.0*
+*Last Updated: 2025-12-21*
