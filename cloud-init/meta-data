@@ -1,0 +1,12 @@
+#
+# meta-data - Cloud-init instance metadata
+#
+# What: Minimal metadata for cloud-init
+# Why: Some cloud-init implementations require this file
+#
+# The instance-id triggers cloud-init to run on first boot.
+# Hostname is set dynamically by the provision script based on MAC address.
+#
+
+instance-id: water-treat-rtu
+local-hostname: rtu-pending
