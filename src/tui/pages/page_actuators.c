@@ -13,6 +13,7 @@
 #include "page_actuators.h"
 #include "../tui_common.h"
 #include "tui/dialogs/dialog_actuator.h"
+#include "tui/dialogs/dialog_io_wizard.h"
 #include "db/database.h"
 #include "db/db_actuators.h"
 #include "actuators/actuator_manager.h"
@@ -455,32 +456,27 @@ void page_actuators_input(WINDOW *win, int ch) {
         case 'a':
         case 'n':
         case 'N':
-            /* Add new actuator */
+            /* Add new actuator using progressive disclosure wizard
+             *
+             * Design Philosophy Applied:
+             * - Dynamic Discovery: Board detection provides valid GPIO pins
+             * - Reasonable Assumptions: System sets safe defaults (safe_state=OFF)
+             * - Graceful Degradation: Conflicts shown with clear alternatives
+             * - Single Source of Truth: User picks pin, system derives config
+             * - Informational Output: Shows board type and available pins
+             */
             {
-                database_t *db = tui_get_database();
-                if (db) {
-                    actuator_form_t form;
-                    dialog_actuator_init_form(&form);
-                    if (dialog_actuator_show(ACTUATOR_DIALOG_ADD, &form)) {
-                        /* Check for GPIO pin conflict before saving */
-                        gpio_conflict_t conflict;
-                        if (db_actuator_gpio_conflict_check(db, form.gpio_pin,
-                                form.gpio_chip, 0, &conflict) == RESULT_OK &&
-                            conflict.has_conflict) {
-                            show_gpio_conflict_dialog(form.gpio_pin, conflict.conflicting_name);
-                            tui_set_status("GPIO pin %d already in use by '%s'",
-                                           form.gpio_pin, conflict.conflicting_name);
-                            break;
-                        }
+                io_wizard_result_t result;
+                if (dialog_io_wizard_add_actuator(&result)) {
+                    tui_set_status("Actuator '%s' created at slot %d",
+                                   result.name, result.assigned_slot);
+                    load_actuators();
 
-                        db_actuator_t db_act = {0};
-                        dialog_actuator_save(&form, &db_act);
-                        int new_id = 0;
-                        if (db_actuator_create(db, &db_act, &new_id) == RESULT_OK) {
-                            tui_set_status("Actuator '%s' created (ID: %d)", form.name, new_id);
-                            load_actuators();
-                        } else {
-                            tui_set_status("Failed to create actuator");
+                    /* Select the newly added actuator */
+                    for (int i = 0; i < g_page.actuator_count; i++) {
+                        if (g_page.actuators[i].id == result.created_id) {
+                            g_page.selected = i;
+                            break;
                         }
                     }
                 }
