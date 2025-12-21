@@ -5,6 +5,9 @@
 #include <time.h>
 #include <pthread.h>
 #include <syslog.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <libgen.h>
 
 static struct {
     bool initialized;
@@ -16,6 +19,48 @@ static struct {
 
 static const char *level_names[] = {"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL", "NONE"};
 static const char *level_colors[] = {"\033[90m", "\033[36m", "\033[32m", "\033[33m", "\033[31m", "\033[35m", "\033[0m"};
+
+/**
+ * ensure_parent_dir - Create parent directory for a file path
+ *
+ * What: Creates all parent directories needed for a file path
+ * Why: fopen() fails silently if parent directory doesn't exist
+ */
+static int ensure_parent_dir(const char *file_path) {
+    char path_copy[512];
+    strncpy(path_copy, file_path, sizeof(path_copy) - 1);
+    path_copy[sizeof(path_copy) - 1] = '\0';
+
+    /* Find last slash to get directory portion */
+    char *last_slash = strrchr(path_copy, '/');
+    if (!last_slash || last_slash == path_copy) {
+        return 0;  /* No parent directory or root */
+    }
+    *last_slash = '\0';
+
+    /* Check if directory exists */
+    struct stat st;
+    if (stat(path_copy, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return 0;  /* Already exists */
+    }
+
+    /* Create directories recursively */
+    char *p = path_copy + 1;
+    while (*p) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(path_copy, 0755) != 0 && errno != EEXIST) {
+                return -1;
+            }
+            *p = '/';
+        }
+        p++;
+    }
+    if (mkdir(path_copy, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+    return 0;
+}
 
 /* Map our log levels to syslog priorities */
 static int log_level_to_syslog_priority(log_level_t level) {
@@ -62,7 +107,17 @@ result_t logger_init(const logger_config_t *config) {
 
     /* Open file log if requested */
     if ((g_logger.config.destinations & LOG_DEST_FILE) && strlen(g_logger.config.log_file_path) > 0) {
+        /* Ensure parent directory exists before opening file */
+        if (ensure_parent_dir(g_logger.config.log_file_path) != 0) {
+            /* Directory creation failed - log to stderr since we can't log to file */
+            fprintf(stderr, "[WARN] Cannot create log directory for %s\n",
+                    g_logger.config.log_file_path);
+        }
         g_logger.log_file = fopen(g_logger.config.log_file_path, "a");
+        if (!g_logger.log_file) {
+            fprintf(stderr, "[WARN] Cannot open log file %s: %s\n",
+                    g_logger.config.log_file_path, strerror(errno));
+        }
     }
 
     /* Open syslog if requested - enables centralized logging via rsyslog */

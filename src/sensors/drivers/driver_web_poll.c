@@ -2,6 +2,7 @@
 #include "utils/logger.h"
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 #if defined(HAVE_CURL) && defined(HAVE_CJSON)
 #include <curl/curl.h>
@@ -12,6 +13,14 @@
 #endif
 
 #if WEB_POLL_ENABLED
+
+/* Rate-limiting for web poll errors to prevent log spam */
+static struct {
+    int curl_error_count;
+    int json_error_count;
+    time_t last_curl_log;
+    time_t last_json_log;
+} g_web_poll_errors = {0};
 
 // Callback for curl to write response data
 struct memory_struct {
@@ -76,41 +85,57 @@ result_t web_poll_set_json_path(web_poll_device_t *dev, const char *json_path) {
 static result_t parse_json_value(const char *json_str, const char *json_path, float *value) {
     cJSON *root = cJSON_Parse(json_str);
     if (!root) {
-        LOG_ERROR("Failed to parse JSON response");
+        time_t now = time(NULL);
+        g_web_poll_errors.json_error_count++;
+        if (g_web_poll_errors.json_error_count == 1 || (now - g_web_poll_errors.last_json_log) >= 300) {
+            LOG_WARNING("Failed to parse JSON response (error #%d)", g_web_poll_errors.json_error_count);
+            g_web_poll_errors.last_json_log = now;
+        }
         return RESULT_ERROR;
     }
-    
+
     // Simple path parsing for $.field or $.field.subfield
     const char *path = json_path;
     if (strncmp(path, "$.", 2) == 0) {
         path += 2;
     }
-    
+
     cJSON *current = root;
     char path_copy[128];
     SAFE_STRNCPY(path_copy, path, sizeof(path_copy));
-    
+
     char *token = strtok(path_copy, ".");
     while (token != NULL) {
         current = cJSON_GetObjectItem(current, token);
         if (!current) {
-            LOG_ERROR("JSON path not found: %s", token);
+            time_t now = time(NULL);
+            g_web_poll_errors.json_error_count++;
+            if (g_web_poll_errors.json_error_count == 1 || (now - g_web_poll_errors.last_json_log) >= 300) {
+                LOG_WARNING("JSON path not found: %s (error #%d)", token, g_web_poll_errors.json_error_count);
+                g_web_poll_errors.last_json_log = now;
+            }
             cJSON_Delete(root);
             return RESULT_NOT_FOUND;
         }
         token = strtok(NULL, ".");
     }
-    
+
     if (cJSON_IsNumber(current)) {
         *value = (float)cJSON_GetNumberValue(current);
     } else if (cJSON_IsString(current)) {
         *value = atof(cJSON_GetStringValue(current));
     } else {
-        LOG_ERROR("JSON value is not a number");
+        time_t now = time(NULL);
+        g_web_poll_errors.json_error_count++;
+        if (g_web_poll_errors.json_error_count == 1 || (now - g_web_poll_errors.last_json_log) >= 300) {
+            LOG_WARNING("JSON value is not a number (error #%d)", g_web_poll_errors.json_error_count);
+            g_web_poll_errors.last_json_log = now;
+        }
         cJSON_Delete(root);
         return RESULT_ERROR;
     }
-    
+
+    g_web_poll_errors.json_error_count = 0;  /* Reset on success */
     cJSON_Delete(root);
     return RESULT_OK;
 }
@@ -162,16 +187,24 @@ result_t web_poll_fetch(web_poll_device_t *dev, float *value) {
     }
     
     if (res != CURLE_OK) {
-        LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
+        time_t now = time(NULL);
+        g_web_poll_errors.curl_error_count++;
+        if (g_web_poll_errors.curl_error_count == 1 || (now - g_web_poll_errors.last_curl_log) >= 300) {
+            LOG_WARNING("curl_easy_perform() failed: %s (error #%d)",
+                       curl_easy_strerror(res), g_web_poll_errors.curl_error_count);
+            g_web_poll_errors.last_curl_log = now;
+        }
         free(chunk.memory);
-        
+
         if (dev->cache_on_error) {
             *value = dev->last_value;
             return RESULT_OK;
         }
-        
+
         return RESULT_ERROR;
     }
+
+    g_web_poll_errors.curl_error_count = 0;  /* Reset on success */
     
     // Parse JSON response
     result_t result = parse_json_value(chunk.memory, dev->json_path, value);

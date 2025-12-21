@@ -9,6 +9,40 @@
 #include <dirent.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
+
+/* ============================================================================
+ * Rate-Limited Error Logging
+ * ============================================================================
+ * Hardware errors can occur repeatedly during polling loops. To avoid
+ * log spam, we rate-limit repeated errors: log the first occurrence,
+ * then only every 5 minutes thereafter.
+ */
+
+typedef struct {
+    int count;
+    time_t last_log;
+} error_state_t;
+
+/* Rate-limit macro: logs first error, then every 300 seconds */
+#define LOG_ERROR_RATELIMIT(state, ...) do { \
+    time_t _now = time(NULL); \
+    (state)->count++; \
+    if ((state)->count == 1 || (_now - (state)->last_log) >= 300) { \
+        LOG_WARNING(__VA_ARGS__); \
+        (state)->last_log = _now; \
+    } \
+} while(0)
+
+#define RESET_ERROR_STATE(state) do { (state)->count = 0; } while(0)
+
+/* Per-subsystem error tracking */
+static error_state_t g_i2c_read_error = {0};
+static error_state_t g_i2c_write_error = {0};
+static error_state_t g_spi_error = {0};
+static error_state_t g_gpio_read_error = {0};
+static error_state_t g_gpio_write_error = {0};
+static error_state_t g_onewire_error = {0};
 
 // ============================================================================
 // I2C IMPLEMENTATION
@@ -46,70 +80,75 @@ void i2c_close(i2c_device_t *dev) {
 
 result_t i2c_read_byte(i2c_device_t *dev, uint8_t reg, uint8_t *value) {
     if (write(dev->fd, &reg, 1) != 1) {
-        LOG_ERROR("I2C write register failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_read_error, "I2C write register failed (error #%d)", g_i2c_read_error.count);
         return RESULT_ERROR;
     }
-    
+
     if (read(dev->fd, value, 1) != 1) {
-        LOG_ERROR("I2C read byte failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_read_error, "I2C read byte failed (error #%d)", g_i2c_read_error.count);
         return RESULT_ERROR;
     }
-    
+
+    RESET_ERROR_STATE(&g_i2c_read_error);
     return RESULT_OK;
 }
 
 result_t i2c_read_word(i2c_device_t *dev, uint8_t reg, uint16_t *value) {
     uint8_t buffer[2];
-    
+
     if (write(dev->fd, &reg, 1) != 1) {
-        LOG_ERROR("I2C write register failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_read_error, "I2C write register failed (error #%d)", g_i2c_read_error.count);
         return RESULT_ERROR;
     }
-    
+
     if (read(dev->fd, buffer, 2) != 2) {
-        LOG_ERROR("I2C read word failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_read_error, "I2C read word failed (error #%d)", g_i2c_read_error.count);
         return RESULT_ERROR;
     }
-    
+
     // Most I2C devices use big-endian
     *value = (buffer[0] << 8) | buffer[1];
-    
+
+    RESET_ERROR_STATE(&g_i2c_read_error);
     return RESULT_OK;
 }
 
 result_t i2c_read_bytes(i2c_device_t *dev, uint8_t reg, uint8_t *buffer, size_t len) {
     if (write(dev->fd, &reg, 1) != 1) {
-        LOG_ERROR("I2C write register failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_read_error, "I2C write register failed (error #%d)", g_i2c_read_error.count);
         return RESULT_ERROR;
     }
-    
+
     if (read(dev->fd, buffer, len) != (ssize_t)len) {
-        LOG_ERROR("I2C read bytes failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_read_error, "I2C read bytes failed (error #%d)", g_i2c_read_error.count);
         return RESULT_ERROR;
     }
-    
+
+    RESET_ERROR_STATE(&g_i2c_read_error);
     return RESULT_OK;
 }
 
 result_t i2c_write_byte(i2c_device_t *dev, uint8_t reg, uint8_t value) {
     uint8_t buffer[2] = {reg, value};
-    
+
     if (write(dev->fd, buffer, 2) != 2) {
-        LOG_ERROR("I2C write byte failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_write_error, "I2C write byte failed (error #%d)", g_i2c_write_error.count);
         return RESULT_ERROR;
     }
-    
+
+    RESET_ERROR_STATE(&g_i2c_write_error);
     return RESULT_OK;
 }
 
 result_t i2c_write_word(i2c_device_t *dev, uint8_t reg, uint16_t value) {
     uint8_t buffer[3] = {reg, (value >> 8) & 0xFF, value & 0xFF};
-    
+
     if (write(dev->fd, buffer, 3) != 3) {
-        LOG_ERROR("I2C write word failed");
+        LOG_ERROR_RATELIMIT(&g_i2c_write_error, "I2C write word failed (error #%d)", g_i2c_write_error.count);
         return RESULT_ERROR;
     }
-    
+
+    RESET_ERROR_STATE(&g_i2c_write_error);
     return RESULT_OK;
 }
 
@@ -174,12 +213,13 @@ result_t spi_transfer(spi_device_t *dev, uint8_t *tx_data, uint8_t *rx_data, siz
         .speed_hz = dev->speed,
         .bits_per_word = dev->bits_per_word,
     };
-    
+
     if (ioctl(dev->fd, SPI_IOC_MESSAGE(1), &transfer) < 0) {
-        LOG_ERROR("SPI transfer failed: %s", strerror(errno));
+        LOG_ERROR_RATELIMIT(&g_spi_error, "SPI transfer failed: %s (error #%d)", strerror(errno), g_spi_error.count);
         return RESULT_ERROR;
     }
-    
+
+    RESET_ERROR_STATE(&g_spi_error);
     return RESULT_OK;
 }
 
@@ -326,58 +366,61 @@ result_t hwif_gpio_set_edge(gpio_pin_t *pin, gpio_edge_t edge) {
 
 result_t hwif_gpio_read(gpio_pin_t *pin, bool *value) {
     char buf[4];
-    
+
     if (lseek(pin->value_fd, 0, SEEK_SET) < 0) {
-        LOG_ERROR("GPIO lseek failed");
+        LOG_ERROR_RATELIMIT(&g_gpio_read_error, "GPIO lseek failed (error #%d)", g_gpio_read_error.count);
         return RESULT_ERROR;
     }
-    
+
     if (read(pin->value_fd, buf, sizeof(buf)) < 0) {
-        LOG_ERROR("GPIO read failed");
+        LOG_ERROR_RATELIMIT(&g_gpio_read_error, "GPIO read failed (error #%d)", g_gpio_read_error.count);
         return RESULT_ERROR;
     }
-    
+
+    RESET_ERROR_STATE(&g_gpio_read_error);
     *value = (buf[0] == '1');
     return RESULT_OK;
 }
 
 result_t hwif_gpio_write(gpio_pin_t *pin, bool value) {
     const char *val_str = value ? "1" : "0";
-    
+
     if (lseek(pin->value_fd, 0, SEEK_SET) < 0) {
-        LOG_ERROR("GPIO lseek failed");
+        LOG_ERROR_RATELIMIT(&g_gpio_write_error, "GPIO lseek failed (error #%d)", g_gpio_write_error.count);
         return RESULT_ERROR;
     }
-    
+
     if (write(pin->value_fd, val_str, 1) < 0) {
-        LOG_ERROR("GPIO write failed");
+        LOG_ERROR_RATELIMIT(&g_gpio_write_error, "GPIO write failed (error #%d)", g_gpio_write_error.count);
         return RESULT_ERROR;
     }
-    
+
+    RESET_ERROR_STATE(&g_gpio_write_error);
     return RESULT_OK;
 }
 
 result_t hwif_gpio_wait_for_edge(gpio_pin_t *pin, int timeout_ms) {
     struct pollfd pfd;
     char buf[4];
-    
+
     // Clear any pending interrupt
     lseek(pin->value_fd, 0, SEEK_SET);
     read(pin->value_fd, buf, sizeof(buf));
-    
+
     pfd.fd = pin->value_fd;
     pfd.events = POLLPRI | POLLERR;
     pfd.revents = 0;
-    
+
     int ret = poll(&pfd, 1, timeout_ms);
-    
+
     if (ret < 0) {
-        LOG_ERROR("GPIO poll failed");
+        LOG_ERROR_RATELIMIT(&g_gpio_read_error, "GPIO poll failed (error #%d)", g_gpio_read_error.count);
         return RESULT_ERROR;
     } else if (ret == 0) {
         return RESULT_TIMEOUT;
     }
-    
+
+    RESET_ERROR_STATE(&g_gpio_read_error);
     return RESULT_OK;
 }
 
@@ -445,37 +488,38 @@ result_t onewire_scan(onewire_device_t **devices, int *count) {
 result_t onewire_read_temperature(const char *device_id, float *temperature) {
     char path[MAX_PATH_LEN];
     SAFE_SNPRINTF(path, sizeof(path), "/sys/bus/w1/devices/%s/w1_slave", device_id);
-    
+
     FILE *fp = fopen(path, "r");
     if (!fp) {
-        LOG_ERROR("Failed to open 1-Wire device %s", device_id);
+        LOG_ERROR_RATELIMIT(&g_onewire_error, "Failed to open 1-Wire device %s (error #%d)", device_id, g_onewire_error.count);
         return RESULT_ERROR;
     }
-    
+
     char line1[128], line2[128];
     if (!fgets(line1, sizeof(line1), fp) || !fgets(line2, sizeof(line2), fp)) {
-        LOG_ERROR("Failed to read 1-Wire data");
+        LOG_ERROR_RATELIMIT(&g_onewire_error, "Failed to read 1-Wire data (error #%d)", g_onewire_error.count);
         fclose(fp);
         return RESULT_ERROR;
     }
-    
+
     fclose(fp);
-    
+
     // Check CRC
     if (strstr(line1, "YES") == NULL) {
-        LOG_ERROR("1-Wire CRC check failed");
+        LOG_ERROR_RATELIMIT(&g_onewire_error, "1-Wire CRC check failed (error #%d)", g_onewire_error.count);
         return RESULT_ERROR;
     }
-    
+
     // Parse temperature
     char *temp_str = strstr(line2, "t=");
     if (!temp_str) {
-        LOG_ERROR("Failed to parse 1-Wire temperature");
+        LOG_ERROR_RATELIMIT(&g_onewire_error, "Failed to parse 1-Wire temperature (error #%d)", g_onewire_error.count);
         return RESULT_ERROR;
     }
-    
+
     int temp_raw = atoi(temp_str + 2);
     *temperature = temp_raw / 1000.0f;
-    
+
+    RESET_ERROR_STATE(&g_onewire_error);
     return RESULT_OK;
 }
