@@ -241,10 +241,10 @@ if ! "$INSTALL_ROOT/scripts/install-deps.sh"; then
 fi
 
 # ------------------------------------------------------------------------------
-# Build Application
+# Build Application (as admin, not root - avoids ownership issues)
 # ------------------------------------------------------------------------------
 echo "Building application..."
-if ! "$INSTALL_ROOT/scripts/build.sh"; then
+if ! sudo -u admin "$INSTALL_ROOT/scripts/build.sh"; then
     echo "Build failed - will retry on next boot"
     increment_fail_count
     touch "$STATE_DIR/first-boot.failed"

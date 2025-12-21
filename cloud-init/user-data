@@ -228,9 +228,9 @@ EOF
       exit 0
     fi
 
-    # ----- Build application -----
+    # ----- Build application (as admin, not root) -----
     echo "Building application..."
-    if ! "$INSTALL_ROOT/scripts/build.sh"; then
+    if ! sudo -u admin "$INSTALL_ROOT/scripts/build.sh"; then
       echo "Build failed - will retry on next boot"
       increment_fail_count
       touch "$STATE_DIR/first-boot.failed"
