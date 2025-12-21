@@ -14,21 +14,13 @@ timezone: America/New_York
 
 users:
   - name: admin
-    plain_text_password: H2OhYeah!
+    plain_text_passwd: H2OhYeah!
     groups: users,adm,dialout,audio,netdev,video,plugdev,gpio,spi,i2c,render,sudo
     shell: /bin/bash
     lock_passwd: false
     sudo: ALL=(ALL) NOPASSWD:ALL
 
 ssh_pwauth: true
-enable_ssh: true
-
-# Raspberry Pi-specific (cc_raspberry_pi module)
-rpi:
-    spi: true
-    i2c: true
-    serial: true
-    onewire: true
 
 # Filesystem expansion
 growpart:
@@ -41,10 +33,16 @@ packages:
   - git
   - openssh-server
 
-# Create directories before write_files
+# bootcmd runs early - generate locale, create directories, enable interfaces
 bootcmd:
-  - mkdir -p /var/lib/water-treat
+  - sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+  - locale-gen en_US.UTF-8
+  - mkdir -p /var/lib/water-treat/scripts
   - mkdir -p /var/log/water-treat
+  - raspi-config nonint do_spi 0
+  - raspi-config nonint do_i2c 0
+  - raspi-config nonint do_serial_hw 0
+  - raspi-config nonint do_onewire 0
 
 write_files:
   - path: /etc/motd
@@ -88,163 +86,399 @@ write_files:
         sudo cloud-init clean --logs
         sudo reboot
 
+  - path: /var/lib/water-treat/scripts/01-provision.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      ####################################################################
+      # Water-Treat RTU First Boot Provisioning
+      # Non-blocking, warning-based, retry-on-reboot
+      ####################################################################
+
+      SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+      STATE_DIR=$(dirname "$SCRIPT_DIR")
+      LOG_DIR=/var/log/water-treat
+
+      exec > >(tee -a "$LOG_DIR/first-boot.log") 2>&1
+      echo "===== Provisioning attempt: $(date) ====="
+
+      INSTALL_ROOT=/opt/Water-Treat
+      STAGING=/opt/.water-treat-staging
+      FAIL_COUNT_FILE=$STATE_DIR/fail.count
+      MAX_FAILURES=20
+
+      get_fail_count() {
+        [ -f "$FAIL_COUNT_FILE" ] && cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0
+      }
+
+      increment_fail_count() {
+        echo $(($(get_fail_count) + 1)) > "$FAIL_COUNT_FILE"
+      }
+
+      clear_fail_count() {
+        rm -f "$FAIL_COUNT_FILE"
+      }
+
+      if [ -f "$STATE_DIR/first-boot.ok" ]; then
+        echo "Provisioning already completed - exiting cleanly."
+        exit 0
+      fi
+
+      fail_count=$(get_fail_count)
+      if [ "$fail_count" -ge "$MAX_FAILURES" ]; then
+        echo "Provisioning paused after $fail_count failures"
+        cp "$STATE_DIR/motd-failed" /etc/motd
+        exit 0
+      fi
+
+      BEST_IFACE=""
+      BEST_PRIORITY=0
+
+      for iface in /sys/class/net/*; do
+        [ -d "$iface" ] || continue
+        name=$(basename "$iface")
+        [ "$name" = "lo" ] && continue
+
+        priority=1
+        case "$name" in
+          eth*)  priority=5 ;;
+          enp*)  priority=4 ;;
+          ens*)  priority=3 ;;
+          wlan*) priority=2 ;;
+        esac
+
+        if [ "$priority" -gt "$BEST_PRIORITY" ]; then
+          BEST_PRIORITY=$priority
+          BEST_IFACE=$name
+        fi
+      done
+
+      if [ -n "$BEST_IFACE" ]; then
+        MAC_ADDR=$(cat "/sys/class/net/$BEST_IFACE/address" 2>/dev/null)
+        if [ -n "$MAC_ADDR" ] && [ "$MAC_ADDR" != "00:00:00:00:00:00" ]; then
+          MAC_SUFFIX=$(echo "$MAC_ADDR" | sed 's/://g' | tail -c 5)
+          MAC_SUFFIX=$(echo "$MAC_SUFFIX" | tr '[:upper:]' '[:lower:]')
+        fi
+      fi
+
+      if [ -n "$MAC_SUFFIX" ]; then
+        hostnamectl set-hostname "rtu-${MAC_SUFFIX}" || true
+        echo "Hostname set to rtu-${MAC_SUFFIX}"
+      fi
+
+      cp "$STATE_DIR/motd-waiting" /etc/motd
+
+      echo "Checking for network (max 60s)..."
+      NET_OK=0
+      for i in $(seq 1 30); do
+        if getent hosts github.com >/dev/null 2>&1; then
+          NET_OK=1
+          break
+        fi
+        sleep 2
+      done
+
+      if [ "$NET_OK" -ne 1 ]; then
+        echo "Network not available - deferring install"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
+
+      cp "$STATE_DIR/motd-provisioning" /etc/motd
+
+      echo "Network detected - starting staged install"
+
+      rm -rf "$STAGING"
+      if ! git clone https://github.com/mwilco03/Water-Treat.git "$STAGING"; then
+        echo "Git clone failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
+
+      if [ ! -f "$STAGING/scripts/install.sh" ]; then
+        echo "Validation failed - will retry on next boot"
+        rm -rf "$STAGING"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
+
+      rm -rf "$INSTALL_ROOT"
+      mv "$STAGING" "$INSTALL_ROOT"
+      chown -R admin:admin "$INSTALL_ROOT"
+
+      echo "Installing dependencies..."
+      if ! "$INSTALL_ROOT/scripts/install-deps.sh"; then
+        echo "Dependency install failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
+
+      echo "Building application..."
+      if ! sudo -u admin "$INSTALL_ROOT/scripts/build.sh"; then
+        echo "Build failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
+
+      echo "Installing application..."
+      if ! "$INSTALL_ROOT/scripts/install.sh"; then
+        echo "Install failed - will retry on next boot"
+        increment_fail_count
+        touch "$STATE_DIR/first-boot.failed"
+        exit 0
+      fi
+
+      systemctl daemon-reload
+      systemctl enable water-treat || true
+      systemctl start water-treat || true
+
+      rm -f "$STATE_DIR/first-boot.failed"
+      clear_fail_count
+      touch "$STATE_DIR/first-boot.ok"
+
+      HOSTNAME=$(hostname)
+      printf "Water-Treat RTU: %s\nProvisioned: %s\n\nService: systemctl status water-treat\nLogs: journalctl -u water-treat -f\nSource: %s\n" \
+        "$HOSTNAME" "$(date '+%Y-%m-%d %H:%M')" "$INSTALL_ROOT" > /etc/motd
+
+      echo "===== Provisioning completed successfully ====="
+
+  - path: /usr/local/bin/wt-health
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      ####################################################################
+      # Water-Treat RTU Health Check
+      # Run: wt-health
+      ####################################################################
+
+      RED='\033[0;31m'
+      GREEN='\033[0;32m'
+      YELLOW='\033[1;33m'
+      NC='\033[0m'
+
+      pass() { echo -e "[${GREEN}PASS${NC}] $1"; }
+      fail() { echo -e "[${RED}FAIL${NC}] $1"; }
+      warn() { echo -e "[${YELLOW}WARN${NC}] $1"; }
+      info() { echo -e "[    ] $1"; }
+
+      STATE_DIR=/var/lib/water-treat
+      LOG_DIR=/var/log/water-treat
+      INSTALL_ROOT=/opt/Water-Treat
+
+      echo "========================================"
+      echo "Water-Treat RTU Health Check"
+      echo "$(date)"
+      echo "========================================"
+      echo
+
+      # --- Cloud-init Status ---
+      echo "--- Cloud-init ---"
+      if cloud-init status --wait 2>/dev/null | grep -q "done"; then
+        pass "Cloud-init completed"
+      elif cloud-init status 2>/dev/null | grep -q "running"; then
+        warn "Cloud-init still running"
+      else
+        ci_status=$(cloud-init status 2>/dev/null || echo "unknown")
+        fail "Cloud-init status: $ci_status"
+      fi
+
+      ci_errors=$(grep -c "WARNING\|ERROR" /var/log/cloud-init.log 2>/dev/null || echo 0)
+      if [ "$ci_errors" -gt 0 ]; then
+        warn "Cloud-init log has $ci_errors warnings/errors"
+      else
+        pass "Cloud-init log clean"
+      fi
+      echo
+
+      # --- User & Auth ---
+      echo "--- User & Authentication ---"
+      if id admin >/dev/null 2>&1; then
+        pass "User 'admin' exists"
+      else
+        fail "User 'admin' missing"
+      fi
+
+      if grep -q "^admin:" /etc/shadow 2>/dev/null; then
+        pw_hash=$(sudo grep "^admin:" /etc/shadow 2>/dev/null | cut -d: -f2)
+        if [ -n "$pw_hash" ] && [ "$pw_hash" != "!" ] && [ "$pw_hash" != "*" ]; then
+          pass "Password set for admin"
+        else
+          fail "Password not set for admin"
+        fi
+      else
+        fail "Cannot check password"
+      fi
+
+      if grep -q "^PasswordAuthentication yes" /etc/ssh/sshd_config 2>/dev/null || \
+         ! grep -q "^PasswordAuthentication no" /etc/ssh/sshd_config 2>/dev/null; then
+        pass "SSH password auth enabled"
+      else
+        fail "SSH password auth disabled"
+      fi
+      echo
+
+      # --- SSH Service ---
+      echo "--- SSH Service ---"
+      if systemctl is-active --quiet sshd || systemctl is-active --quiet ssh; then
+        pass "SSH service running"
+      else
+        fail "SSH service not running"
+      fi
+
+      ssh_port=$(ss -tlnp 2>/dev/null | grep -E ':22\s' | head -1)
+      if [ -n "$ssh_port" ]; then
+        pass "SSH listening on port 22"
+      else
+        fail "SSH not listening on port 22"
+      fi
+      echo
+
+      # --- System Config ---
+      echo "--- System Configuration ---"
+      current_hostname=$(hostname)
+      if [[ "$current_hostname" =~ ^rtu-[a-f0-9]{4}$ ]]; then
+        pass "Hostname: $current_hostname (MAC-based)"
+      elif [ "$current_hostname" = "rtu" ]; then
+        warn "Hostname: $current_hostname (not yet MAC-based)"
+      else
+        info "Hostname: $current_hostname"
+      fi
+
+      current_locale=$(locale 2>/dev/null | grep "^LANG=" | cut -d= -f2)
+      if [ "$current_locale" = "en_US.UTF-8" ]; then
+        pass "Locale: $current_locale"
+      else
+        warn "Locale: ${current_locale:-not set}"
+      fi
+
+      current_tz=$(timedatectl show --property=Timezone --value 2>/dev/null)
+      if [ "$current_tz" = "America/New_York" ]; then
+        pass "Timezone: $current_tz"
+      else
+        warn "Timezone: ${current_tz:-not set}"
+      fi
+
+      current_kb=$(localectl status 2>/dev/null | grep "X11 Layout" | awk '{print $3}')
+      if [ "$current_kb" = "us" ]; then
+        pass "Keyboard: $current_kb"
+      else
+        warn "Keyboard: ${current_kb:-not set}"
+      fi
+      echo
+
+      # --- Hardware Interfaces ---
+      echo "--- Hardware Interfaces ---"
+      if [ -e /dev/spidev0.0 ] || [ -e /dev/spidev0.1 ]; then
+        pass "SPI enabled"
+      else
+        fail "SPI not enabled"
+      fi
+
+      if [ -e /dev/i2c-1 ]; then
+        pass "I2C enabled"
+      else
+        fail "I2C not enabled"
+      fi
+
+      if [ -e /dev/ttyAMA0 ] || [ -e /dev/serial0 ]; then
+        pass "Serial enabled"
+      else
+        fail "Serial not enabled"
+      fi
+
+      if [ -d /sys/bus/w1 ]; then
+        pass "1-Wire enabled"
+      else
+        fail "1-Wire not enabled"
+      fi
+      echo
+
+      # --- Network ---
+      echo "--- Network ---"
+      default_iface=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -1)
+      if [ -n "$default_iface" ]; then
+        ip_addr=$(ip addr show "$default_iface" 2>/dev/null | grep "inet " | awk '{print $2}')
+        pass "Default interface: $default_iface ($ip_addr)"
+      else
+        fail "No default route"
+      fi
+
+      if getent hosts github.com >/dev/null 2>&1; then
+        pass "DNS resolution working"
+      else
+        fail "DNS resolution failed"
+      fi
+
+      if curl -s --connect-timeout 5 https://github.com >/dev/null 2>&1; then
+        pass "Internet connectivity OK"
+      else
+        warn "Internet connectivity limited"
+      fi
+      echo
+
+      # --- Provisioning Status ---
+      echo "--- Provisioning ---"
+      if [ -f "$STATE_DIR/first-boot.ok" ]; then
+        pass "Provisioning completed"
+      elif [ -f "$STATE_DIR/first-boot.failed" ]; then
+        fail_count=$(cat "$STATE_DIR/fail.count" 2>/dev/null || echo "?")
+        fail "Provisioning failed (attempts: $fail_count)"
+      else
+        warn "Provisioning not yet run"
+      fi
+
+      if [ -d "$INSTALL_ROOT" ]; then
+        pass "Install directory exists: $INSTALL_ROOT"
+      else
+        fail "Install directory missing: $INSTALL_ROOT"
+      fi
+
+      if [ -f "$INSTALL_ROOT/scripts/install.sh" ]; then
+        pass "Install scripts present"
+      else
+        fail "Install scripts missing"
+      fi
+      echo
+
+      # --- Water-Treat Service ---
+      echo "--- Water-Treat Service ---"
+      if systemctl is-enabled --quiet water-treat 2>/dev/null; then
+        pass "Service enabled"
+      else
+        fail "Service not enabled"
+      fi
+
+      if systemctl is-active --quiet water-treat 2>/dev/null; then
+        pass "Service running"
+      else
+        fail "Service not running"
+      fi
+
+      if [ -f "$LOG_DIR/first-boot.log" ]; then
+        log_errors=$(grep -c "failed\|error" "$LOG_DIR/first-boot.log" 2>/dev/null || echo 0)
+        if [ "$log_errors" -gt 0 ]; then
+          warn "Provisioning log has $log_errors errors"
+        else
+          pass "Provisioning log clean"
+        fi
+      fi
+      echo
+
+      # --- Summary ---
+      echo "========================================"
+      echo "Logs:"
+      echo "  Provisioning: $LOG_DIR/first-boot.log"
+      echo "  Cloud-init:   /var/log/cloud-init.log"
+      echo "  Service:      journalctl -u water-treat"
+      echo "========================================"
+
 runcmd:
   - |
-    ####################################################################
-    # Water-Treat RTU First Boot Provisioning
-    # Non-blocking, warning-based, retry-on-reboot
-    ####################################################################
-
-    exec > >(tee -a /var/log/water-treat/first-boot.log) 2>&1
-    echo "===== Provisioning attempt: $(date) ====="
-
-    STATE_DIR=/var/lib/water-treat
-    INSTALL_ROOT=/opt/Water-Treat
-    STAGING=/opt/.water-treat-staging
-    FAIL_COUNT_FILE=$STATE_DIR/fail.count
-    MAX_FAILURES=20
-
-    get_fail_count() {
-      if [ -f "$FAIL_COUNT_FILE" ]; then
-        cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0
-      else
-        echo 0
-      fi
-    }
-
-    increment_fail_count() {
-      count=$(get_fail_count)
-      echo $((count + 1)) > "$FAIL_COUNT_FILE"
-    }
-
-    clear_fail_count() {
-      rm -f "$FAIL_COUNT_FILE"
-    }
-
-    if [ -f "$STATE_DIR/first-boot.ok" ]; then
-      echo "Provisioning already completed - exiting cleanly."
-      exit 0
-    fi
-
-    fail_count=$(get_fail_count)
-    if [ "$fail_count" -ge "$MAX_FAILURES" ]; then
-      echo "Provisioning paused after $fail_count failures"
-      cp "$STATE_DIR/motd-failed" /etc/motd
-      exit 0
-    fi
-
-    BEST_IFACE=""
-    BEST_PRIORITY=0
-
-    for iface in /sys/class/net/*; do
-      [ -d "$iface" ] || continue
-      name=$(basename "$iface")
-      [ "$name" = "lo" ] && continue
-
-      priority=1
-      case "$name" in
-        eth*)  priority=5 ;;
-        enp*)  priority=4 ;;
-        ens*)  priority=3 ;;
-        wlan*) priority=2 ;;
-      esac
-
-      if [ "$priority" -gt "$BEST_PRIORITY" ]; then
-        BEST_PRIORITY=$priority
-        BEST_IFACE=$name
-      fi
+    for script in /var/lib/water-treat/scripts/*.sh; do
+      [ -x "$script" ] && "$script"
     done
-
-    if [ -n "$BEST_IFACE" ]; then
-      MAC_ADDR=$(cat /sys/class/net/$BEST_IFACE/address 2>/dev/null)
-      if [ -n "$MAC_ADDR" ] && [ "$MAC_ADDR" != "00:00:00:00:00:00" ]; then
-        MAC_SUFFIX=$(echo "$MAC_ADDR" | sed 's/://g' | tail -c 5)
-        MAC_SUFFIX=$(echo "$MAC_SUFFIX" | tr '[:upper:]' '[:lower:]')
-      fi
-    fi
-
-    if [ -n "$MAC_SUFFIX" ]; then
-      hostnamectl set-hostname "rtu-${MAC_SUFFIX}" || true
-      echo "Hostname set to rtu-${MAC_SUFFIX}"
-    fi
-
-    cp "$STATE_DIR/motd-waiting" /etc/motd
-
-    echo "Checking for network (max 60s)..."
-    NET_OK=0
-    for i in $(seq 1 30); do
-      if getent hosts github.com >/dev/null 2>&1; then
-        NET_OK=1
-        break
-      fi
-      sleep 2
-    done
-
-    if [ "$NET_OK" -ne 1 ]; then
-      echo "Network not available - deferring install"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
-
-    cp "$STATE_DIR/motd-provisioning" /etc/motd
-
-    echo "Network detected - starting staged install"
-
-    rm -rf "$STAGING"
-    if ! git clone https://github.com/mwilco03/Water-Treat.git "$STAGING"; then
-      echo "Git clone failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
-
-    if [ ! -f "$STAGING/scripts/install.sh" ]; then
-      echo "Validation failed - will retry on next boot"
-      rm -rf "$STAGING"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
-
-    rm -rf "$INSTALL_ROOT"
-    mv "$STAGING" "$INSTALL_ROOT"
-    chown -R admin:admin "$INSTALL_ROOT"
-
-    echo "Installing dependencies..."
-    if ! "$INSTALL_ROOT/scripts/install-deps.sh"; then
-      echo "Dependency install failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
-
-    echo "Building application..."
-    if ! sudo -u admin "$INSTALL_ROOT/scripts/build.sh"; then
-      echo "Build failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
-
-    echo "Installing application..."
-    if ! "$INSTALL_ROOT/scripts/install.sh"; then
-      echo "Install failed - will retry on next boot"
-      increment_fail_count
-      touch "$STATE_DIR/first-boot.failed"
-      exit 0
-    fi
-
-    systemctl daemon-reload
-    systemctl enable water-treat || true
-    systemctl start water-treat || true
-
-    rm -f "$STATE_DIR/first-boot.failed"
-    clear_fail_count
-    touch "$STATE_DIR/first-boot.ok"
-
-    HOSTNAME=$(hostname)
-    printf "Water-Treat RTU: %s\nProvisioned: %s\n\nService: systemctl status water-treat\nLogs: journalctl -u water-treat -f\nSource: %s\n" \
-      "$HOSTNAME" "$(date '+%Y-%m-%d %H:%M')" "$INSTALL_ROOT" > /etc/motd
-
-    echo "===== Provisioning completed successfully ====="
