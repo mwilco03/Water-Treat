@@ -233,6 +233,12 @@ write_files:
         exit 0
       fi
 
+      # Add admin user to water-treat group for CLI access without sudo
+      if id admin &>/dev/null && getent group water-treat &>/dev/null; then
+        usermod -aG water-treat admin
+        echo "Added admin to water-treat group"
+      fi
+
       systemctl daemon-reload
       systemctl enable water-treat || true
       systemctl start water-treat || true
