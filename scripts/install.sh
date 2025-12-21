@@ -208,8 +208,8 @@ create_directories() {
     }
     detail "${ETC_DIR}"
 
-    # Data directory (service-owned)
-    install -d -m 750 "${VAR_DIR}" || {
+    # Data directory (service-owned, group-writable for admin access)
+    install -d -m 770 "${VAR_DIR}" || {
         breaking "Failed to create ${VAR_DIR}"
         return 1
     }
@@ -218,8 +218,8 @@ create_directories() {
         chown root:root "${VAR_DIR}"
     detail "${VAR_DIR}"
 
-    # Log directory (service-owned)
-    install -d -m 750 "${LOG_DIR}" || {
+    # Log directory (service-owned, group-writable for admin access)
+    install -d -m 770 "${LOG_DIR}" || {
         breaking "Failed to create ${LOG_DIR}"
         return 1
     }
