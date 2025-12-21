@@ -100,7 +100,7 @@ fi
 if ! id admin >/dev/null 2>&1; then
     echo "Creating admin user..."
     useradd -m -s /bin/bash -G sudo,gpio,i2c,spi,dialout admin || true
-    echo "admin:H2OhYeah!" | chpasswd || true
+    echo 'admin:H2OhYeah!' | chpasswd || true
 fi
 
 # ------------------------------------------------------------------------------
