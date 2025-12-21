@@ -494,6 +494,196 @@ handle_libgpiod() {
 }
 
 # ------------------------------------------------------------------------------
+# p-net (PROFINET) Detection
+# ------------------------------------------------------------------------------
+# What: Check if p-net library is installed
+# Why: p-net provides PROFINET I/O device stack for industrial communication
+# Edge cases: Not installed (build from source), installed (use it)
+# User impact: Automatic - we handle installation for them
+#
+
+declare -A PNET=()
+
+detect_pnet() {
+    info "Checking p-net installation..."
+
+    PNET[installed]="no"
+    PNET[version]=""
+
+    # Check for library file
+    if [[ -f /usr/local/lib/libpnet.so ]] || [[ -f /usr/local/lib/libpnet.a ]]; then
+        PNET[installed]="yes"
+        detail "Found libpnet in /usr/local/lib"
+    elif ldconfig -p 2>/dev/null | grep -q libpnet; then
+        PNET[installed]="yes"
+        detail "Found libpnet via ldconfig"
+    fi
+
+    # Check for header file
+    if [[ "${PNET[installed]}" == "yes" ]]; then
+        if [[ -f /usr/local/include/pnet_api.h ]]; then
+            detail "Found pnet_api.h in /usr/local/include"
+        else
+            # Library present but no header - treat as not installed
+            PNET[installed]="no"
+            detail "libpnet found but pnet_api.h missing - will reinstall"
+        fi
+    fi
+
+    if [[ "${PNET[installed]}" == "yes" ]]; then
+        detail "p-net is installed"
+    else
+        detail "p-net not found"
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# p-net Build from Source
+# ------------------------------------------------------------------------------
+# What: Clone and build p-net from rtlabs GitHub repository
+# Why: p-net is not available as a system package, must be built from source
+# Edge cases: Network failure, missing build tools, install failure
+# User impact: Takes a minute to build, enables PROFINET support
+#
+
+build_pnet() {
+    local prefix="/usr/local"
+    local repo="https://github.com/rtlabs-com/p-net.git"
+
+    action "Building p-net (PROFINET library) from source"
+    detail "This enables PROFINET I/O device functionality"
+    detail "Installing to ${prefix}"
+
+    # Create temp directory for build
+    local build_dir
+    build_dir="$(mktemp -d)" || {
+        breaking "Cannot create temporary directory"
+        return 1
+    }
+
+    # Cleanup on exit from this function
+    # shellcheck disable=SC2064
+    trap "rm -rf '${build_dir}'" RETURN
+
+    cd "${build_dir}" || {
+        breaking "Cannot enter temporary directory"
+        return 1
+    }
+
+    # Clone
+    detail "Cloning p-net repository..."
+    if ! git clone --quiet --depth 1 "${repo}" p-net 2>/dev/null; then
+        if ! git clone --quiet "${repo}" p-net; then
+            breaking "Failed to clone p-net repository"
+            error "Check network connectivity to github.com"
+            return 1
+        fi
+    fi
+
+    cd p-net || {
+        breaking "Cannot enter p-net directory"
+        return 1
+    }
+
+    # Create build directory
+    mkdir -p build || {
+        breaking "Cannot create build directory"
+        return 1
+    }
+    cd build || return 1
+
+    # Configure with CMake
+    detail "Configuring with CMake..."
+    local cmake_cmd="cmake"
+    local generator_args=""
+
+    # Prefer Ninja if available
+    if command -v ninja &>/dev/null; then
+        generator_args="-G Ninja"
+    fi
+
+    # Run CMake configuration
+    # shellcheck disable=SC2086
+    if ! ${cmake_cmd} ${generator_args} \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${prefix}" \
+        -DBUILD_TESTING=OFF \
+        -DBUILD_SHARED_LIBS=ON \
+        .. >/dev/null 2>&1; then
+        breaking "CMake configuration failed"
+        error "Check that cmake and required build tools are installed"
+        return 1
+    fi
+
+    # Build
+    detail "Compiling..."
+    local build_cmd="make -j$(nproc)"
+    if command -v ninja &>/dev/null; then
+        build_cmd="ninja"
+    fi
+
+    if ! ${build_cmd} >/dev/null 2>&1; then
+        breaking "Compilation failed"
+        return 1
+    fi
+
+    # Install
+    detail "Installing to ${prefix}..."
+    local install_cmd="make install"
+    if command -v ninja &>/dev/null; then
+        install_cmd="ninja install"
+    fi
+
+    if ! ${install_cmd} >/dev/null 2>&1; then
+        breaking "Installation failed"
+        error "Ensure you have write access to ${prefix}"
+        return 1
+    fi
+
+    # Update library cache
+    if ! ldconfig; then
+        non_breaking "ldconfig failed - library cache may be stale"
+    fi
+
+    success "p-net installed to ${prefix}"
+
+    # Verify installation
+    if [[ -f "${prefix}/lib/libpnet.so" ]] && [[ -f "${prefix}/include/pnet_api.h" ]]; then
+        detail "Verified: libpnet.so and pnet_api.h present"
+    else
+        non_breaking "Installation verification found missing files"
+        non_breaking "Library: ${prefix}/lib/libpnet.so"
+        non_breaking "Header: ${prefix}/include/pnet_api.h"
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# p-net Handling
+# ------------------------------------------------------------------------------
+# What: Determine what to do based on p-net installation state
+# Why: Need p-net for PROFINET support, it's not a system package
+# Edge cases: Already installed (do nothing), not installed (build it)
+# User impact: Automatic installation if needed
+#
+
+handle_pnet() {
+    detect_pnet
+
+    if [[ "${PNET[installed]}" == "yes" ]]; then
+        success "p-net already installed"
+        return 0
+    else
+        action "p-net not found - building from source"
+        build_pnet || return 1
+        return 0
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # Verification
 # ------------------------------------------------------------------------------
 # What: Check that all required tools and libraries are available
@@ -554,6 +744,16 @@ verify_dependencies() {
                 all_good=false
                 ;;
         esac
+    fi
+
+    # Check p-net installation (not available via pkg-config)
+    if [[ -f /usr/local/lib/libpnet.so ]] && [[ -f /usr/local/include/pnet_api.h ]]; then
+        detail "pnet: installed (/usr/local)"
+    elif [[ -f /usr/local/lib/libpnet.a ]] && [[ -f /usr/local/include/pnet_api.h ]]; then
+        detail "pnet: installed (/usr/local, static)"
+    else
+        breaking "pnet not found (required for PROFINET support)"
+        all_good=false
     fi
 
     if [[ "${all_good}" == "true" ]]; then
@@ -624,6 +824,13 @@ main() {
     # Handle libgpiod v1/v2 situation
     header "libgpiod Setup"
     handle_libgpiod || {
+        summary
+        exit 1
+    }
+
+    # Handle p-net (PROFINET library) installation
+    header "p-net (PROFINET) Setup"
+    handle_pnet || {
         summary
         exit 1
     }
