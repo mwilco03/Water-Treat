@@ -16,7 +16,8 @@ int profinet_read_callback(pnet_t *net, void *arg, uint32_t arep, uint32_t api, 
 int profinet_write_callback(pnet_t *net, void *arg, uint32_t arep, uint32_t api, uint16_t slot, uint16_t subslot,
                             uint16_t idx, uint16_t seq, uint16_t len, const uint8_t *data, pnet_result_t *result);
 int profinet_exp_module_callback(pnet_t *net, void *arg, uint32_t api, uint16_t slot, uint32_t ident);
-int profinet_exp_submodule_callback(pnet_t *net, void *arg, uint32_t api, uint16_t slot, uint16_t subslot, uint32_t ident);
+int profinet_exp_submodule_callback(pnet_t *net, void *arg, uint32_t api, uint16_t slot, uint16_t subslot,
+                                    uint32_t module_ident, uint32_t submodule_ident, const pnet_data_cfg_t *exp_data_cfg);
 int profinet_new_data_status_callback(pnet_t *net, void *arg, uint32_t arep, uint32_t crep, uint8_t changes, uint8_t data_status);
 int profinet_alarm_ind_callback(pnet_t *net, void *arg, uint32_t arep, const pnet_alarm_argument_t *p_alarm, uint16_t data_len, uint16_t usi, const uint8_t *data);
 int profinet_alarm_cnf_callback(pnet_t *net, void *arg, uint32_t arep, const pnet_pnio_status_t *status);
