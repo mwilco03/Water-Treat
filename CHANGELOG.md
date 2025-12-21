@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known Issues
 
-- **Health File Write Error**: `[ERROR] Failed to open health file: /var/lib/water-treat/health.prom.tmp` appears when `/var/lib/water-treat/` directory doesn't exist. **Fix**: Run post-installation directory creation commands from INSTALL.md.
+- **Health File Write Error**: `[ERROR] Failed to open health file: /var/lib/water-treat/health.prom.tmp` appears when `/var/lib/water-treat/` directory doesn't exist. **Fix**: Run `sudo ./scripts/install.sh` which creates required directories.
 
 - **TUI Screen Glitching**: The TUI causes screen rendering issues (flickering/glitching) on Trixie. Investigation findings:
   - **Root cause**: Aggressive 100ms full-redraw loop in `tui_main.c:286-289` combined with multiple `wrefresh()` calls per frame

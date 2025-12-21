@@ -494,43 +494,37 @@ ls /sys/bus/w1/devices/
 
 ## Post-Installation
 
-### Create System User
+### Run the Install Script
+
+The install script handles user creation, directory setup, and systemd service installation automatically:
 
 ```bash
-sudo useradd -r -s /bin/false water-treat
-sudo usermod -aG gpio,i2c,spi water-treat
+sudo ./scripts/install.sh
 ```
 
-### Create Directories
+This creates:
+- Service user `water-treat` with GPIO/I2C/SPI group membership
+- Directories: `/etc/water-treat/`, `/var/lib/water-treat/`, `/var/log/water-treat/`
+- Systemd service file and daemon reload
+
+### Start the Service
 
 ```bash
-sudo mkdir -p /etc/water-treat
-sudo mkdir -p /var/lib/water-treat
-sudo mkdir -p /var/log/water-treat
-sudo mkdir -p /var/backup/water-treat
-sudo chown -R water-treat:water-treat /var/lib/water-treat
-```
-
-### Install Systemd Service
-
-```bash
-sudo cp systemd/profinet-monitor.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable profinet-monitor
-sudo systemctl start profinet-monitor
+sudo systemctl enable water-treat   # Start on boot
+sudo systemctl start water-treat    # Start now
 ```
 
 ### Verify Installation
 
 ```bash
 # Check service status
-sudo systemctl status profinet-monitor
+sudo systemctl status water-treat
 
 # View logs
-journalctl -u profinet-monitor -f
+journalctl -u water-treat -f
 
-# Test TUI (requires root for GPIO)
-sudo profinet-monitor
+# Test TUI directly (requires root for GPIO)
+sudo water-treat
 ```
 
 ### GPIO Permissions (non-root access)
