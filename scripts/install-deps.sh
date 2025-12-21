@@ -535,6 +535,8 @@ detect_pnet() {
     else
         detail "p-net not found"
     fi
+
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -600,7 +602,6 @@ build_pnet() {
     # Prefer Ninja if available
     if command -v ninja &>/dev/null; then
         generator_args="-G Ninja"
-        cmake_cmd="cmake"
     fi
 
     # Run CMake configuration
