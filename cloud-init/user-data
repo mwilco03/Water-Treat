@@ -11,7 +11,7 @@
 #   - Retry on reboot if network unavailable
 #
 
-hostname: water-treat
+hostname: rtu
 locale: en_US.UTF-8
 keyboard:
   layout: us
@@ -144,8 +144,8 @@ EOF
     fi
 
     if [ -n "$MAC_SUFFIX" ]; then
-      hostnamectl set-hostname "water-treat-${MAC_SUFFIX}" || true
-      echo "Hostname set to water-treat-${MAC_SUFFIX}"
+      hostnamectl set-hostname "rtu-${MAC_SUFFIX}" || true
+      echo "Hostname set to rtu-${MAC_SUFFIX}"
     fi
 
     # ----- Friendly MOTD warning (default state) -----

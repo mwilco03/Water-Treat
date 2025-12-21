@@ -1,2 +1,2 @@
-instance-id: water-treat-rtu
-local-hostname: water-treat
+instance-id: rtu
+local-hostname: rtu
