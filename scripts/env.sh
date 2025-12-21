@@ -299,7 +299,10 @@ cmake_cache_get() {
     fi
 
     # CMakeCache.txt format: KEY:TYPE=VALUE
-    grep "^${key}:" "${cache_file}" 2>/dev/null | cut -d= -f2-
+    # Use a variable to capture grep result and preserve exit status
+    local line
+    line="$(grep "^${key}:" "${cache_file}" 2>/dev/null)" || return 1
+    echo "${line}" | cut -d= -f2-
 }
 
 export -f cmake_cache_get

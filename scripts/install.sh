@@ -154,8 +154,13 @@ create_service_user() {
 
         # Add to any missing groups
         for group in "${groups_to_add[@]}"; do
-            if ! groups "${user}" 2>/dev/null | grep -qw "${group}"; then
-                usermod -aG "${group}" "${user}" 2>/dev/null || true
+            # Check if user is already in this group
+            local user_groups
+            user_groups="$(groups "${user}" 2>/dev/null)" || user_groups=""
+            if [[ -z "${user_groups}" ]] || ! echo "${user_groups}" | grep -qw "${group}"; then
+                if ! usermod -aG "${group}" "${user}" 2>/dev/null; then
+                    non_breaking "Could not add ${user} to group ${group}"
+                fi
             fi
         done
     else
@@ -169,7 +174,9 @@ create_service_user() {
 
         # Add to hardware groups
         for group in "${groups_to_add[@]}"; do
-            usermod -aG "${group}" "${user}" 2>/dev/null || true
+            if ! usermod -aG "${group}" "${user}" 2>/dev/null; then
+                non_breaking "Could not add ${user} to group ${group}"
+            fi
         done
 
         if [[ ${#groups_to_add[@]} -gt 0 ]]; then

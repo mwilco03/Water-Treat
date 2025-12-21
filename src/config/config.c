@@ -26,7 +26,7 @@ static void detect_station_id(char *station_name, size_t size) {
     dir = opendir("/sys/class/net");
     if (!dir) return;
 
-    /* Find first physical network interface (prefer eth*/enp* over wlan/lo) */
+    /* Find first physical network interface (prefer eth or enp over wlan/lo) */
     char *best_iface = NULL;
     int best_priority = 0;
 
