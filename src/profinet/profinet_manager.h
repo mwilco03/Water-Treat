@@ -5,6 +5,10 @@
 #include "db/database.h"
 #include "config/config.h"
 
+#ifdef HAVE_PNET
+#include <pnet_api.h>
+#endif
+
 typedef enum {
     PROFINET_STATE_IDLE = 0,
     PROFINET_STATE_READY,
@@ -21,11 +25,10 @@ typedef struct {
     int plugged_modules;
 } profinet_stats_t;
 
-// PROFINET IOXS values (fallback if not defined by p-net)
-#ifndef PNET_IOXS_BAD
+// PROFINET IOXS values (only define when p-net is not available)
+// When HAVE_PNET is defined, these come from pnet_api.h as enum values
+#ifndef HAVE_PNET
 #define PNET_IOXS_BAD  0x00
-#endif
-#ifndef PNET_IOXS_GOOD
 #define PNET_IOXS_GOOD 0x80
 #endif
 

@@ -12,10 +12,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#ifdef HAVE_PNET
-#include <pnet_api.h>
-#endif
-
 #define PROFINET_TICK_INTERVAL_US   1000
 #define MAX_PROFINET_SLOTS          64
 #define PROFINET_DATA_SIZE          256
