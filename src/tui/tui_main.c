@@ -138,9 +138,10 @@ static void draw_footer(void) {
         x += strlen(pages[i].title) + 5;
     }
 
-    /* Show ESC:Back if we have navigation history, otherwise ESC:Exit */
+    /* Show navigation hints on the right side */
+    mvwprintw(g_tui.footer, 0, max_x - 35, "<->:Cycle");  /* Arrow key cycling */
     if (g_tui.history_top > 0) {
-        mvwprintw(g_tui.footer, 0, max_x - 20, "ESC:Back");
+        mvwprintw(g_tui.footer, 0, max_x - 24, "ESC:Back");
     }
     mvwprintw(g_tui.footer, 0, max_x - 10, "F10:Quit");
 
@@ -221,6 +222,42 @@ static bool navigate_back(void) {
         return true;  /* Successfully navigated back */
     }
     return false;  /* At root, no previous screen */
+}
+
+/**
+ * Switch to a page WITHOUT modifying navigation history.
+ * Used for Left/Right arrow cycling where user is "browsing"
+ * rather than intentionally navigating to a destination.
+ *
+ * @param page Target page to display
+ */
+static void cycle_page(tui_page_t page) {
+    if (page == g_tui.current_page) {
+        return;  /* Already there */
+    }
+
+    if (page < 0 || page >= PAGE_COUNT) {
+        LOG_WARNING("cycle_page: invalid page %d", page);
+        return;
+    }
+
+    /* Clean up current page */
+    if (pages[g_tui.current_page].cleanup) {
+        pages[g_tui.current_page].cleanup();
+    }
+
+    /* Switch without history modification */
+    g_tui.current_page = page;
+
+    /* Initialize new page */
+    if (pages[g_tui.current_page].init) {
+        pages[g_tui.current_page].init(g_tui.main_win);
+    }
+
+    /* Force redraw */
+    g_tui.needs_redraw = true;
+
+    LOG_DEBUG("Cycled to page %d (%s)", page, pages[page].title);
 }
 
 static void handle_resize(void) {
@@ -369,6 +406,37 @@ void tui_run(void) {
             case 'Q':
                 g_tui.running = false;
                 break;
+
+            /* Screen cycling with arrow keys and Tab (no history push) */
+            case KEY_LEFT:
+                /* Cycle to previous screen in tab order */
+                {
+                    tui_page_t prev = (g_tui.current_page == 0)
+                        ? PAGE_COUNT - 1
+                        : g_tui.current_page - 1;
+                    cycle_page(prev);
+                }
+                break;
+
+            case KEY_RIGHT:
+            case '\t':  /* Tab key - same as RIGHT */
+                /* Cycle to next screen in tab order */
+                {
+                    tui_page_t next = (g_tui.current_page + 1) % PAGE_COUNT;
+                    cycle_page(next);
+                }
+                break;
+
+            case KEY_BTAB:  /* Shift+Tab - same as LEFT */
+                /* Cycle to previous screen */
+                {
+                    tui_page_t prev = (g_tui.current_page == 0)
+                        ? PAGE_COUNT - 1
+                        : g_tui.current_page - 1;
+                    cycle_page(prev);
+                }
+                break;
+
             case KEY_RESIZE:
                 handle_resize();
                 break;
