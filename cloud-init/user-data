@@ -13,7 +13,7 @@ timezone: America/New_York
 
 users:
   - name: admin
-    plain_text_passwd: H2OhYeah!
+    plain_text_password: H2OhYeah!
     groups: [sudo, gpio, i2c, spi, dialout]
     shell: /bin/bash
     lock_passwd: false
@@ -24,10 +24,10 @@ enable_ssh: true
 
 # Raspberry Pi-specific (cc_raspberry_pi module)
 rpi:
-  spi: true
-  i2c: true
-  serial: true
-  onewire: true
+    spi: true
+    i2c: true
+    serial: true
+    onewire: true
 
 # Filesystem expansion
 growpart:
