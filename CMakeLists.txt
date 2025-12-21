@@ -106,6 +106,7 @@ set(SOURCES_TUI
     src/tui/dialogs/dialog_sensor.c
     src/tui/dialogs/dialog_alarm.c
     src/tui/dialogs/dialog_actuator.c
+    src/tui/dialogs/dialog_io_wizard.c
     src/tui/pages/page_system.c
     src/tui/pages/page_sensors.c
     src/tui/pages/page_network.c

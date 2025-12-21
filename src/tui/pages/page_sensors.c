@@ -6,6 +6,7 @@
 #include "page_sensors.h"
 #include "../tui_common.h"
 #include "../dialogs/dialog_sensor.h"
+#include "../dialogs/dialog_io_wizard.h"
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "utils/logger.h"
@@ -199,16 +200,29 @@ static void show_view_dialog(void) {
 }
 
 static void handle_add_sensor(void) {
-    int sensor_id = dialog_sensor_add();
-    if (sensor_id > 0) {
+    /*
+     * Use the new progressive disclosure I/O wizard.
+     *
+     * Design Philosophy Applied:
+     * - Dynamic Discovery: Wizard scans I2C/1-Wire before asking questions
+     * - Reasonable Assumptions: System infers technical details from user choices
+     * - Graceful Degradation: Conflicts shown, not blocked
+     * - Single Source of Truth: User points at device, system derives config
+     * - Informational Output: Shows what was discovered
+     *
+     * The old dialog_sensor_add() is still available for power users
+     * who need to configure advanced settings.
+     */
+    io_wizard_result_t result;
+    if (dialog_io_wizard_add_sensor(&result)) {
         /* Sensor was created - reload and notify */
         load_sensors();
         tui_notify_sensor_changed(-1);  /* -1 = all sensors changed */
-        tui_set_status("Added sensor (ID %d)", sensor_id);
+        tui_set_status("Added sensor '%s' at slot %d", result.name, result.assigned_slot);
 
         /* Select the newly added sensor */
         for (int i = 0; i < g_page.sensor_count; i++) {
-            if (g_page.sensors[i].id == sensor_id) {
+            if (g_page.sensors[i].id == result.created_id) {
                 g_page.selected = i;
                 break;
             }
