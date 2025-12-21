@@ -227,10 +227,15 @@ install_packages() {
 
     # Resolve all package names for this distro
     local -a resolved_packages=()
+    local -A seen_packages=()
     for pkg in "${required_packages[@]}"; do
         # resolve_package may return multiple packages (e.g., build-essential on dnf)
         for resolved in $(resolve_package "$pkg"); do
-            resolved_packages+=("$resolved")
+            # Deduplicate (e.g., 'make' appears in build-essential expansion AND standalone)
+            if [[ -z "${seen_packages[$resolved]:-}" ]]; then
+                seen_packages[$resolved]=1
+                resolved_packages+=("$resolved")
+            fi
         done
     done
 
@@ -510,13 +515,16 @@ detect_pnet() {
     PNET[installed]="no"
     PNET[version]=""
 
-    # Check for library file
-    if [[ -f /usr/local/lib/libpnet.so ]] || [[ -f /usr/local/lib/libpnet.a ]]; then
+    # Check for library file (p-net installs as libprofinet.so, we symlink to libpnet.so)
+    if [[ -f /usr/local/lib/libprofinet.so ]]; then
+        PNET[installed]="yes"
+        detail "Found libprofinet.so in /usr/local/lib"
+    elif [[ -f /usr/local/lib/libpnet.so ]] || [[ -f /usr/local/lib/libpnet.a ]]; then
         PNET[installed]="yes"
         detail "Found libpnet in /usr/local/lib"
-    elif ldconfig -p 2>/dev/null | grep -q libpnet; then
+    elif ldconfig -p 2>/dev/null | grep -qE 'lib(pnet|profinet)'; then
         PNET[installed]="yes"
-        detail "Found libpnet via ldconfig"
+        detail "Found p-net via ldconfig"
     fi
 
     # Check for header file
@@ -551,9 +559,12 @@ detect_pnet() {
 build_pnet() {
     local prefix="/usr/local"
     local repo="https://github.com/rtlabs-com/p-net.git"
+    # Pin to v0.2.0 - the last version with CMakeLists.txt in the root
+    # Later versions removed CMake support from the public repository
+    local pnet_version="v0.2.0"
 
     action "Building p-net (PROFINET library) from source"
-    detail "This enables PROFINET I/O device functionality"
+    detail "Using version ${pnet_version} (last version with CMake support)"
     detail "Installing to ${prefix}"
 
     # Create temp directory for build
@@ -572,20 +583,41 @@ build_pnet() {
         return 1
     }
 
-    # Clone
-    detail "Cloning p-net repository..."
-    if ! git clone --quiet --depth 1 "${repo}" p-net 2>/dev/null; then
-        if ! git clone --quiet "${repo}" p-net; then
-            breaking "Failed to clone p-net repository"
-            error "Check network connectivity to github.com"
-            return 1
+    # Clone at specific version tag with submodules
+    detail "Cloning p-net repository (${pnet_version})..."
+    if ! git clone --quiet --depth 1 --branch "${pnet_version}" --recurse-submodules "${repo}" p-net 2>/dev/null; then
+        # Fallback: full clone then checkout tag (older git or network issues)
+        detail "Shallow clone failed, trying full clone..."
+        if ! git clone --quiet --recurse-submodules "${repo}" p-net; then
+            # Last resort: clone without submodules, then init separately
+            if ! git clone --quiet "${repo}" p-net; then
+                breaking "Failed to clone p-net repository"
+                error "Check network connectivity to github.com"
+                return 1
+            fi
+            cd p-net || return 1
+            if ! git checkout --quiet "${pnet_version}"; then
+                breaking "Failed to checkout ${pnet_version}"
+                return 1
+            fi
+            detail "Initializing submodules..."
+            if ! git submodule update --init --recursive >/dev/null 2>&1; then
+                breaking "Failed to initialize git submodules"
+                return 1
+            fi
+        else
+            cd p-net || return 1
+            if ! git checkout --quiet "${pnet_version}"; then
+                breaking "Failed to checkout ${pnet_version}"
+                return 1
+            fi
         fi
+    else
+        cd p-net || {
+            breaking "Cannot enter p-net directory"
+            return 1
+        }
     fi
-
-    cd p-net || {
-        breaking "Cannot enter p-net directory"
-        return 1
-    }
 
     # Create build directory
     mkdir -p build || {
@@ -596,50 +628,68 @@ build_pnet() {
 
     # Configure with CMake
     detail "Configuring with CMake..."
+    local use_ninja=false
+    if command -v ninja &>/dev/null; then
+        use_ninja=true
+    fi
+
     local cmake_cmd="cmake"
     local generator_args=""
-
-    # Prefer Ninja if available
-    if command -v ninja &>/dev/null; then
+    if [[ "${use_ninja}" == "true" ]]; then
         generator_args="-G Ninja"
     fi
 
-    # Run CMake configuration
+    # Run CMake configuration - capture output to show on error
+    local cmake_output
     # shellcheck disable=SC2086
-    if ! ${cmake_cmd} ${generator_args} \
+    if ! cmake_output=$(${cmake_cmd} ${generator_args} \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${prefix}" \
         -DBUILD_TESTING=OFF \
         -DBUILD_SHARED_LIBS=ON \
-        .. >/dev/null 2>&1; then
+        .. 2>&1); then
         breaking "CMake configuration failed"
-        error "Check that cmake and required build tools are installed"
+        error "CMake output:"
+        echo "${cmake_output}" | tail -30
         return 1
     fi
 
     # Build
     detail "Compiling..."
     local build_cmd="make -j$(nproc)"
-    if command -v ninja &>/dev/null; then
+    if [[ "${use_ninja}" == "true" ]]; then
         build_cmd="ninja"
     fi
 
-    if ! ${build_cmd} >/dev/null 2>&1; then
+    local build_output
+    if ! build_output=$(${build_cmd} 2>&1); then
         breaking "Compilation failed"
+        error "Build output:"
+        echo "${build_output}" | tail -30
         return 1
     fi
 
     # Install
     detail "Installing to ${prefix}..."
     local install_cmd="make install"
-    if command -v ninja &>/dev/null; then
+    if [[ "${use_ninja}" == "true" ]]; then
         install_cmd="ninja install"
     fi
 
-    if ! ${install_cmd} >/dev/null 2>&1; then
+    local install_output
+    if ! install_output=$(${install_cmd} 2>&1); then
         breaking "Installation failed"
         error "Ensure you have write access to ${prefix}"
+        error "Install output:"
+        echo "${install_output}" | tail -20
         return 1
+    fi
+
+    # Create compatibility symlink: p-net installs as libprofinet.so but
+    # our CMakeLists.txt looks for libpnet.so (common naming convention)
+    if [[ -f "${prefix}/lib/libprofinet.so" ]] && [[ ! -e "${prefix}/lib/libpnet.so" ]]; then
+        detail "Creating libpnet.so symlink for compatibility"
+        ln -sf libprofinet.so "${prefix}/lib/libpnet.so"
     fi
 
     # Update library cache
@@ -649,12 +699,15 @@ build_pnet() {
 
     success "p-net installed to ${prefix}"
 
-    # Verify installation
-    if [[ -f "${prefix}/lib/libpnet.so" ]] && [[ -f "${prefix}/include/pnet_api.h" ]]; then
-        detail "Verified: libpnet.so and pnet_api.h present"
+    # Verify installation (check for actual libprofinet.so and symlink)
+    if [[ -f "${prefix}/lib/libprofinet.so" ]] && [[ -f "${prefix}/include/pnet_api.h" ]]; then
+        detail "Verified: libprofinet.so and pnet_api.h present"
+        if [[ -L "${prefix}/lib/libpnet.so" ]]; then
+            detail "Verified: libpnet.so symlink present"
+        fi
     else
         non_breaking "Installation verification found missing files"
-        non_breaking "Library: ${prefix}/lib/libpnet.so"
+        non_breaking "Library: ${prefix}/lib/libprofinet.so"
         non_breaking "Header: ${prefix}/include/pnet_api.h"
     fi
 
@@ -747,7 +800,10 @@ verify_dependencies() {
     fi
 
     # Check p-net installation (not available via pkg-config)
-    if [[ -f /usr/local/lib/libpnet.so ]] && [[ -f /usr/local/include/pnet_api.h ]]; then
+    # p-net installs as libprofinet.so, we create libpnet.so symlink for compatibility
+    if [[ -f /usr/local/lib/libprofinet.so ]] && [[ -f /usr/local/include/pnet_api.h ]]; then
+        detail "pnet: installed (/usr/local, libprofinet.so)"
+    elif [[ -f /usr/local/lib/libpnet.so ]] && [[ -f /usr/local/include/pnet_api.h ]]; then
         detail "pnet: installed (/usr/local)"
     elif [[ -f /usr/local/lib/libpnet.a ]] && [[ -f /usr/local/include/pnet_api.h ]]; then
         detail "pnet: installed (/usr/local, static)"
