@@ -28,13 +28,6 @@ growpart:
 
 resize_rootfs: true
 
-# Raspberry Pi-specific (Pi OS Trixie only)
-rpi:
-  i2c: true
-  spi: true
-  serial: true
-  onewire: true
-
 packages:
   - git
   - openssh-server
