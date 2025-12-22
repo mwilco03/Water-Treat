@@ -43,6 +43,23 @@ void profinet_manager_shutdown(void);
 
 result_t profinet_manager_update_input(int slot, int subslot, const void *data, size_t size);
 result_t profinet_manager_update_input_float(int slot, int subslot, float value);
+
+/**
+ * @brief Update PROFINET input with value and quality (5-byte format)
+ *
+ * Per DEVELOPMENT_GUIDELINES.md Part 1.2, sensor data is transmitted as:
+ *   Bytes 0-3: Float32 value (big-endian)
+ *   Byte 4:    Quality indicator (OPC UA compatible)
+ *
+ * @param slot     PROFINET slot number
+ * @param subslot  PROFINET subslot number
+ * @param value    Sensor value in engineering units
+ * @param quality  Data quality indicator
+ * @return RESULT_OK on success
+ */
+result_t profinet_manager_update_input_with_quality(int slot, int subslot,
+                                                     float value, data_quality_t quality);
+
 result_t profinet_manager_get_output(int slot, int subslot, void *data, size_t *size);
 
 result_t profinet_manager_write_input_data(void *mgr, int slot, int subslot, const uint8_t *data, size_t len);

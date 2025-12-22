@@ -43,6 +43,90 @@ typedef enum {
     SENSOR_TYPE_WEB_POLL, SENSOR_TYPE_CALCULATED, SENSOR_TYPE_STATIC
 } sensor_type_t;
 
+/**
+ * Data Quality Indicators (OPC UA compatible)
+ *
+ * Every sensor reading carries quality metadata. Stale data is never
+ * presented as current. These values are transmitted in PROFINET input
+ * data as the quality byte following each sensor value.
+ *
+ * Per DEVELOPMENT_GUIDELINES.md Part 2.4
+ */
+typedef enum {
+    QUALITY_GOOD          = 0x00,  /* Fresh, valid reading */
+    QUALITY_UNCERTAIN     = 0x40,  /* May be stale or sensor degraded */
+    QUALITY_BAD           = 0x80,  /* Sensor failure, invalid reading */
+    QUALITY_NOT_CONNECTED = 0xC0,  /* No communication with sensor */
+} data_quality_t;
+
+/**
+ * Sensor Reading Structure
+ *
+ * Every sensor read operation produces this structure containing the
+ * value, quality assessment, timing information, and diagnostic data.
+ *
+ * Per DEVELOPMENT_GUIDELINES.md Part 2.3
+ */
+typedef struct {
+    float value;                    /* Engineering units */
+    data_quality_t quality;         /* GOOD, UNCERTAIN, BAD, NOT_CONNECTED */
+    uint64_t timestamp_us;          /* Microseconds since epoch */
+    uint32_t raw_value;             /* Raw ADC/register value */
+    uint8_t consecutive_failures;   /* For degradation detection */
+} sensor_reading_t;
+
+/**
+ * Determine quality from reading state and configuration
+ *
+ * @param reading       Current sensor reading
+ * @param stale_timeout_ms    Maximum age before UNCERTAIN
+ * @param failure_threshold   Failures before BAD
+ * @param range_min          Minimum valid value
+ * @param range_max          Maximum valid value
+ * @return Computed quality indicator
+ */
+static inline data_quality_t determine_quality(
+    const sensor_reading_t *reading,
+    uint32_t stale_timeout_ms,
+    uint8_t failure_threshold,
+    float range_min,
+    float range_max)
+{
+    if (!reading) return QUALITY_NOT_CONNECTED;
+
+    /* Check consecutive failures */
+    if (reading->consecutive_failures >= failure_threshold) {
+        return QUALITY_BAD;
+    }
+
+    /* Check staleness */
+    uint64_t now_us = get_time_ms() * 1000;
+    uint64_t age_ms = (now_us - reading->timestamp_us) / 1000;
+    if (age_ms > stale_timeout_ms) {
+        return QUALITY_UNCERTAIN;
+    }
+
+    /* Check range */
+    if (reading->value < range_min || reading->value > range_max) {
+        return QUALITY_UNCERTAIN;
+    }
+
+    return QUALITY_GOOD;
+}
+
+/**
+ * Convert quality to display string
+ */
+static inline const char* quality_to_string(data_quality_t quality) {
+    switch (quality) {
+        case QUALITY_GOOD:          return "GOOD";
+        case QUALITY_UNCERTAIN:     return "UNCERTAIN";
+        case QUALITY_BAD:           return "BAD";
+        case QUALITY_NOT_CONNECTED: return "N/C";
+        default:                    return "UNKNOWN";
+    }
+}
+
 /* SAFE_STRNCPY: Safe string copy with guaranteed null termination.
  * Uses memcpy to avoid GCC -Wstringop-truncation false positives when
  * source and destination buffers have the same size. */

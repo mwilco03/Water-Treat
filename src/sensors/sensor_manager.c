@@ -65,25 +65,25 @@ static void* sensor_worker_thread(void *arg) {
                     }
 #endif
 
-                    // Write to PROFINET
+                    /*
+                     * Write to PROFINET with quality (5-byte format)
+                     * Per DEVELOPMENT_GUIDELINES.md Part 1.2:
+                     *   Bytes 0-3: Float32 value (big-endian)
+                     *   Byte 4:    Quality indicator
+                     */
                     if (mgr->profinet_mgr) {
-                        uint8_t data[4];
-
-                        // Convert float to bytes (little-endian)
-                        memcpy(data, &value, sizeof(float));
-
-                        profinet_manager_write_input_data(
-                            mgr->profinet_mgr,
+                        data_quality_t quality = sensor_instance_get_quality(instance);
+                        profinet_manager_update_input_with_quality(
                             instance->slot,
-                            0,  // subslot
-                            data,
-                            sizeof(float)
+                            0,  /* subslot */
+                            value,
+                            quality
                         );
 
-                        // Set IOPS to GOOD
+                        /* Set IOPS based on quality */
+                        uint8_t iops = (quality == QUALITY_GOOD) ? PNET_IOXS_GOOD : PNET_IOXS_BAD;
                         profinet_manager_set_input_iops(mgr->profinet_mgr,
-                                                       instance->slot, 0,
-                                                       PNET_IOXS_GOOD);
+                                                       instance->slot, 0, iops);
                     }
 
                     LOG_DEBUG("Read sensor slot=%d: %.2f", instance->slot, value);
@@ -92,15 +92,25 @@ static void* sensor_worker_thread(void *arg) {
                     mgr->failed_reads++;
 
 #ifdef LED_SUPPORT
-                    // Set LED to fault status for failed sensor read
+                    /* Set LED to fault status for failed sensor read */
                     if (g_led_mgr.initialized && instance->slot >= 1 && instance->slot <= 4) {
                         int led_index = instance->slot - 1;
                         led_set_status(&g_led_mgr, LED_FUNC_SENSOR_1 + led_index, LED_STATUS_FAULT);
                     }
 #endif
 
-                    // Set IOPS to BAD on error
+                    /*
+                     * Send last known value with BAD quality on error
+                     * Per DEVELOPMENT_GUIDELINES.md - stale data is marked, not hidden
+                     */
                     if (mgr->profinet_mgr) {
+                        data_quality_t quality = sensor_instance_get_quality(instance);
+                        profinet_manager_update_input_with_quality(
+                            instance->slot,
+                            0,  /* subslot */
+                            instance->current_value,  /* last known value */
+                            quality  /* will be BAD or NOT_CONNECTED */
+                        );
                         profinet_manager_set_input_iops(mgr->profinet_mgr,
                                                        instance->slot, 0,
                                                        PNET_IOXS_BAD);

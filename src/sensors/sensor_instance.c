@@ -13,6 +13,45 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <float.h>
+#include <sys/time.h>
+
+/* Helper: Get current time in microseconds */
+static uint64_t get_time_us(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+/* Helper: Update quality based on instance state */
+static void update_quality(sensor_instance_t *instance) {
+    if (!instance->connected) {
+        instance->quality = QUALITY_NOT_CONNECTED;
+        return;
+    }
+
+    if (instance->consecutive_failures >= instance->failure_threshold) {
+        instance->quality = QUALITY_BAD;
+        return;
+    }
+
+    /* Check staleness */
+    uint64_t now_us = get_time_us();
+    uint64_t age_ms = (now_us - instance->timestamp_us) / 1000;
+    if (instance->timestamp_us > 0 && age_ms > instance->stale_timeout_ms) {
+        instance->quality = QUALITY_UNCERTAIN;
+        return;
+    }
+
+    /* Check range */
+    if (instance->current_value < instance->range_min ||
+        instance->current_value > instance->range_max) {
+        instance->quality = QUALITY_UNCERTAIN;
+        return;
+    }
+
+    instance->quality = QUALITY_GOOD;
+}
 
 // Helper: Parse SPI bus.device from string
 static void parse_spi_device(const char *device_str, int *bus, int *device) {
@@ -70,6 +109,14 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
     instance->slot = module->slot;
     SAFE_STRNCPY(instance->name, module->name, sizeof(instance->name));
     instance->scale_factor = 1.0f;  // Default scale
+
+    /* Initialize quality tracking with defaults per DEVELOPMENT_GUIDELINES.md */
+    instance->quality = QUALITY_NOT_CONNECTED;
+    instance->timestamp_us = 0;
+    instance->stale_timeout_ms = 5000;   /* 5 seconds default */
+    instance->failure_threshold = 3;     /* 3 failures before BAD */
+    instance->range_min = -FLT_MAX;      /* No range check by default */
+    instance->range_max = FLT_MAX;
 
     pthread_mutex_init(&instance->mutex, NULL);
 
@@ -318,6 +365,7 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
 
         instance->current_value = raw_value;
         instance->last_read_ms = get_time_ms();
+        instance->timestamp_us = get_time_us();  /* Quality tracking timestamp */
         instance->consecutive_successes++;
         instance->consecutive_failures = 0;
         instance->connected = true;
@@ -327,10 +375,13 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
         instance->consecutive_failures++;
         instance->consecutive_successes = 0;
 
-        if (instance->consecutive_failures >= 3) {
+        if (instance->consecutive_failures >= instance->failure_threshold) {
             instance->connected = false;
         }
     }
+
+    /* Update quality indicator per DEVELOPMENT_GUIDELINES.md Part 2.4 */
+    update_quality(instance);
 
     pthread_mutex_unlock(&instance->mutex);
 
@@ -403,4 +454,45 @@ result_t sensor_instance_evaluate_calculated(sensor_instance_t *instance,
     }
 
     return formula_evaluator_evaluate(&instance->formula_eval, input_values, result);
+}
+
+/**
+ * @brief Read sensor with full quality information
+ *
+ * Per DEVELOPMENT_GUIDELINES.md Part 2.3, this produces the complete
+ * sensor_reading_t structure with value, quality, timestamp, and raw value.
+ */
+result_t sensor_instance_read_with_quality(sensor_instance_t *instance, sensor_reading_t *reading) {
+    CHECK_NULL(instance);
+    CHECK_NULL(reading);
+
+    float value;
+    result_t result = sensor_instance_read(instance, &value);
+
+    pthread_mutex_lock(&instance->mutex);
+
+    reading->value = instance->current_value;
+    reading->quality = instance->quality;
+    reading->timestamp_us = instance->timestamp_us;
+    reading->raw_value = (uint32_t)instance->current_raw_value;
+    reading->consecutive_failures = (uint8_t)instance->consecutive_failures;
+
+    pthread_mutex_unlock(&instance->mutex);
+
+    return result;
+}
+
+/**
+ * @brief Get current quality indicator for sensor
+ *
+ * Thread-safe accessor for quality without performing a new read.
+ */
+data_quality_t sensor_instance_get_quality(sensor_instance_t *instance) {
+    if (!instance) return QUALITY_NOT_CONNECTED;
+
+    pthread_mutex_lock(&instance->mutex);
+    data_quality_t q = instance->quality;
+    pthread_mutex_unlock(&instance->mutex);
+
+    return q;
 }
