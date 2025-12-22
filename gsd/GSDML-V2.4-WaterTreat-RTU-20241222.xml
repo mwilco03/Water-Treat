@@ -11,6 +11,11 @@
 
     Vendor ID: 0x0493 (example - should be registered with PI)
     Device ID: 0x0001
+
+    CHANGE LOG:
+    2024-12-22: Updated sensor modules to 5-byte format (Float32 + Quality byte)
+                per DEVELOPMENT_GUIDELINES.md and Water-Controller parity requirements.
+                Quality byte format: 0x00=Good, 0x40=Uncertain, 0x80=Bad, 0xC0=NotConnected
 -->
 <ISO15745Profile xmlns="http://www.profibus.com/GSDML/2003/11/DeviceProfile"
                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -136,7 +141,11 @@
 
             <!-- ================================================================
                  SENSOR INPUT MODULES (RTU publishes to Controller)
-                 Each module provides 4 bytes of float data
+                 Each module provides 5 bytes of data:
+                   Bytes 0-3: Float32 sensor value (big-endian)
+                   Byte 4:    Quality indicator (OPC UA compatible)
+                             0x00 = Good, 0x40 = Uncertain,
+                             0x80 = Bad, 0xC0 = Not Connected
                  ================================================================ -->
 
             <ModuleList>
@@ -158,6 +167,9 @@
                                 <Input>
                                     <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_pH_Value">
                                         <BitDataItem BitOffset="0" TextId="IDT_pH_Value"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Quality">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Quality"/>
                                     </DataItem>
                                 </Input>
                             </IOData>
@@ -184,6 +196,9 @@
                                     <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_TDS_Value">
                                         <BitDataItem BitOffset="0" TextId="IDT_TDS_Value"/>
                                     </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Quality">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Quality"/>
+                                    </DataItem>
                                 </Input>
                             </IOData>
                         </VirtualSubmoduleItem>
@@ -208,6 +223,9 @@
                                 <Input>
                                     <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Turb_Value">
                                         <BitDataItem BitOffset="0" TextId="IDT_Turb_Value"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Quality">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Quality"/>
                                     </DataItem>
                                 </Input>
                             </IOData>
@@ -234,6 +252,9 @@
                                     <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Temp_Value">
                                         <BitDataItem BitOffset="0" TextId="IDT_Temp_Value"/>
                                     </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Quality">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Quality"/>
+                                    </DataItem>
                                 </Input>
                             </IOData>
                         </VirtualSubmoduleItem>
@@ -258,6 +279,9 @@
                                 <Input>
                                     <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Flow_Value">
                                         <BitDataItem BitOffset="0" TextId="IDT_Flow_Value"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Quality">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Quality"/>
                                     </DataItem>
                                 </Input>
                             </IOData>
@@ -284,6 +308,9 @@
                                     <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_Level_Value">
                                         <BitDataItem BitOffset="0" TextId="IDT_Level_Value"/>
                                     </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Quality">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Quality"/>
+                                    </DataItem>
                                 </Input>
                             </IOData>
                         </VirtualSubmoduleItem>
@@ -308,6 +335,9 @@
                                 <Input>
                                     <DataItem DataType="Float32" UseAsBits="false" TextId="IDT_GenAI_Value">
                                         <BitDataItem BitOffset="0" TextId="IDT_GenAI_Value"/>
+                                    </DataItem>
+                                    <DataItem DataType="Unsigned8" UseAsBits="false" TextId="IDT_Quality">
+                                        <BitDataItem BitOffset="0" TextId="IDT_Quality"/>
                                     </DataItem>
                                 </Input>
                             </IOData>
@@ -447,48 +477,51 @@
                     <Text TextId="IDT_Port1" Value="Port 1"/>
                     <Text TextId="IDT_Port_Info" Value="Ethernet port"/>
 
+                    <!-- Data Quality Text (common to all sensors) -->
+                    <Text TextId="IDT_Quality" Value="Data Quality (0x00=Good, 0x40=Uncertain, 0x80=Bad, 0xC0=NotConnected)"/>
+
                     <!-- Sensor Module Texts -->
                     <Text TextId="IDT_MOD_pH" Value="pH Sensor Module"/>
-                    <Text TextId="IDT_MOD_pH_Info" Value="Analog pH sensor (0-14 scale)"/>
+                    <Text TextId="IDT_MOD_pH_Info" Value="Analog pH sensor (0-14 scale) with quality indicator"/>
                     <Text TextId="IDT_VSM_pH" Value="pH Input"/>
-                    <Text TextId="IDT_VSM_pH_Info" Value="pH value as 32-bit float"/>
-                    <Text TextId="IDT_pH_Value" Value="pH Value"/>
+                    <Text TextId="IDT_VSM_pH_Info" Value="pH value as 32-bit float + quality byte"/>
+                    <Text TextId="IDT_pH_Value" Value="pH Value (Float32, big-endian)"/>
 
                     <Text TextId="IDT_MOD_TDS" Value="TDS Sensor Module"/>
-                    <Text TextId="IDT_MOD_TDS_Info" Value="Total Dissolved Solids sensor (ppm)"/>
+                    <Text TextId="IDT_MOD_TDS_Info" Value="Total Dissolved Solids sensor (ppm) with quality indicator"/>
                     <Text TextId="IDT_VSM_TDS" Value="TDS Input"/>
-                    <Text TextId="IDT_VSM_TDS_Info" Value="TDS value as 32-bit float"/>
-                    <Text TextId="IDT_TDS_Value" Value="TDS Value (ppm)"/>
+                    <Text TextId="IDT_VSM_TDS_Info" Value="TDS value as 32-bit float + quality byte"/>
+                    <Text TextId="IDT_TDS_Value" Value="TDS Value (ppm, Float32, big-endian)"/>
 
                     <Text TextId="IDT_MOD_Turb" Value="Turbidity Sensor Module"/>
-                    <Text TextId="IDT_MOD_Turb_Info" Value="Water turbidity sensor (NTU)"/>
+                    <Text TextId="IDT_MOD_Turb_Info" Value="Water turbidity sensor (NTU) with quality indicator"/>
                     <Text TextId="IDT_VSM_Turb" Value="Turbidity Input"/>
-                    <Text TextId="IDT_VSM_Turb_Info" Value="Turbidity value as 32-bit float"/>
-                    <Text TextId="IDT_Turb_Value" Value="Turbidity (NTU)"/>
+                    <Text TextId="IDT_VSM_Turb_Info" Value="Turbidity value as 32-bit float + quality byte"/>
+                    <Text TextId="IDT_Turb_Value" Value="Turbidity (NTU, Float32, big-endian)"/>
 
                     <Text TextId="IDT_MOD_Temp" Value="Temperature Sensor Module"/>
-                    <Text TextId="IDT_MOD_Temp_Info" Value="DS18B20 digital temperature sensor"/>
+                    <Text TextId="IDT_MOD_Temp_Info" Value="DS18B20 digital temperature sensor with quality indicator"/>
                     <Text TextId="IDT_VSM_Temp" Value="Temperature Input"/>
-                    <Text TextId="IDT_VSM_Temp_Info" Value="Temperature value as 32-bit float (Celsius)"/>
-                    <Text TextId="IDT_Temp_Value" Value="Temperature (C)"/>
+                    <Text TextId="IDT_VSM_Temp_Info" Value="Temperature value as 32-bit float + quality byte (Celsius)"/>
+                    <Text TextId="IDT_Temp_Value" Value="Temperature (C, Float32, big-endian)"/>
 
                     <Text TextId="IDT_MOD_Flow" Value="Flow Sensor Module"/>
-                    <Text TextId="IDT_MOD_Flow_Info" Value="Hall effect flow sensor (L/min)"/>
+                    <Text TextId="IDT_MOD_Flow_Info" Value="Hall effect flow sensor (L/min) with quality indicator"/>
                     <Text TextId="IDT_VSM_Flow" Value="Flow Input"/>
-                    <Text TextId="IDT_VSM_Flow_Info" Value="Flow rate as 32-bit float"/>
-                    <Text TextId="IDT_Flow_Value" Value="Flow Rate (L/min)"/>
+                    <Text TextId="IDT_VSM_Flow_Info" Value="Flow rate as 32-bit float + quality byte"/>
+                    <Text TextId="IDT_Flow_Value" Value="Flow Rate (L/min, Float32, big-endian)"/>
 
                     <Text TextId="IDT_MOD_Level" Value="Level Sensor Module"/>
-                    <Text TextId="IDT_MOD_Level_Info" Value="Ultrasonic level sensor (%)"/>
+                    <Text TextId="IDT_MOD_Level_Info" Value="Ultrasonic level sensor (%) with quality indicator"/>
                     <Text TextId="IDT_VSM_Level" Value="Level Input"/>
-                    <Text TextId="IDT_VSM_Level_Info" Value="Tank level as 32-bit float (percentage)"/>
-                    <Text TextId="IDT_Level_Value" Value="Level (%)"/>
+                    <Text TextId="IDT_VSM_Level_Info" Value="Tank level as 32-bit float + quality byte (percentage)"/>
+                    <Text TextId="IDT_Level_Value" Value="Level (%, Float32, big-endian)"/>
 
                     <Text TextId="IDT_MOD_GenAI" Value="Generic Analog Input"/>
-                    <Text TextId="IDT_MOD_GenAI_Info" Value="Generic analog input module"/>
+                    <Text TextId="IDT_MOD_GenAI_Info" Value="Generic analog input module with quality indicator"/>
                     <Text TextId="IDT_VSM_GenAI" Value="Analog Input"/>
-                    <Text TextId="IDT_VSM_GenAI_Info" Value="Generic analog value as 32-bit float"/>
-                    <Text TextId="IDT_GenAI_Value" Value="Analog Value"/>
+                    <Text TextId="IDT_VSM_GenAI_Info" Value="Generic analog value as 32-bit float + quality byte"/>
+                    <Text TextId="IDT_GenAI_Value" Value="Analog Value (Float32, big-endian)"/>
 
                     <!-- Actuator Module Texts -->
                     <Text TextId="IDT_MOD_Pump" Value="Pump Control Module"/>
