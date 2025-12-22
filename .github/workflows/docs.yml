@@ -1,0 +1,335 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'docs/**'
+      - 'Doxyfile'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'docs/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  generate-api-docs:
+    name: Generate API Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz
+
+      - name: Create Doxyfile if not exists
+        run: |
+          if [ ! -f Doxyfile ]; then
+            cat > Doxyfile << 'EOF'
+          PROJECT_NAME           = "Water-Treat RTU"
+          PROJECT_BRIEF          = "PROFINET I/O Device for Water Treatment SCADA"
+          PROJECT_NUMBER         = 1.0
+          OUTPUT_DIRECTORY       = docs/generated/api
+          INPUT                  = src
+          RECURSIVE              = YES
+          GENERATE_HTML          = YES
+          GENERATE_LATEX         = NO
+          EXTRACT_ALL            = YES
+          EXTRACT_PRIVATE        = NO
+          EXTRACT_STATIC         = NO
+          OPTIMIZE_OUTPUT_FOR_C  = YES
+          FILE_PATTERNS          = *.c *.h
+          EXCLUDE_PATTERNS       = */test/* */tests/*
+          HAVE_DOT               = YES
+          DOT_IMAGE_FORMAT       = svg
+          INTERACTIVE_SVG        = YES
+          CALL_GRAPH             = YES
+          CALLER_GRAPH           = YES
+          INCLUDE_GRAPH          = YES
+          INCLUDED_BY_GRAPH      = YES
+          GRAPHICAL_HIERARCHY    = YES
+          DIRECTORY_GRAPH        = YES
+          HTML_DYNAMIC_SECTIONS  = YES
+          GENERATE_TREEVIEW      = YES
+          TREEVIEW_WIDTH         = 250
+          SEARCHENGINE           = YES
+          SERVER_BASED_SEARCH    = NO
+          EOF
+          fi
+
+      - name: Generate API documentation
+        run: |
+          mkdir -p docs/generated/api
+          doxygen Doxyfile
+
+      - name: Upload API docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-docs
+          path: docs/generated/api/html
+          retention-days: 30
+
+  build-and-test-coverage:
+    name: Build and Generate Coverage Report
+    runs-on: ubuntu-latest
+    if: github.event_name != 'release'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            libncurses5-dev libsqlite3-dev \
+            libcurl4-openssl-dev libcjson-dev \
+            lcov
+
+      - name: Build with coverage
+        run: |
+          mkdir -p build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Debug \
+                -DCMAKE_C_FLAGS="--coverage -g -O0" \
+                -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
+                ..
+          make -j$(nproc) 2>&1 || true
+
+      - name: Run tests
+        run: |
+          cd build
+          ctest --output-on-failure || true
+
+      - name: Generate coverage report
+        run: |
+          mkdir -p docs/generated/coverage
+          lcov --capture --directory build --output-file coverage.info || true
+          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info || true
+          genhtml coverage.info --output-directory docs/generated/coverage || true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: docs/generated/coverage
+          retention-days: 30
+
+  version-docs:
+    name: Create Versioned Documentation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create versioned documentation
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          mkdir -p docs/versioned/v${VERSION}
+
+          # Copy current operator documentation
+          if [ -f OPERATOR.md ]; then
+            cp OPERATOR.md docs/versioned/v${VERSION}/operations-manual.md
+          fi
+
+          # Copy PROFINET specification
+          if [ -f docs/PROFINET_DATA_FORMAT_SPECIFICATION.md ]; then
+            cp docs/PROFINET_DATA_FORMAT_SPECIFICATION.md \
+               docs/versioned/v${VERSION}/data-format-spec.md
+          fi
+
+          # Copy safety documentation if exists
+          for doc in SAFETY_INTERLOCKS.md ALARM_RESPONSE.md COMMISSIONING.md; do
+            if [ -f docs/${doc} ]; then
+              cp docs/${doc} docs/versioned/v${VERSION}/
+            fi
+          done
+
+          # Create version marker
+          echo "Version: ${VERSION}" > docs/versioned/v${VERSION}/VERSION
+          echo "Release Date: $(date -u +%Y-%m-%d)" >> docs/versioned/v${VERSION}/VERSION
+          echo "Git Tag: ${{ steps.version.outputs.tag }}" >> docs/versioned/v${VERSION}/VERSION
+
+      - name: Generate changelog entry
+        run: |
+          TAG=${{ steps.version.outputs.tag }}
+          VERSION=${{ steps.version.outputs.version }}
+
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${TAG}^ 2>/dev/null || echo "")
+
+          # Create new changelog entry
+          echo "## v${VERSION} ($(date +%Y-%m-%d))" > CHANGELOG_NEW.md
+          echo "" >> CHANGELOG_NEW.md
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "### Changes since ${PREV_TAG}" >> CHANGELOG_NEW.md
+            echo "" >> CHANGELOG_NEW.md
+
+            # Group commits by type
+            echo "#### Features" >> CHANGELOG_NEW.md
+            git log ${PREV_TAG}..${TAG} --pretty=format:"- %s" --grep="^feat" >> CHANGELOG_NEW.md || true
+            echo "" >> CHANGELOG_NEW.md
+
+            echo "#### Bug Fixes" >> CHANGELOG_NEW.md
+            git log ${PREV_TAG}..${TAG} --pretty=format:"- %s" --grep="^fix" >> CHANGELOG_NEW.md || true
+            echo "" >> CHANGELOG_NEW.md
+
+            echo "#### Documentation" >> CHANGELOG_NEW.md
+            git log ${PREV_TAG}..${TAG} --pretty=format:"- %s" --grep="^docs" >> CHANGELOG_NEW.md || true
+            echo "" >> CHANGELOG_NEW.md
+
+            echo "#### Other Changes" >> CHANGELOG_NEW.md
+            git log ${PREV_TAG}..${TAG} --pretty=format:"- %s" --invert-grep --grep="^feat" --grep="^fix" --grep="^docs" >> CHANGELOG_NEW.md || true
+          else
+            echo "Initial release" >> CHANGELOG_NEW.md
+          fi
+
+          echo "" >> CHANGELOG_NEW.md
+          echo "---" >> CHANGELOG_NEW.md
+          echo "" >> CHANGELOG_NEW.md
+
+          # Prepend to existing changelog
+          if [ -f CHANGELOG.md ]; then
+            cat CHANGELOG.md >> CHANGELOG_NEW.md
+          fi
+          mv CHANGELOG_NEW.md CHANGELOG.md
+
+      - name: Commit versioned documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add docs/versioned/ CHANGELOG.md
+          git commit -m "docs: add versioned documentation for ${{ steps.version.outputs.tag }}" || true
+          git push origin HEAD:main
+
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: [generate-api-docs]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download API docs
+        uses: actions/download-artifact@v4
+        with:
+          name: api-docs
+          path: _site/api
+
+      - name: Create index page
+        run: |
+          cat > _site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Water-Treat RTU Documentation</title>
+            <style>
+              body { font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+              h1 { color: #0066cc; }
+              .card { border: 1px solid #ddd; padding: 20px; margin: 10px 0; border-radius: 8px; }
+              .card h2 { margin-top: 0; }
+              a { color: #0066cc; }
+            </style>
+          </head>
+          <body>
+            <h1>Water-Treat RTU Documentation</h1>
+            <p>PROFINET I/O Device for Water Treatment SCADA Training</p>
+
+            <div class="card">
+              <h2>API Reference</h2>
+              <p>Auto-generated API documentation from source code.</p>
+              <a href="api/">View API Documentation →</a>
+            </div>
+
+            <div class="card">
+              <h2>Source Repository</h2>
+              <p>View the source code and main documentation.</p>
+              <a href="https://github.com/mwilco03/Water-Treat">GitHub Repository →</a>
+            </div>
+          </body>
+          </html>
+          EOF
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  lint-docs:
+    name: Lint Documentation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install markdownlint
+        run: npm install -g markdownlint-cli
+
+      - name: Lint markdown files
+        run: |
+          markdownlint '**/*.md' \
+            --ignore node_modules \
+            --ignore docs/generated \
+            --config .markdownlint.json || true
+
+      - name: Check for broken links
+        run: |
+          # Simple check for obviously broken internal links
+          for file in $(find . -name "*.md" -not -path "./node_modules/*" -not -path "./docs/generated/*"); do
+            # Extract internal markdown links and check if targets exist
+            grep -oP '\[.*?\]\(\K[^)]+(?=\))' "$file" 2>/dev/null | \
+              grep -v "^http" | \
+              while read link; do
+                # Resolve relative to file location
+                dir=$(dirname "$file")
+                target="$dir/$link"
+                if [ ! -f "$target" ] && [ ! -d "$target" ]; then
+                  echo "Warning: Possible broken link in $file: $link"
+                fi
+              done
+          done || true
