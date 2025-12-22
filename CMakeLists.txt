@@ -33,15 +33,24 @@ endif()
 
 message(STATUS "Building ${CMAKE_PROJECT_NAME} version: ${VERSION_STRING}")
 
-# Compiler flags:
+# Compiler flags per DEVELOPMENT_GUIDELINES.md Part 6.1:
 # -Wall -Wextra: Enable most warnings
+# -Wpedantic: Enable strict ISO C compliance warnings
+# -Wformat=2 -Wformat-security: Enhanced format string checking
+# -Wnull-dereference: Warn about null pointer dereferences
 # -Wno-unused-parameter: Allow unused parameters (common in callbacks)
 # -Wno-stringop-truncation: Suppress strncpy truncation warnings (handled by SAFE_STRNCPY)
 # -Wno-format-truncation: Suppress snprintf truncation warnings (acceptable for display strings)
 # -Wno-sign-compare: Suppress sign comparison warnings in MIN/MAX macros with mixed types
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-parameter -Wno-stringop-truncation -Wno-format-truncation -Wno-sign-compare")
+# -fstack-protector-strong: Enable stack buffer overflow protection
+#
+# Note: -Werror is enabled for Release builds to catch issues before deployment
+#
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic -Wformat=2 -Wformat-security")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wnull-dereference -fstack-protector-strong")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-parameter -Wno-stringop-truncation -Wno-format-truncation -Wno-sign-compare")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0 -DDEBUG")
-set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG -Werror")
 
 # Core sources
 set(SOURCES_CORE

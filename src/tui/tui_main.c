@@ -15,10 +15,14 @@
 #include "pages/page_actuators.h"
 #include "pages/page_login.h"
 #include "auth/auth.h"
+#include "actuators/actuator_manager.h"  /* Global E-STOP per DEVELOPMENT_GUIDELINES.md */
 #include "utils/logger.h"
 #include <ncurses.h>
 #include <signal.h>
 #include <string.h>
+
+/* External actuator manager for global E-STOP */
+extern actuator_manager_t g_actuator_mgr;
 
 #define TUI_REFRESH_MS      100
 #define STATUS_BAR_HEIGHT   1
@@ -139,7 +143,10 @@ static void draw_footer(void) {
     }
 
     /* Show navigation hints on the right side */
-    mvwprintw(g_tui.footer, 0, max_x - 35, "<->:Cycle");  /* Arrow key cycling */
+    mvwprintw(g_tui.footer, 0, max_x - 45, "<->:Cycle");  /* Arrow key cycling */
+    wattron(g_tui.footer, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+    mvwprintw(g_tui.footer, 0, max_x - 34, "E:ESTOP");    /* Global E-STOP per guidelines */
+    wattroff(g_tui.footer, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
     if (g_tui.history_top > 0) {
         mvwprintw(g_tui.footer, 0, max_x - 24, "ESC:Back");
     }
@@ -405,6 +412,27 @@ void tui_run(void) {
             case 'q':
             case 'Q':
                 g_tui.running = false;
+                break;
+
+            /*
+             * GLOBAL E-STOP: 'E' key triggers emergency stop from ANY screen
+             * Per DEVELOPMENT_GUIDELINES.md Part 3.1 - "E key triggers E-STOP from any screen"
+             */
+            case 'E':
+                {
+                    /* Confirm before activating emergency stop */
+                    if (tui_confirm(g_tui.main_win, "EMERGENCY STOP all actuators?")) {
+                        result_t r = actuator_manager_emergency_stop(&g_actuator_mgr);
+                        if (r == RESULT_OK) {
+                            tui_set_status("EMERGENCY STOP - All actuators OFF");
+                            LOG_WARNING("EMERGENCY STOP activated via TUI global handler");
+                        } else {
+                            tui_set_status("E-STOP failed: %s", result_to_string(r));
+                            LOG_ERROR("EMERGENCY STOP failed: %d", r);
+                        }
+                        g_tui.needs_redraw = true;
+                    }
+                }
                 break;
 
             /* Screen cycling with arrow keys and Tab (no history push) */

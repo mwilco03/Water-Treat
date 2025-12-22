@@ -102,6 +102,14 @@ typedef struct {
     int consecutive_successes;
     int consecutive_failures;
 
+    /* Data quality tracking (per DEVELOPMENT_GUIDELINES.md Part 2.4) */
+    data_quality_t quality;         /* Current quality indicator */
+    uint64_t timestamp_us;          /* Microseconds since epoch of last reading */
+    uint32_t stale_timeout_ms;      /* Max age before UNCERTAIN (default 5000) */
+    uint8_t failure_threshold;      /* Failures before BAD (default 3) */
+    float range_min;                /* Minimum valid value */
+    float range_max;                /* Maximum valid value */
+
     /* Calculated sensor support */
     char formula[MAX_CONFIG_VALUE_LEN];
     int input_slots[8];
@@ -111,6 +119,25 @@ typedef struct {
 
 result_t sensor_instance_create_from_db(sensor_instance_t *instance, db_module_t *module, database_t *db);
 result_t sensor_instance_read(sensor_instance_t *instance, float *value);
+
+/**
+ * @brief Read sensor with full quality information
+ *
+ * Per DEVELOPMENT_GUIDELINES.md Part 2.3, every sensor read produces
+ * value + quality + timestamp. This function populates the full
+ * sensor_reading_t structure.
+ *
+ * @param[in]  instance  Sensor instance to read
+ * @param[out] reading   Structure to populate with value, quality, timestamp
+ * @return RESULT_OK on successful read (quality may still be UNCERTAIN/BAD)
+ */
+result_t sensor_instance_read_with_quality(sensor_instance_t *instance, sensor_reading_t *reading);
+
+/**
+ * @brief Get current quality indicator for sensor
+ */
+data_quality_t sensor_instance_get_quality(sensor_instance_t *instance);
+
 result_t sensor_instance_test(sensor_instance_t *instance);
 void sensor_instance_destroy(sensor_instance_t *instance);
 result_t sensor_instance_evaluate_formula(const char *formula,

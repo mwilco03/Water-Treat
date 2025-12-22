@@ -315,6 +315,55 @@ static void draw_menu_item(int row, int selected_idx, int item_idx,
 }
 
 /**
+ * Check if an ADC channel is already configured in the database
+ *
+ * @param bus         I2C bus number
+ * @param adc_address I2C address of ADC
+ * @param channel     ADC channel number (0-3 for ADS1115)
+ * @return true if this channel is already in use
+ */
+static bool is_adc_channel_in_use(int bus, int adc_address, int channel) {
+    database_t *db = tui_get_database();
+    if (!db) return false;
+
+    db_module_t *modules = NULL;
+    int count = 0;
+
+    if (db_module_list(db, &modules, &count) != RESULT_OK || !modules) {
+        return false;
+    }
+
+    bool in_use = false;
+    for (int i = 0; i < count && !in_use; i++) {
+        /* Only check ADC-type modules */
+        if (strcmp(modules[i].module_type, "adc") != 0) {
+            continue;
+        }
+
+        db_adc_sensor_t adc;
+        if (db_adc_sensor_get(db, modules[i].id, &adc) == RESULT_OK) {
+            /* Check if bus and channel match */
+            if (adc.bus == bus && adc.channel == channel) {
+                /* Parse address from string (format: "0x48" or "72") */
+                int stored_addr = 0;
+                if (adc.address[0] == '0' && (adc.address[1] == 'x' || adc.address[1] == 'X')) {
+                    stored_addr = (int)strtol(adc.address, NULL, 16);
+                } else {
+                    stored_addr = atoi(adc.address);
+                }
+
+                if (stored_addr == adc_address) {
+                    in_use = true;
+                }
+            }
+        }
+    }
+
+    free(modules);
+    return in_use;
+}
+
+/**
  * Find next available PROFINET slot
  */
 static int find_next_slot(bool for_sensor) {
@@ -617,7 +666,7 @@ static void screen_sensor_scan(void) {
                 d->hw.adc_channel.bus = dev->bus;
                 d->hw.adc_channel.adc_address = dev->address;
                 d->hw.adc_channel.channel = ch;
-                d->in_use = false;  /* TODO: check database */
+                d->in_use = is_adc_channel_in_use(dev->bus, dev->address, ch);
                 g_wiz.device_count++;
             }
             continue;

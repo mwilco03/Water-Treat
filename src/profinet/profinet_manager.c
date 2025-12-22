@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
 
 #define PROFINET_TICK_INTERVAL_US   1000
 #define MAX_PROFINET_SLOTS          64
@@ -372,13 +373,42 @@ result_t profinet_manager_update_input(int slot, int subslot, const void *data, 
 
 result_t profinet_manager_update_input_float(int slot, int subslot, float value) {
     uint8_t data[4];
-    // Big-endian float for PROFINET
-    uint32_t *p = (uint32_t *)&value;
-    data[0] = (*p >> 24) & 0xFF;
-    data[1] = (*p >> 16) & 0xFF;
-    data[2] = (*p >> 8) & 0xFF;
-    data[3] = *p & 0xFF;
+    /*
+     * PROFINET uses big-endian (network byte order) per DEVELOPMENT_GUIDELINES.md
+     * Use htonl() for proper byte order conversion
+     */
+    uint32_t raw;
+    memcpy(&raw, &value, sizeof(raw));
+    uint32_t be = htonl(raw);
+    memcpy(data, &be, sizeof(be));
     return profinet_manager_update_input(slot, subslot, data, 4);
+}
+
+/**
+ * @brief Update PROFINET input with value and quality (5-byte format)
+ *
+ * Per DEVELOPMENT_GUIDELINES.md Part 1.2:
+ *   RTU -> CONTROLLER (Input Data):
+ *   Bytes 0-3: Sensor Value (Float32, BE)
+ *   Byte 4:    Sensor Quality (OPC UA compatible)
+ *
+ * This is the preferred function for sending sensor data as it includes
+ * the quality indicator required by the Water-Controller.
+ */
+result_t profinet_manager_update_input_with_quality(int slot, int subslot,
+                                                     float value, data_quality_t quality) {
+    uint8_t data[5];
+
+    /* Convert float to big-endian using htonl per guidelines */
+    uint32_t raw;
+    memcpy(&raw, &value, sizeof(raw));
+    uint32_t be = htonl(raw);
+    memcpy(data, &be, sizeof(be));
+
+    /* Quality byte (OPC UA compatible values) */
+    data[4] = (uint8_t)quality;
+
+    return profinet_manager_update_input(slot, subslot, data, 5);
 }
 
 result_t profinet_manager_get_output(int slot, int subslot, void *data, size_t *size) {
