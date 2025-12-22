@@ -1,0 +1,66 @@
+# Doxyfile for Water-Treat RTU
+# Generated documentation: run 'doxygen Doxyfile' to build
+
+PROJECT_NAME           = "Water-Treat RTU"
+PROJECT_BRIEF          = "PROFINET I/O Device for Water Treatment SCADA Training"
+PROJECT_NUMBER         = 1.0
+
+OUTPUT_DIRECTORY       = docs/generated/api
+CREATE_SUBDIRS         = YES
+ALLOW_UNICODE_NAMES    = YES
+
+# Input configuration
+INPUT                  = src
+RECURSIVE              = YES
+FILE_PATTERNS          = *.c *.h
+EXCLUDE_PATTERNS       = */test/* */tests/*
+
+# Extraction options
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+EXTRACT_LOCAL_CLASSES  = NO
+
+# C-specific optimization
+OPTIMIZE_OUTPUT_FOR_C  = YES
+
+# HTML output
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_DYNAMIC_SECTIONS  = YES
+GENERATE_TREEVIEW      = YES
+TREEVIEW_WIDTH         = 250
+
+# No LaTeX output
+GENERATE_LATEX         = NO
+
+# Search
+SEARCHENGINE           = YES
+SERVER_BASED_SEARCH    = NO
+
+# Graphs and diagrams
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+DOT_GRAPH_MAX_NODES    = 100
+MAX_DOT_GRAPH_DEPTH    = 0
+
+# Call graphs
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+GRAPHICAL_HIERARCHY    = YES
+DIRECTORY_GRAPH        = YES
+
+# Include graphs
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+
+# Warnings
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+
+# Preprocessing
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = NO
+EXPAND_ONLY_PREDEF     = NO

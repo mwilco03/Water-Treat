@@ -1,0 +1,14 @@
+# Generated documentation - rebuilt by CI
+# These files should not be committed to version control
+
+# Keep this .gitignore file
+!.gitignore
+
+# Ignore everything else
+*
+
+# Subdirectory contents
+api/*
+coverage/*
+diagrams/*
+schemas/*
