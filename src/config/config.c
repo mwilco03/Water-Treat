@@ -6,6 +6,186 @@
 #include <unistd.h>
 
 /* ============================================================================
+ * Table-Driven Config Loading
+ * ============================================================================
+ * What: Replace 37 repetitive if-blocks with a single data-driven loop
+ * Why: Reduces cyclomatic complexity from 37 to ~5, eliminates copy-paste errors
+ * How: Define field metadata (section, key, type, offset) and iterate
+ */
+
+typedef enum {
+    CFG_TYPE_STRING,
+    CFG_TYPE_INT,
+    CFG_TYPE_BOOL,
+    CFG_TYPE_UINT16,
+    CFG_TYPE_UINT32
+} config_field_type_t;
+
+typedef struct {
+    const char *section;
+    const char *key;
+    config_field_type_t type;
+    size_t offset;
+    size_t size;  /* For strings: buffer size. For others: 0 */
+} config_field_t;
+
+/* Field descriptor table - all 37 config entries */
+static const config_field_t config_fields[] = {
+    /* System section */
+    { "system", "device_name", CFG_TYPE_STRING,
+      offsetof(app_config_t, system.device_name),
+      sizeof(((app_config_t*)0)->system.device_name) },
+    { "system", "log_level", CFG_TYPE_STRING,
+      offsetof(app_config_t, system.log_level),
+      sizeof(((app_config_t*)0)->system.log_level) },
+    { "system", "log_file", CFG_TYPE_STRING,
+      offsetof(app_config_t, system.log_file),
+      sizeof(((app_config_t*)0)->system.log_file) },
+    { "system", "daemon_mode", CFG_TYPE_BOOL,
+      offsetof(app_config_t, system.daemon_mode), 0 },
+
+    /* Network section */
+    { "network", "interface", CFG_TYPE_STRING,
+      offsetof(app_config_t, network.interface),
+      sizeof(((app_config_t*)0)->network.interface) },
+    { "network", "dhcp_enabled", CFG_TYPE_BOOL,
+      offsetof(app_config_t, network.dhcp_enabled), 0 },
+    { "network", "ip_address", CFG_TYPE_STRING,
+      offsetof(app_config_t, network.ip_address),
+      sizeof(((app_config_t*)0)->network.ip_address) },
+    { "network", "netmask", CFG_TYPE_STRING,
+      offsetof(app_config_t, network.netmask),
+      sizeof(((app_config_t*)0)->network.netmask) },
+    { "network", "gateway", CFG_TYPE_STRING,
+      offsetof(app_config_t, network.gateway),
+      sizeof(((app_config_t*)0)->network.gateway) },
+
+    /* PROFINET section */
+    { "profinet", "station_name", CFG_TYPE_STRING,
+      offsetof(app_config_t, profinet.station_name),
+      sizeof(((app_config_t*)0)->profinet.station_name) },
+    { "profinet", "vendor_id", CFG_TYPE_UINT16,
+      offsetof(app_config_t, profinet.vendor_id), 0 },
+    { "profinet", "device_id", CFG_TYPE_UINT16,
+      offsetof(app_config_t, profinet.device_id), 0 },
+    { "profinet", "product_name", CFG_TYPE_STRING,
+      offsetof(app_config_t, profinet.product_name),
+      sizeof(((app_config_t*)0)->profinet.product_name) },
+    { "profinet", "min_device_interval", CFG_TYPE_UINT32,
+      offsetof(app_config_t, profinet.min_device_interval), 0 },
+    { "profinet", "enabled", CFG_TYPE_BOOL,
+      offsetof(app_config_t, profinet.enabled), 0 },
+
+    /* Database section */
+    { "database", "path", CFG_TYPE_STRING,
+      offsetof(app_config_t, database.path),
+      sizeof(((app_config_t*)0)->database.path) },
+    { "database", "create_if_missing", CFG_TYPE_BOOL,
+      offsetof(app_config_t, database.create_if_missing), 0 },
+    { "database", "busy_timeout_ms", CFG_TYPE_INT,
+      offsetof(app_config_t, database.busy_timeout_ms), 0 },
+
+    /* Logging section */
+    { "logging", "enabled", CFG_TYPE_BOOL,
+      offsetof(app_config_t, logging.enabled), 0 },
+    { "logging", "interval_seconds", CFG_TYPE_INT,
+      offsetof(app_config_t, logging.interval_seconds), 0 },
+    { "logging", "retention_days", CFG_TYPE_INT,
+      offsetof(app_config_t, logging.retention_days), 0 },
+    { "logging", "destination", CFG_TYPE_INT,
+      offsetof(app_config_t, logging.destination), 0 },
+    { "logging", "remote_url", CFG_TYPE_STRING,
+      offsetof(app_config_t, logging.remote_url),
+      sizeof(((app_config_t*)0)->logging.remote_url) },
+    { "logging", "remote_enabled", CFG_TYPE_BOOL,
+      offsetof(app_config_t, logging.remote_enabled), 0 },
+
+    /* Health section */
+    { "health", "enabled", CFG_TYPE_BOOL,
+      offsetof(app_config_t, health.enabled), 0 },
+    { "health", "http_enabled", CFG_TYPE_BOOL,
+      offsetof(app_config_t, health.http_enabled), 0 },
+    { "health", "http_port", CFG_TYPE_UINT16,
+      offsetof(app_config_t, health.http_port), 0 },
+    { "health", "file_path", CFG_TYPE_STRING,
+      offsetof(app_config_t, health.file_path),
+      sizeof(((app_config_t*)0)->health.file_path) },
+    { "health", "update_interval_seconds", CFG_TYPE_INT,
+      offsetof(app_config_t, health.update_interval_seconds), 0 },
+
+    /* LED section */
+    { "led", "enabled", CFG_TYPE_BOOL,
+      offsetof(app_config_t, led.enabled), 0 },
+    { "led", "led_count", CFG_TYPE_INT,
+      offsetof(app_config_t, led.led_count), 0 },
+    { "led", "brightness", CFG_TYPE_INT,
+      offsetof(app_config_t, led.brightness), 0 },
+    { "led", "backend", CFG_TYPE_STRING,
+      offsetof(app_config_t, led.backend),
+      sizeof(((app_config_t*)0)->led.backend) },
+    { "led", "spi_device", CFG_TYPE_STRING,
+      offsetof(app_config_t, led.spi_device),
+      sizeof(((app_config_t*)0)->led.spi_device) },
+    { "led", "spi_speed_hz", CFG_TYPE_UINT32,
+      offsetof(app_config_t, led.spi_speed_hz), 0 },
+    { "led", "gpio_pin", CFG_TYPE_INT,
+      offsetof(app_config_t, led.gpio_pin), 0 },
+    { "led", "dma_channel", CFG_TYPE_INT,
+      offsetof(app_config_t, led.dma_channel), 0 },
+};
+
+#define CONFIG_FIELD_COUNT (sizeof(config_fields) / sizeof(config_fields[0]))
+
+/* Generic field loader - handles all types via the descriptor */
+static void config_load_field(
+    config_manager_t *m,
+    app_config_t *c,
+    const config_field_t *field
+) {
+    void *target = (char*)c + field->offset;
+    char str_buf[MAX_CONFIG_VALUE_LEN];
+    int int_val;
+    bool bool_val;
+
+    switch (field->type) {
+        case CFG_TYPE_STRING:
+            if (config_get_string(m, field->section, field->key,
+                                  str_buf, sizeof(str_buf)) == RESULT_OK) {
+                SAFE_STRNCPY((char*)target, str_buf, field->size);
+            }
+            break;
+
+        case CFG_TYPE_INT:
+            if (config_get_int(m, field->section, field->key,
+                               &int_val) == RESULT_OK) {
+                *(int*)target = int_val;
+            }
+            break;
+
+        case CFG_TYPE_BOOL:
+            if (config_get_bool(m, field->section, field->key,
+                                &bool_val) == RESULT_OK) {
+                *(bool*)target = bool_val;
+            }
+            break;
+
+        case CFG_TYPE_UINT16:
+            if (config_get_int(m, field->section, field->key,
+                               &int_val) == RESULT_OK) {
+                *(uint16_t*)target = (uint16_t)int_val;
+            }
+            break;
+
+        case CFG_TYPE_UINT32:
+            if (config_get_int(m, field->section, field->key,
+                               &int_val) == RESULT_OK) {
+                *(uint32_t*)target = (uint32_t)int_val;
+            }
+            break;
+    }
+}
+
+/* ============================================================================
  * Station ID Detection
  * ============================================================================
  * What: Generate unique station ID from hardware MAC address
@@ -183,59 +363,16 @@ void config_get_defaults(app_config_t *c) {
 }
 
 result_t config_load_app_config(config_manager_t *m, app_config_t *c) {
-    CHECK_NULL(m); CHECK_NULL(c); config_get_defaults(c);
-    char v[MAX_CONFIG_VALUE_LEN]; int iv; bool bv;
+    CHECK_NULL(m);
+    CHECK_NULL(c);
 
-    /* System configuration */
-    if(config_get_string(m,"system","device_name",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->system.device_name,v,sizeof(c->system.device_name));
-    if(config_get_string(m,"system","log_level",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->system.log_level,v,sizeof(c->system.log_level));
-    if(config_get_string(m,"system","log_file",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->system.log_file,v,sizeof(c->system.log_file));
-    if(config_get_bool(m,"system","daemon_mode",&bv)==RESULT_OK) c->system.daemon_mode=bv;
+    /* Set defaults first - missing config entries use these */
+    config_get_defaults(c);
 
-    /* Network configuration */
-    if(config_get_string(m,"network","interface",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.interface,v,sizeof(c->network.interface));
-    if(config_get_bool(m,"network","dhcp_enabled",&bv)==RESULT_OK) c->network.dhcp_enabled=bv;
-    if(config_get_string(m,"network","ip_address",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.ip_address,v,sizeof(c->network.ip_address));
-    if(config_get_string(m,"network","netmask",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.netmask,v,sizeof(c->network.netmask));
-    if(config_get_string(m,"network","gateway",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->network.gateway,v,sizeof(c->network.gateway));
-
-    /* PROFINET configuration */
-    if(config_get_string(m,"profinet","station_name",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->profinet.station_name,v,sizeof(c->profinet.station_name));
-    if(config_get_int(m,"profinet","vendor_id",&iv)==RESULT_OK) c->profinet.vendor_id=(uint16_t)iv;
-    if(config_get_int(m,"profinet","device_id",&iv)==RESULT_OK) c->profinet.device_id=(uint16_t)iv;
-    if(config_get_string(m,"profinet","product_name",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->profinet.product_name,v,sizeof(c->profinet.product_name));
-    if(config_get_int(m,"profinet","min_device_interval",&iv)==RESULT_OK) c->profinet.min_device_interval=(uint32_t)iv;
-    if(config_get_bool(m,"profinet","enabled",&bv)==RESULT_OK) c->profinet.enabled=bv;
-
-    /* Database configuration */
-    if(config_get_string(m,"database","path",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->database.path,v,sizeof(c->database.path));
-    if(config_get_bool(m,"database","create_if_missing",&bv)==RESULT_OK) c->database.create_if_missing=bv;
-    if(config_get_int(m,"database","busy_timeout_ms",&iv)==RESULT_OK) c->database.busy_timeout_ms=iv;
-
-    /* Logging configuration */
-    if(config_get_bool(m,"logging","enabled",&bv)==RESULT_OK) c->logging.enabled=bv;
-    if(config_get_int(m,"logging","interval_seconds",&iv)==RESULT_OK) c->logging.interval_seconds=iv;
-    if(config_get_int(m,"logging","retention_days",&iv)==RESULT_OK) c->logging.retention_days=iv;
-    if(config_get_int(m,"logging","destination",&iv)==RESULT_OK) c->logging.destination=iv;
-    if(config_get_string(m,"logging","remote_url",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->logging.remote_url,v,sizeof(c->logging.remote_url));
-    if(config_get_bool(m,"logging","remote_enabled",&bv)==RESULT_OK) c->logging.remote_enabled=bv;
-
-    /* Health check configuration */
-    if(config_get_bool(m,"health","enabled",&bv)==RESULT_OK) c->health.enabled=bv;
-    if(config_get_bool(m,"health","http_enabled",&bv)==RESULT_OK) c->health.http_enabled=bv;
-    if(config_get_int(m,"health","http_port",&iv)==RESULT_OK) c->health.http_port=(uint16_t)iv;
-    if(config_get_string(m,"health","file_path",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->health.file_path,v,sizeof(c->health.file_path));
-    if(config_get_int(m,"health","update_interval_seconds",&iv)==RESULT_OK) c->health.update_interval_seconds=iv;
-
-    /* LED indicator configuration */
-    if(config_get_bool(m,"led","enabled",&bv)==RESULT_OK) c->led.enabled=bv;
-    if(config_get_int(m,"led","led_count",&iv)==RESULT_OK) c->led.led_count=iv;
-    if(config_get_int(m,"led","brightness",&iv)==RESULT_OK) c->led.brightness=iv;
-    if(config_get_string(m,"led","backend",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->led.backend,v,sizeof(c->led.backend));
-    if(config_get_string(m,"led","spi_device",v,sizeof(v))==RESULT_OK) SAFE_STRNCPY(c->led.spi_device,v,sizeof(c->led.spi_device));
-    if(config_get_int(m,"led","spi_speed_hz",&iv)==RESULT_OK) c->led.spi_speed_hz=(uint32_t)iv;
-    if(config_get_int(m,"led","gpio_pin",&iv)==RESULT_OK) c->led.gpio_pin=iv;
-    if(config_get_int(m,"led","dma_channel",&iv)==RESULT_OK) c->led.dma_channel=iv;
+    /* Load all fields from table - errors are non-fatal (keeps default) */
+    for (size_t i = 0; i < CONFIG_FIELD_COUNT; i++) {
+        config_load_field(m, c, &config_fields[i]);
+    }
 
     return RESULT_OK;
 }
