@@ -227,7 +227,7 @@ typedef struct {
     float raw_value;                // Pre-calibration value
     sensor_status_t status;
     uint64_t timestamp_ms;
-} sensor_reading_t;
+} sensor_result_t;
 
 /* ============================================================================
  * Unified Sensor Driver Interface
@@ -239,7 +239,7 @@ typedef struct sensor_driver sensor_driver_t;
 // Driver operations vtable
 typedef struct {
     result_t (*init)(sensor_driver_t *drv, const sensor_config_t *cfg);
-    result_t (*read)(sensor_driver_t *drv, sensor_reading_t *reading);
+    result_t (*read)(sensor_driver_t *drv, sensor_result_t *reading);
     result_t (*write)(sensor_driver_t *drv, float value);  // For outputs
     result_t (*calibrate)(sensor_driver_t *drv, const sensor_calibration_t *cal);
     void     (*destroy)(sensor_driver_t *drv);
@@ -247,7 +247,7 @@ typedef struct {
 
 struct sensor_driver {
     sensor_config_t config;
-    sensor_reading_t last_reading;
+    sensor_result_t last_reading;
     void *priv;                     // Driver-specific private data
     const sensor_ops_t *ops;
 };
@@ -261,8 +261,8 @@ result_t sensor_create(sensor_driver_t **drv, const sensor_config_t *cfg);
 void sensor_destroy(sensor_driver_t *drv);
 
 // Read sensor value
-result_t sensor_read(sensor_driver_t *drv, sensor_reading_t *reading);
-result_t sensor_read_cached(sensor_driver_t *drv, sensor_reading_t *reading);
+result_t sensor_read(sensor_driver_t *drv, sensor_result_t *reading);
+result_t sensor_read_cached(sensor_driver_t *drv, sensor_result_t *reading);
 
 // For outputs (pumps, valves)
 result_t sensor_write(sensor_driver_t *drv, float value);

@@ -75,6 +75,13 @@ typedef struct {
     uint8_t consecutive_failures;   /* For degradation detection */
 } sensor_reading_t;
 
+/* Time utility - must be defined before determine_quality which uses it */
+static inline uint64_t get_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 /**
  * Determine quality from reading state and configuration
  *
@@ -152,12 +159,6 @@ static inline const char* quality_to_string(data_quality_t quality) {
 #define CHECK_NULL(ptr) do { if ((ptr) == NULL) return RESULT_INVALID_PARAM; } while(0)
 #define CHECK_RESULT(expr) do { result_t _r = (expr); if (_r != RESULT_OK) return _r; } while(0)
 #define SAFE_FREE(ptr) do { if ((ptr) != NULL) { free(ptr); (ptr) = NULL; } } while(0)
-
-static inline uint64_t get_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
 
 static inline const char* result_to_string(result_t result) {
     switch (result) {

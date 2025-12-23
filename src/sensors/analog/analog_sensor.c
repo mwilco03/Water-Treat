@@ -185,7 +185,7 @@ static result_t analog_init(sensor_driver_t *drv, const sensor_config_t *cfg) {
     return RESULT_OK;
 }
 
-static result_t analog_read(sensor_driver_t *drv, sensor_reading_t *reading) {
+static result_t analog_read(sensor_driver_t *drv, sensor_result_t *reading) {
     analog_sensor_priv_t *priv = drv->priv;
 
     if (!priv->adc) {
@@ -233,7 +233,7 @@ static result_t analog_read(sensor_driver_t *drv, sensor_reading_t *reading) {
     }
 
     // Cache the reading
-    memcpy(&drv->last_reading, reading, sizeof(sensor_reading_t));
+    memcpy(&drv->last_reading, reading, sizeof(sensor_result_t));
 
     return RESULT_OK;
 }
@@ -308,7 +308,7 @@ result_t analog_sensor_cal_point(sensor_driver_t *drv,
     analog_sensor_priv_t *priv = drv->priv;
 
     // Read current raw value
-    sensor_reading_t reading;
+    sensor_result_t reading;
     result_t r = analog_read(drv, &reading);
     if (r != RESULT_OK) return r;
 
