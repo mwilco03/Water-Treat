@@ -1,0 +1,54 @@
+; WS2812 PIO program for RP2040
+; Generates precise timing for WS2812/WS2811 addressable LEDs
+;
+; Timing requirements (WS2812B):
+;   T0H: 400ns  (0 bit high time)
+;   T0L: 850ns  (0 bit low time)
+;   T1H: 800ns  (1 bit high time)
+;   T1L: 450ns  (1 bit low time)
+;   Reset: >50us (low)
+;
+; At 800kHz bit rate with proper delays
+
+.program ws2812
+.side_set 1
+
+; Each bit takes 10 cycles at the configured clock
+; Bit pattern: HIGH for (T1+1) cycles, LOW for (T2+1) cycles, then LOW for (T3+1) cycles
+; For a '1' bit: long high, short low
+; For a '0' bit: short high, long low
+
+.define public T1 2    ; High time for '0' bit (3 cycles)
+.define public T2 5    ; Additional high time for '1' bit (total 8 cycles high)
+.define public T3 3    ; Low time after bit
+
+.wrap_target
+bitloop:
+    out x, 1       side 0 [T3]   ; Get next bit, keep low for T3+1 cycles
+    jmp !x do_zero side 1 [T1]   ; If bit is 0, jump with short high pulse
+do_one:
+    jmp bitloop    side 1 [T2]   ; Bit is 1: stay high longer, loop
+do_zero:
+    nop            side 0 [T2]   ; Bit is 0: go low, wait
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void ws2812_program_init(PIO pio, uint sm, uint offset, uint pin, float freq, bool rgbw) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+    pio_sm_config c = ws2812_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_out_shift(&c, false, true, rgbw ? 32 : 24);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    int cycles_per_bit = ws2812_T1 + ws2812_T2 + ws2812_T3 + 3;
+    float div = clock_get_hz(clk_sys) / (freq * cycles_per_bit);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

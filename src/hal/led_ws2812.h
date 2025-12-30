@@ -39,6 +39,7 @@ typedef enum {
     LED_BACKEND_NONE = 0,
     LED_BACKEND_SPI,
     LED_BACKEND_RPI_WS281X,
+    LED_BACKEND_RP2040,       /* RP2040 via USB serial */
     LED_BACKEND_AUTO          /* Auto-detect based on platform */
 } led_backend_type_t;
 
@@ -56,6 +57,10 @@ typedef struct {
     int gpio_pin;             /* GPIO pin number (BCM) */
     int dma_channel;          /* DMA channel (default 10) */
     int strip_type;           /* WS2811_STRIP_GRB, etc. */
+
+    /* RP2040 USB backend settings */
+    char rp2040_device[64];   /* Device path, e.g., "/dev/ttyACM0" or empty for auto */
+    uint32_t rp2040_baud;     /* Baud rate (default 115200) */
 } led_config_t;
 
 /* LED strip state */
@@ -174,6 +179,7 @@ bool led_is_available(void);
 /* Backend registration (internal use) */
 void led_register_spi_backend(void);
 void led_register_rpi_backend(void);
+void led_register_rp2040_backend(void);
 
 #else /* !LED_SUPPORT */
 

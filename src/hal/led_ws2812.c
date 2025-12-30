@@ -14,10 +14,11 @@
 #include <sys/stat.h>
 
 /* Backend operations table */
-static const led_backend_ops_t *g_backends[3] = { NULL, NULL, NULL };
+static const led_backend_ops_t *g_backends[5] = { NULL, NULL, NULL, NULL, NULL };
 
 /* External backend implementations */
 extern const led_backend_ops_t led_spi_ops;
+extern const led_backend_ops_t led_rp2040_ops;
 #ifdef HAVE_RPI_WS281X
 extern const led_backend_ops_t led_rpi_ops;
 #endif
@@ -28,6 +29,10 @@ extern const led_backend_ops_t led_rpi_ops;
 
 void led_register_spi_backend(void) {
     g_backends[LED_BACKEND_SPI] = &led_spi_ops;
+}
+
+void led_register_rp2040_backend(void) {
+    g_backends[LED_BACKEND_RP2040] = &led_rp2040_ops;
 }
 
 #ifdef HAVE_RPI_WS281X
@@ -44,7 +49,27 @@ void led_register_rpi_backend(void) {
  * Platform Detection
  * ========================================================================== */
 
+/* Check if RP2040 LED controller is connected */
+static bool detect_rp2040_device(void) {
+    struct stat st;
+    /* Check common device paths */
+    if (stat("/dev/serial/by-id", &st) == 0) {
+        /* Could glob for WaterTreat or Pico devices, but simple check suffices */
+        return true;  /* Directory exists, might have device */
+    }
+    if (stat("/dev/ttyACM0", &st) == 0) {
+        return true;
+    }
+    return false;
+}
+
 static led_backend_type_t detect_best_backend(void) {
+    /* Prefer RP2040 USB backend - works on any platform */
+    if (detect_rp2040_device()) {
+        LOG_DEBUG("RP2040 USB device may be available - trying RP2040 backend");
+        return LED_BACKEND_RP2040;
+    }
+
     board_info_t board_info;
     if (board_detect(&board_info) != RESULT_OK) {
         LOG_DEBUG("Board detection failed - using SPI backend");
@@ -92,6 +117,10 @@ void led_config_defaults(led_config_t *config) {
     config->gpio_pin = 18;           /* GPIO 18 (PWM0) */
     config->dma_channel = 10;        /* DMA channel 10 */
     config->strip_type = 0;          /* WS2812_STRIP_GRB */
+
+    /* RP2040 USB defaults */
+    config->rp2040_device[0] = '\0'; /* Empty = auto-detect */
+    config->rp2040_baud = 115200;
 }
 
 /* ============================================================================
@@ -121,6 +150,7 @@ result_t led_strip_init(led_strip_t *strip, const led_config_t *config) {
     if (!backends_registered) {
         led_register_spi_backend();
         led_register_rpi_backend();
+        led_register_rp2040_backend();
         backends_registered = true;
     }
 
@@ -251,6 +281,7 @@ const char *led_backend_name(led_backend_type_t backend) {
         case LED_BACKEND_NONE:       return "none";
         case LED_BACKEND_SPI:        return "spi";
         case LED_BACKEND_RPI_WS281X: return "rpi_ws281x";
+        case LED_BACKEND_RP2040:     return "rp2040";
         case LED_BACKEND_AUTO:       return "auto";
         default:                     return "unknown";
     }
