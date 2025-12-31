@@ -343,7 +343,7 @@ For proper integration with Water-Controller, RTUs **MUST** be configured with:
 
 ### API Endpoints for Integration
 
-**Controller REST API** (port 8080):
+**Controller REST API** (port 8080 - Controller plane):
 ```
 GET  /api/v1/rtus                    - List registered RTUs
 POST /api/v1/rtus                    - Add RTU configuration
@@ -355,7 +355,7 @@ GET  /api/v1/pid-loops               - List PID loops
 POST /api/v1/pid-loops               - Create PID loop
 ```
 
-**RTU REST API** (port 8080):
+**RTU REST API** (port 9081 - RTU plane):
 ```
 GET  /sensors                        - List sensors
 GET  /actuators                      - List actuators
@@ -363,6 +363,9 @@ POST /actuators/{slot}/set           - Manual actuator control
 GET  /health                         - Health status
 GET  /config                         - Export configuration
 ```
+
+> **Port Allocation**: 8xxx = Controller plane, 9xxx = RTU plane.
+> See [DR-001-port-allocation.md](decisions/DR-001-port-allocation.md) for rationale.
 
 ---
 

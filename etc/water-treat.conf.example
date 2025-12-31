@@ -40,7 +40,9 @@ remote_enabled = false
 [health]
 enabled = true
 http_enabled = true
-http_port = 8080
+# Port 9081 for RTU plane (8xxx = Controller, 9xxx = RTU)
+# Override via WT_HTTP_PORT environment variable or --http-port CLI
+http_port = 9081
 file_path = /var/lib/water-treat/health.prom
 update_interval_seconds = 10
 
