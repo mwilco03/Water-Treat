@@ -147,13 +147,15 @@ void test_config_defaults(void) {
     TEST_ASSERT_EQ(60, default_log_interval);
 }
 
-/* Test health config defaults */
+/* Test health config defaults
+ * Note: Default port is 9081 per DR-001-port-allocation.md
+ * Port allocation: 8xxx = Controller plane, 9xxx = RTU plane */
 void test_config_health_defaults(void) {
-    int default_http_port = 8080;
+    int default_http_port = 9081;  /* WT_HTTP_PORT_DEFAULT */
     int default_update_interval = 10;
     char default_file_path[] = "/var/lib/water-treat/health.prom";
 
-    TEST_ASSERT_EQ(8080, default_http_port);
+    TEST_ASSERT_EQ(9081, default_http_port);
     TEST_ASSERT_EQ(10, default_update_interval);
     TEST_ASSERT(strlen(default_file_path) > 0);
 }

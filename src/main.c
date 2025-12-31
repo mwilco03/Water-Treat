@@ -11,6 +11,8 @@
 #include "utils/logger.h"
 #include "config/config.h"
 #include "config/config_validate.h"
+#include "config/config_resolver.h"
+#include "config_defaults.h"
 #include "db/database.h"
 #include "db/db_events.h"
 #include "sensors/sensor_manager.h"
@@ -569,10 +571,20 @@ static void print_usage(const char *prog_name) {
     printf("Usage: %s [OPTIONS]\n\n", prog_name);
     printf("Options:\n");
     printf("  -c, --config FILE   Configuration file path\n");
+    printf("  -p, --http-port N   HTTP server port (default: %d)\n", WT_HTTP_PORT_DEFAULT);
     printf("  -d, --daemon        Run as daemon\n");
     printf("  -v, --verbose       Increase verbosity\n");
     printf("  -h, --help          Show this help message\n");
     printf("  -V, --version       Show version information\n");
+    printf("      --test-config   Print resolved config and exit\n");
+    printf("\n");
+    printf("Environment Variables:\n");
+    printf("  WT_HTTP_PORT        HTTP server port override\n");
+    printf("\n");
+    printf("Configuration Precedence:\n");
+    printf("  CLI > Environment > Config File > Default\n");
+    printf("\n");
+    printf("See: docs/decisions/DR-001-port-allocation.md\n");
     printf("\n");
 }
 
@@ -590,22 +602,34 @@ int main(int argc, char *argv[]) {
     const char *config_path = NULL;
     bool daemon_mode = false;
     int verbose_level = 0;
+    int cli_http_port = -1;  /* -1 means not specified */
+    bool test_config_mode = false;
 
     // Parse command line arguments
     static struct option long_options[] = {
-        {"config",  required_argument, 0, 'c'},
-        {"daemon",  no_argument,       0, 'd'},
-        {"verbose", no_argument,       0, 'v'},
-        {"help",    no_argument,       0, 'h'},
-        {"version", no_argument,       0, 'V'},
+        {"config",      required_argument, 0, 'c'},
+        {"http-port",   required_argument, 0, 'p'},
+        {"daemon",      no_argument,       0, 'd'},
+        {"verbose",     no_argument,       0, 'v'},
+        {"help",        no_argument,       0, 'h'},
+        {"version",     no_argument,       0, 'V'},
+        {"test-config", no_argument,       0, 'T'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "c:dvhV", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:p:dvhV", long_options, NULL)) != -1) {
         switch (opt) {
             case 'c':
                 config_path = optarg;
+                break;
+            case 'p':
+                cli_http_port = atoi(optarg);
+                if (cli_http_port < WT_HTTP_PORT_MIN || cli_http_port > WT_HTTP_PORT_MAX) {
+                    fprintf(stderr, "Error: HTTP port must be between %d and %d\n",
+                            WT_HTTP_PORT_MIN, WT_HTTP_PORT_MAX);
+                    return 1;
+                }
                 break;
             case 'd':
                 daemon_mode = true;
@@ -619,6 +643,9 @@ int main(int argc, char *argv[]) {
             case 'V':
                 print_version();
                 return 0;
+            case 'T':
+                test_config_mode = true;
+                break;
             default:
                 print_usage(argv[0]);
                 return 1;
@@ -660,6 +687,27 @@ int main(int argc, char *argv[]) {
     // Override daemon mode from config if specified on command line
     if (daemon_mode) {
         g_app_config.system.daemon_mode = true;
+    }
+
+    // Resolve HTTP port with precedence: CLI > ENV > config file > default
+    // This must be done after config file is loaded but before subsystems start
+    int resolved_port = config_resolve_http_port(cli_http_port);
+    if (resolved_port < 0) {
+        LOG_ERROR("Failed to resolve HTTP port");
+        logger_shutdown();
+        return 1;
+    }
+    g_app_config.health.http_port = (uint16_t)resolved_port;
+
+    // Test config mode: print resolved configuration and exit
+    if (test_config_mode) {
+        printf("Resolved Configuration:\n");
+        printf("  HTTP Port: %d\n", g_app_config.health.http_port);
+        printf("  Device Name: %s\n", g_app_config.system.device_name);
+        printf("  PROFINET Station: %s\n", g_app_config.profinet.station_name);
+        printf("  Daemon Mode: %s\n", g_app_config.system.daemon_mode ? "yes" : "no");
+        logger_shutdown();
+        return 0;
     }
 
     // Initialize database

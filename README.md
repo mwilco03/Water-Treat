@@ -215,12 +215,68 @@ The RTU supports two authentication sources:
 
 ```bash
 # Run with root privileges (required for GPIO access)
-sudo ./profinet-monitor
+sudo ./water-treat
 
 # Or install systemd service for production deployment
-sudo cp systemd/profinet-monitor.service /etc/systemd/system/
-sudo systemctl enable profinet-monitor
-sudo systemctl start profinet-monitor
+sudo cp systemd/water-treat.service /etc/systemd/system/
+sudo systemctl enable water-treat
+sudo systemctl start water-treat
+```
+
+## Environment Variables
+
+Configuration can be overridden via environment variables. All variables use the `WT_` prefix.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `WT_HTTP_PORT` | HTTP server listen port | `9081` |
+
+### Port Allocation
+
+The SCADA system uses a plane-based port allocation scheme:
+
+| Port Range | Plane | Examples |
+|------------|-------|----------|
+| 8xxx | Controller (SBC #1) | 8000 (API), 8080 (HMI) |
+| 9xxx | RTU (SBC #2) | 9081 (HTTP) |
+
+See [docs/decisions/DR-001-port-allocation.md](docs/decisions/DR-001-port-allocation.md) for the full decision rationale.
+
+### Configuration Precedence
+
+Configuration values are resolved in order (first match wins):
+1. Command-line argument (e.g., `--http-port 9000`)
+2. Environment variable (e.g., `WT_HTTP_PORT=9000`)
+3. Configuration file (`/etc/water-treat/water-treat.conf`)
+4. Compiled default (9081)
+
+### Examples
+
+```bash
+# Use default port (9081)
+sudo ./water-treat
+
+# Override via environment
+WT_HTTP_PORT=9000 sudo ./water-treat
+
+# Override via CLI (takes precedence over environment)
+sudo ./water-treat --http-port 9001
+
+# Test configuration resolution
+./water-treat --test-config
+```
+
+### Persistent Configuration
+
+For systemd deployments, edit `/etc/water-treat/water-treat.env`:
+
+```bash
+# Edit the environment file
+sudo nano /etc/water-treat/water-treat.env
+
+# Reload and restart
+sudo systemctl daemon-reload
+sudo systemctl restart water-treat
 ```
 
 ## Project Structure

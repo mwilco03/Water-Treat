@@ -57,6 +57,7 @@ set(SOURCES_CORE
     src/main.c
     src/config/config.c
     src/config/config_validate.c
+    src/config/config_resolver.c
     src/db/database.c
     src/db/db_modules.c
     src/db/db_events.c

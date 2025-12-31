@@ -1,4 +1,5 @@
 #include "config.h"
+#include "config_defaults.h"
 #include "utils/logger.h"
 #include <stdio.h>
 #include <ctype.h>
@@ -344,10 +345,10 @@ void config_get_defaults(app_config_t *c) {
     c->logging.destination=1; /* Local */
     c->logging.remote_enabled=false;
 
-    /* Health check defaults */
+    /* Health check defaults - see docs/decisions/DR-001-port-allocation.md */
     c->health.enabled=true;
     c->health.http_enabled=true;
-    c->health.http_port=8080;
+    c->health.http_port=WT_HTTP_PORT_DEFAULT;
     SAFE_STRNCPY(c->health.file_path,"/var/lib/water-treat/health.prom",sizeof(c->health.file_path));
     c->health.update_interval_seconds=10;
 

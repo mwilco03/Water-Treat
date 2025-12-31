@@ -304,7 +304,8 @@ enabled = true
 [health]
 enabled = true
 http_enabled = true
-http_port = 8080
+# Port 9081 for RTU plane (8xxx = Controller, 9xxx = RTU)
+http_port = 9081
 ```
 
 ---
@@ -560,10 +561,13 @@ Access via web browser or curl:
 
 | Endpoint | Purpose | Response |
 |----------|---------|----------|
-| `http://RTU_IP:8080/health` | Overall status | JSON with subsystem details |
-| `http://RTU_IP:8080/metrics` | Prometheus metrics | Text format |
-| `http://RTU_IP:8080/ready` | Kubernetes readiness | `{"ready": true/false}` |
-| `http://RTU_IP:8080/live` | Kubernetes liveness | `{"alive": true}` |
+| `http://RTU_IP:9081/health` | Overall status | JSON with subsystem details |
+| `http://RTU_IP:9081/metrics` | Prometheus metrics | Text format |
+| `http://RTU_IP:9081/ready` | Kubernetes readiness | `{"ready": true/false}` |
+| `http://RTU_IP:9081/live` | Kubernetes liveness | `{"alive": true}` |
+
+> **Note:** Port 9081 is the default for RTU plane services (9xxx range).
+> Controller plane services use 8xxx range. Override via `WT_HTTP_PORT` environment variable.
 
 ---
 
@@ -736,7 +740,7 @@ sudo systemctl restart profinet-monitor
 ### Getting Help
 1. Check this operator manual first
 2. Review logs: `journalctl -u profinet-monitor`
-3. Check health endpoint: `http://RTU_IP:8080/health`
+3. Check health endpoint: `http://RTU_IP:9081/health`
 4. Consult SOURCES.md for code documentation
 
 ### Collecting Diagnostic Information
@@ -763,7 +767,7 @@ ls /sys/bus/w1/devices/
 journalctl -u profinet-monitor --since "1 hour ago"
 
 # Health status
-curl http://localhost:8080/health
+curl http://localhost:9081/health
 ```
 
 ---

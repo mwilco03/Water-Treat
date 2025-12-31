@@ -50,7 +50,9 @@ DeviceAllow=/dev/gpiomem rw
 DeviceAllow=/dev/mem rw
 
 # Environment file for configuration overrides (optional)
-EnvironmentFile=-/etc/water-treat/environment
+# The '-' prefix makes the file optional - service starts even if file is missing
+# See: docs/decisions/DR-001-port-allocation.md for port configuration rationale
+EnvironmentFile=-/etc/water-treat/water-treat.env
 
 [Install]
 WantedBy=multi-user.target
