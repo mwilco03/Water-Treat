@@ -31,55 +31,47 @@
 #define ANIM_FLASH_DURATION     (LED_UPDATE_RATE_HZ * FLASH_DURATION_MS / 1000)
 
 /* ============================================================================
- * Color and Status Mapping
- * ========================================================================== */
+ * Status Mapping Lookup Table
+ * ============================================================================
+ * Consolidated table replaces three separate switch statements.
+ * Order MUST match led_status_level_t enum values.
+ */
+typedef struct {
+    led_color_t     color;
+    led_animation_t animation;
+    const char     *name;
+} led_status_info_t;
+
+static const led_status_info_t status_table[] = {
+    /* LED_STATUS_OFF */          { LED_COLOR_OFF,     LED_ANIM_SOLID,      "off"          },
+    /* LED_STATUS_OK */           { LED_COLOR_GREEN,   LED_ANIM_SOLID,      "ok"           },
+    /* LED_STATUS_WARNING */      { LED_COLOR_YELLOW,  LED_ANIM_BLINK_SLOW, "warning"      },
+    /* LED_STATUS_ALARM */        { LED_COLOR_RED,     LED_ANIM_BLINK_FAST, "alarm"        },
+    /* LED_STATUS_FAULT */        { LED_COLOR_RED,     LED_ANIM_SOLID,      "fault"        },
+    /* LED_STATUS_MANUAL */       { LED_COLOR_BLUE,    LED_ANIM_SOLID,      "manual"       },
+    /* LED_STATUS_COMM_ACTIVE */  { LED_COLOR_CYAN,    LED_ANIM_BLINK_FAST, "comm_active"  },
+    /* LED_STATUS_CALIBRATING */  { LED_COLOR_MAGENTA, LED_ANIM_PULSE,      "calibrating"  },
+    /* LED_STATUS_STANDBY */      { LED_COLOR_WHITE,   LED_ANIM_SOLID,      "standby"      },
+    /* LED_STATUS_INITIALIZING */ { LED_COLOR_WHITE,   LED_ANIM_PULSE,      "initializing" },
+};
+
+#define STATUS_TABLE_SIZE (sizeof(status_table) / sizeof(status_table[0]))
+
+/* Accessor functions use the lookup table */
 
 led_color_t led_status_to_color(led_status_level_t status) {
-    switch (status) {
-        case LED_STATUS_OFF:          return LED_COLOR_OFF;
-        case LED_STATUS_OK:           return LED_COLOR_GREEN;
-        case LED_STATUS_WARNING:      return LED_COLOR_YELLOW;
-        case LED_STATUS_ALARM:        return LED_COLOR_RED;
-        case LED_STATUS_FAULT:        return LED_COLOR_RED;
-        case LED_STATUS_MANUAL:       return LED_COLOR_BLUE;
-        case LED_STATUS_COMM_ACTIVE:  return LED_COLOR_CYAN;
-        case LED_STATUS_CALIBRATING:  return LED_COLOR_MAGENTA;
-        case LED_STATUS_STANDBY:      return LED_COLOR_WHITE;
-        case LED_STATUS_INITIALIZING: return LED_COLOR_WHITE;
-        default:                      return LED_COLOR_OFF;
-    }
+    if (status >= STATUS_TABLE_SIZE) return LED_COLOR_OFF;
+    return status_table[status].color;
 }
 
 static led_animation_t status_to_animation(led_status_level_t status) {
-    switch (status) {
-        case LED_STATUS_OFF:          return LED_ANIM_SOLID;
-        case LED_STATUS_OK:           return LED_ANIM_SOLID;
-        case LED_STATUS_WARNING:      return LED_ANIM_BLINK_SLOW;
-        case LED_STATUS_ALARM:        return LED_ANIM_BLINK_FAST;
-        case LED_STATUS_FAULT:        return LED_ANIM_SOLID;
-        case LED_STATUS_MANUAL:       return LED_ANIM_SOLID;
-        case LED_STATUS_COMM_ACTIVE:  return LED_ANIM_BLINK_FAST;
-        case LED_STATUS_CALIBRATING:  return LED_ANIM_PULSE;
-        case LED_STATUS_STANDBY:      return LED_ANIM_SOLID;
-        case LED_STATUS_INITIALIZING: return LED_ANIM_PULSE;
-        default:                      return LED_ANIM_SOLID;
-    }
+    if (status >= STATUS_TABLE_SIZE) return LED_ANIM_SOLID;
+    return status_table[status].animation;
 }
 
 const char *led_status_name(led_status_level_t status) {
-    switch (status) {
-        case LED_STATUS_OFF:          return "off";
-        case LED_STATUS_OK:           return "ok";
-        case LED_STATUS_WARNING:      return "warning";
-        case LED_STATUS_ALARM:        return "alarm";
-        case LED_STATUS_FAULT:        return "fault";
-        case LED_STATUS_MANUAL:       return "manual";
-        case LED_STATUS_COMM_ACTIVE:  return "comm_active";
-        case LED_STATUS_CALIBRATING:  return "calibrating";
-        case LED_STATUS_STANDBY:      return "standby";
-        case LED_STATUS_INITIALIZING: return "initializing";
-        default:                      return "unknown";
-    }
+    if (status >= STATUS_TABLE_SIZE) return "unknown";
+    return status_table[status].name;
 }
 
 /* ============================================================================

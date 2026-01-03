@@ -170,6 +170,9 @@ result_t db_module_get_by_slot(database_t *db, int slot, db_module_t *module) {
     return RESULT_OK;
 }
 
+/* Initial capacity for dynamic array growth */
+#define MODULE_LIST_INITIAL_CAPACITY 16
+
 result_t db_module_list(database_t *db, db_module_t **modules, int *count) {
     CHECK_NULL(db); CHECK_NULL(modules); CHECK_NULL(count);
     if (!db->db) return RESULT_NOT_INITIALIZED;
@@ -177,34 +180,53 @@ result_t db_module_list(database_t *db, db_module_t **modules, int *count) {
     *modules = NULL;
     *count = 0;
 
-    /* Count first */
-    const char *count_sql = "SELECT COUNT(*) FROM modules;";
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db->db, count_sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
-
-    int total = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) total = sqlite3_column_int(stmt, 0);
-    sqlite3_finalize(stmt);
-
-    if (total == 0) return RESULT_OK;
-
-    *modules = calloc(total, sizeof(db_module_t));
-    if (!*modules) return RESULT_NO_MEMORY;
-
     const char *sql = MODULE_SELECT " ORDER BY slot;";
+    sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        free(*modules);
-        *modules = NULL;
         return RESULT_ERROR;
     }
 
+    /* Dynamic array growth - avoids separate COUNT query */
+    int capacity = MODULE_LIST_INITIAL_CAPACITY;
     int idx = 0;
-    while (sqlite3_step(stmt) == SQLITE_ROW && idx < total) {
-        map_row_to_module(stmt, &(*modules)[idx]);
+    db_module_t *arr = calloc(capacity, sizeof(db_module_t));
+    if (!arr) {
+        sqlite3_finalize(stmt);
+        return RESULT_NO_MEMORY;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        /* Grow array if needed */
+        if (idx >= capacity) {
+            capacity *= 2;
+            db_module_t *new_arr = realloc(arr, capacity * sizeof(db_module_t));
+            if (!new_arr) {
+                free(arr);
+                sqlite3_finalize(stmt);
+                return RESULT_NO_MEMORY;
+            }
+            arr = new_arr;
+            /* Zero new memory */
+            memset(&arr[idx], 0, (capacity - idx) * sizeof(db_module_t));
+        }
+        map_row_to_module(stmt, &arr[idx]);
         idx++;
     }
 
     sqlite3_finalize(stmt);
+
+    if (idx == 0) {
+        free(arr);
+        return RESULT_OK;
+    }
+
+    /* Shrink to actual size to save memory */
+    if (idx < capacity) {
+        db_module_t *final = realloc(arr, idx * sizeof(db_module_t));
+        if (final) arr = final;
+    }
+
+    *modules = arr;
     *count = idx;
     return RESULT_OK;
 }

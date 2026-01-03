@@ -29,34 +29,36 @@ typedef struct {
 static struct {
     WINDOW *win;
     sensor_item_t sensors[MAX_SENSORS];
-    int sensor_count;
-    int selected;
-    int scroll_offset;
+    tui_list_state_t list;    /* Reusable list widget for navigation */
     bool show_dialog;
     int dialog_type;  // 0=view, 1=add, 2=edit, 3=delete
 } g_page = {0};
 
 static void load_sensors(void) {
-    g_page.sensor_count = 0;
-    
+    int sensor_count = 0;
+
     database_t *db = tui_get_database();
-    if (!db) return;
-    
-    db_module_t *modules = NULL;
-    int count = 0;
-    
-    if (db_module_list(db, &modules, &count) != RESULT_OK || !modules) {
+    if (!db) {
+        tui_list_set_count(&g_page.list, 0);
         return;
     }
-    
+
+    db_module_t *modules = NULL;
+    int count = 0;
+
+    if (db_module_list(db, &modules, &count) != RESULT_OK || !modules) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
+    }
+
     for (int i = 0; i < count && i < MAX_SENSORS; i++) {
-        sensor_item_t *s = &g_page.sensors[g_page.sensor_count];
+        sensor_item_t *s = &g_page.sensors[sensor_count];
         s->id = modules[i].id;
         s->slot = modules[i].slot;
         SAFE_STRNCPY(s->name, modules[i].name, sizeof(s->name));
         SAFE_STRNCPY(s->type, modules[i].module_type, sizeof(s->type));
         SAFE_STRNCPY(s->status, modules[i].status, sizeof(s->status));
-        
+
         // Get current value
         float value;
         char status[16];
@@ -64,11 +66,12 @@ static void load_sensors(void) {
             s->value = value;
             SAFE_STRNCPY(s->status, status, sizeof(s->status));
         }
-        
-        g_page.sensor_count++;
+
+        sensor_count++;
     }
-    
+
     free(modules);
+    tui_list_set_count(&g_page.list, sensor_count);
 }
 
 static void draw_sensor_list(WINDOW *win) {
@@ -76,59 +79,58 @@ static void draw_sensor_list(WINDOW *win) {
     int max_y, max_x;
     getmaxyx(win, max_y, max_x);
     UNUSED(max_y);
-    
+
     // Header
     wattron(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
     mvwprintw(win, row++, 2, "%-4s %-20s %-12s %-10s %-12s %-8s",
               "Slot", "Name", "Type", "Value", "Status", "");
     wattroff(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
-    
+
     mvwhline(win, row++, 2, ACS_HLINE, max_x - 4);
-    
-    if (g_page.sensor_count == 0) {
+
+    if (g_page.list.item_count == 0) {
         wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
         mvwprintw(win, row + 2, 4, "No sensors configured. Press 'a' to add a sensor.");
         wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
         return;
     }
-    
-    // Sensor list
-    int visible = MIN(VISIBLE_ROWS, g_page.sensor_count - g_page.scroll_offset);
-    
+
+    // Sensor list - use list widget helper
+    int visible = tui_list_visible_count(&g_page.list);
+
     for (int i = 0; i < visible; i++) {
-        int idx = g_page.scroll_offset + i;
+        int idx = g_page.list.scroll_offset + i;
         sensor_item_t *s = &g_page.sensors[idx];
-        
-        if (idx == g_page.selected) {
+
+        if (idx == g_page.list.selected) {
             wattron(win, A_REVERSE);
         }
-        
+
         /* Use centralized status color function */
         int color = tui_status_color(s->status);
-        
+
         mvwprintw(win, row, 2, "%-4d %-20s %-12s ", s->slot, s->name, s->type);
-        
+
         // Value
         wattron(win, COLOR_PAIR(color));
         wprintw(win, "%-10.2f ", s->value);
         wattroff(win, COLOR_PAIR(color));
-        
+
         // Status
         wattron(win, COLOR_PAIR(color));
         wprintw(win, "%-12s", s->status);
         wattroff(win, COLOR_PAIR(color));
-        
-        if (idx == g_page.selected) {
+
+        if (idx == g_page.list.selected) {
             wattroff(win, A_REVERSE);
         }
-        
+
         row++;
     }
-    
-    // Scroll indicator
-    if (g_page.sensor_count > VISIBLE_ROWS) {
-        int scroll_pct = (g_page.scroll_offset * 100) / (g_page.sensor_count - VISIBLE_ROWS);
-        mvwprintw(win, 3, max_x - 8, "[%3d%%]", scroll_pct);
+
+    // Scroll indicator - use list widget helper
+    if (g_page.list.item_count > VISIBLE_ROWS) {
+        mvwprintw(win, 3, max_x - 8, "[%3d%%]", tui_list_scroll_percent(&g_page.list));
     }
 }
 
@@ -144,9 +146,9 @@ static void draw_help(WINDOW *win) {
 
 static void show_view_dialog(void) {
     database_t *db = tui_get_database();
-    if (!db || g_page.selected >= g_page.sensor_count) return;
+    if (!db || g_page.list.selected >= g_page.list.item_count) return;
 
-    sensor_item_t *s = &g_page.sensors[g_page.selected];
+    sensor_item_t *s = &g_page.sensors[g_page.list.selected];
 
     WINDOW *dialog = newwin(20, 60, 4, 10);
     box(dialog, 0, 0);
@@ -214,9 +216,9 @@ static void handle_add_sensor(void) {
         tui_set_status("Added sensor '%s' at slot %d", result.name, result.assigned_slot);
 
         /* Select the newly added sensor */
-        for (int i = 0; i < g_page.sensor_count; i++) {
+        for (int i = 0; i < g_page.list.item_count; i++) {
             if (g_page.sensors[i].id == result.created_id) {
-                g_page.selected = i;
+                g_page.list.selected = i;
                 break;
             }
         }
@@ -224,9 +226,9 @@ static void handle_add_sensor(void) {
 }
 
 static void handle_edit_sensor(void) {
-    if (g_page.selected >= g_page.sensor_count) return;
+    if (g_page.list.selected >= g_page.list.item_count) return;
 
-    sensor_item_t *s = &g_page.sensors[g_page.selected];
+    sensor_item_t *s = &g_page.sensors[g_page.list.selected];
     int slot = s->slot;
 
     if (dialog_sensor_edit(s->id)) {
@@ -238,9 +240,9 @@ static void handle_edit_sensor(void) {
 }
 
 static void handle_delete_sensor(void) {
-    if (g_page.selected >= g_page.sensor_count) return;
+    if (g_page.list.selected >= g_page.list.item_count) return;
 
-    sensor_item_t *s = &g_page.sensors[g_page.selected];
+    sensor_item_t *s = &g_page.sensors[g_page.list.selected];
     int slot = s->slot;
     char name[64];
     SAFE_STRNCPY(name, s->name, sizeof(name));
@@ -250,18 +252,13 @@ static void handle_delete_sensor(void) {
         load_sensors();
         tui_notify_sensor_changed(slot);
         tui_set_status("Deleted sensor: %s", name);
-
-        /* Adjust selection if needed */
-        if (g_page.selected >= g_page.sensor_count && g_page.sensor_count > 0) {
-            g_page.selected = g_page.sensor_count - 1;
-        }
+        /* tui_list_set_count() in load_sensors() already adjusts selection */
     }
 }
 
 void page_sensors_init(WINDOW *win) {
     g_page.win = win;
-    g_page.selected = 0;
-    g_page.scroll_offset = 0;
+    tui_list_init(&g_page.list, VISIBLE_ROWS);
     load_sensors();
 }
 
@@ -272,40 +269,17 @@ void page_sensors_draw(WINDOW *win) {
 
 void page_sensors_input(WINDOW *win, int ch) {
     UNUSED(win);
-    
+
+    /* Let list widget handle navigation keys */
+    if (tui_list_input(&g_page.list, ch)) {
+        return;
+    }
+
+    /* Handle page-specific keys */
     switch (ch) {
-        case KEY_UP:
-            if (g_page.selected > 0) {
-                g_page.selected--;
-                if (g_page.selected < g_page.scroll_offset) {
-                    g_page.scroll_offset = g_page.selected;
-                }
-            }
-            break;
-            
-        case KEY_DOWN:
-            if (g_page.selected < g_page.sensor_count - 1) {
-                g_page.selected++;
-                if (g_page.selected >= g_page.scroll_offset + VISIBLE_ROWS) {
-                    g_page.scroll_offset = g_page.selected - VISIBLE_ROWS + 1;
-                }
-            }
-            break;
-            
-        case KEY_PPAGE:
-            g_page.selected = MAX(0, g_page.selected - VISIBLE_ROWS);
-            g_page.scroll_offset = MAX(0, g_page.scroll_offset - VISIBLE_ROWS);
-            break;
-            
-        case KEY_NPAGE:
-            g_page.selected = MIN(g_page.sensor_count - 1, g_page.selected + VISIBLE_ROWS);
-            g_page.scroll_offset = MIN(MAX(0, g_page.sensor_count - VISIBLE_ROWS), 
-                                       g_page.scroll_offset + VISIBLE_ROWS);
-            break;
-            
         case '\n':
         case KEY_ENTER:
-            if (g_page.sensor_count > 0) {
+            if (g_page.list.item_count > 0) {
                 show_view_dialog();
             }
             break;
@@ -317,22 +291,22 @@ void page_sensors_input(WINDOW *win, int ch) {
 
         case 'e':
         case 'E':
-            if (g_page.sensor_count > 0) {
+            if (g_page.list.item_count > 0) {
                 handle_edit_sensor();
             }
             break;
 
         case 'd':
         case 'D':
-            if (g_page.sensor_count > 0) {
+            if (g_page.list.item_count > 0) {
                 handle_delete_sensor();
             }
             break;
-            
+
         case 'r':
         case 'R':
             load_sensors();
-            tui_set_status("Refreshed %d sensors", g_page.sensor_count);
+            tui_set_status("Refreshed %d sensors", g_page.list.item_count);
             break;
     }
 }
