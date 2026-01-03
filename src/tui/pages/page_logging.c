@@ -73,9 +73,9 @@ static void load_logging_config(void) {
     if (cfg_mgr && config_get_string(cfg_mgr, "logging", "enabled", value, sizeof(value)) == RESULT_OK) {
         SAFE_STRNCPY(f->value, value, sizeof(f->value));
     } else {
-        strcpy(f->value, "true");
+        SAFE_STRNCPY(f->value, "true", sizeof(f->value));
     }
-    
+
     // Interval
     f = &g_page.fields[g_page.field_count++];
     f->label = "Interval (sec)";
@@ -84,9 +84,9 @@ static void load_logging_config(void) {
     if (cfg_mgr && config_get_string(cfg_mgr, "logging", "interval_seconds", value, sizeof(value)) == RESULT_OK) {
         SAFE_STRNCPY(f->value, value, sizeof(f->value));
     } else {
-        strcpy(f->value, "60");
+        SAFE_STRNCPY(f->value, "60", sizeof(f->value));
     }
-    
+
     // Retention
     f = &g_page.fields[g_page.field_count++];
     f->label = "Retention (days)";
@@ -95,9 +95,9 @@ static void load_logging_config(void) {
     if (cfg_mgr && config_get_string(cfg_mgr, "logging", "retention_days", value, sizeof(value)) == RESULT_OK) {
         SAFE_STRNCPY(f->value, value, sizeof(f->value));
     } else {
-        strcpy(f->value, "30");
+        SAFE_STRNCPY(f->value, "30", sizeof(f->value));
     }
-    
+
     // Remote Enabled
     f = &g_page.fields[g_page.field_count++];
     f->label = "Remote Enabled";
@@ -106,9 +106,9 @@ static void load_logging_config(void) {
     if (cfg_mgr && config_get_string(cfg_mgr, "logging", "remote_enabled", value, sizeof(value)) == RESULT_OK) {
         SAFE_STRNCPY(f->value, value, sizeof(f->value));
     } else {
-        strcpy(f->value, "false");
+        SAFE_STRNCPY(f->value, "false", sizeof(f->value));
     }
-    
+
     // Remote URL
     f = &g_page.fields[g_page.field_count++];
     f->label = "Remote URL";
@@ -117,9 +117,9 @@ static void load_logging_config(void) {
     if (cfg_mgr && config_get_string(cfg_mgr, "logging", "remote_url", value, sizeof(value)) == RESULT_OK) {
         SAFE_STRNCPY(f->value, value, sizeof(f->value));
     } else {
-        strcpy(f->value, "");
+        SAFE_STRNCPY(f->value, "", sizeof(f->value));
     }
-    
+
     // Log Level
     f = &g_page.fields[g_page.field_count++];
     f->label = "Log Level";
@@ -129,7 +129,7 @@ static void load_logging_config(void) {
     if (app_cfg) {
         SAFE_STRNCPY(f->value, app_cfg->system.log_level, sizeof(f->value));
     } else {
-        strcpy(f->value, "info");
+        SAFE_STRNCPY(f->value, "info", sizeof(f->value));
     }
 }
 

@@ -78,7 +78,7 @@ static void refresh_io_slots(void) {
             slot->slot = modules[i].slot;
             slot->subslot = modules[i].subslot;
             SAFE_STRNCPY(slot->name, modules[i].name, sizeof(slot->name));
-            strcpy(slot->direction, "Input");
+            SAFE_STRNCPY(slot->direction, "Input", sizeof(slot->direction));
 
             // Get current value
             float value;
@@ -109,7 +109,7 @@ static void refresh_io_slots(void) {
             slot->slot = actuators[i].slot;
             slot->subslot = actuators[i].subslot > 0 ? actuators[i].subslot : 1;
             SAFE_STRNCPY(slot->name, actuators[i].name, sizeof(slot->name));
-            strcpy(slot->direction, "Output");
+            SAFE_STRNCPY(slot->direction, "Output", sizeof(slot->direction));
 
             // Get current state from actuator manager
             extern actuator_manager_t g_actuator_mgr;

@@ -383,7 +383,7 @@ static void draw_rules_list(WINDOW *win, int *row) {
             snprintf(interlock_str, sizeof(interlock_str), "S%d:%s",
                      r->interlock_slot, interlock_action_str(r->interlock_action));
         } else {
-            strcpy(interlock_str, "-");
+            SAFE_STRNCPY(interlock_str, "-", sizeof(interlock_str));
         }
 
         /* Format threshold */

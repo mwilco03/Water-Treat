@@ -51,7 +51,7 @@ static void load_system_info(void) {
     if (cfg) {
         SAFE_STRNCPY(f->value, cfg->system.device_name, sizeof(f->value));
     } else {
-        strcpy(f->value, "rtu-0000");
+        SAFE_STRNCPY(f->value, "rtu-0000", sizeof(f->value));
     }
     
     // Log Level
@@ -63,7 +63,7 @@ static void load_system_info(void) {
     if (cfg) {
         SAFE_STRNCPY(f->value, cfg->system.log_level, sizeof(f->value));
     } else {
-        strcpy(f->value, "info");
+        SAFE_STRNCPY(f->value, "info", sizeof(f->value));
     }
     
     // Hostname
@@ -74,7 +74,7 @@ static void load_system_info(void) {
     if (uname(&uts) == 0) {
         SAFE_STRNCPY(f->value, uts.nodename, sizeof(f->value));
     } else {
-        strcpy(f->value, "unknown");
+        SAFE_STRNCPY(f->value, "unknown", sizeof(f->value));
     }
     
     // Kernel Version
@@ -121,7 +121,7 @@ static void load_system_info(void) {
         }
         fclose(fp);
     } else {
-        strcpy(f->value, "N/A");
+        SAFE_STRNCPY(f->value, "N/A", sizeof(f->value));
     }
     
     // Database Path

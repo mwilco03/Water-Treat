@@ -83,7 +83,7 @@ static void refresh_sensor_data(void) {
             SAFE_STRNCPY(s->status, status, sizeof(s->status));
         } else {
             s->value = 0;
-            strcpy(s->status, "unknown");
+            SAFE_STRNCPY(s->status, "unknown", sizeof(s->status));
         }
 
         sensor_count++;
