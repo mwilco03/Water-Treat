@@ -115,9 +115,38 @@ result_t db_static_sensor_get(database_t *db, int module_id, db_static_sensor_t 
 result_t db_sensor_status_update(database_t *db, int module_id, float value, const char *status);
 result_t db_sensor_status_get(database_t *db, int module_id, float *value, char *status, size_t status_size);
 
+/**
+ * Module with status - combined struct for efficient JOIN query
+ * Eliminates N+1 query problem when listing modules with their status
+ */
+typedef struct {
+    db_module_t module;
+    float value;
+    char sensor_status[16];
+} db_module_with_status_t;
+
+/**
+ * List all modules with their sensor status in a single query (uses SQL JOIN)
+ * More efficient than calling db_module_list() + db_sensor_status_get() per module
+ */
+result_t db_module_list_with_status(database_t *db, db_module_with_status_t **modules, int *count);
+
 // Sensor log operations
 result_t db_sensor_log_insert(database_t *db, int module_id, float value, const char *status);
 result_t db_sensor_log_cleanup(database_t *db, int retention_days);
+
+/**
+ * Batch insert sensor log entries within a single transaction.
+ * Much faster than individual inserts (10-100x for large batches).
+ * @param db Database handle
+ * @param module_ids Array of module IDs
+ * @param values Array of sensor values
+ * @param statuses Array of status strings (can be NULL for all "ok")
+ * @param count Number of entries to insert
+ * @return RESULT_OK on success
+ */
+result_t db_sensor_log_insert_batch(database_t *db, const int *module_ids,
+                                     const float *values, const char **statuses, int count);
 
 // Utility
 void db_module_free_list(db_module_t *modules);

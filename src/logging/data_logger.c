@@ -243,13 +243,22 @@ static void process_queue(void) {
         g_logger.queue_count--;
     }
 
-    // Log to local database
-    if (g_logger.config.local_enabled && g_logger.db) {
+    // Log to local database using batch insert for efficiency
+    if (g_logger.config.local_enabled && g_logger.db && batch_count > 0) {
+        /* Prepare arrays for batch insert (10-100x faster than individual inserts) */
+        int module_ids[MAX_LOG_BATCH_SIZE];
+        float values[MAX_LOG_BATCH_SIZE];
+        const char *statuses[MAX_LOG_BATCH_SIZE];
+
         for (int i = 0; i < batch_count; i++) {
-            db_sensor_log_insert(g_logger.db, batch[i].module_id,
-                                 batch[i].value, batch[i].status);
+            module_ids[i] = batch[i].module_id;
+            values[i] = batch[i].value;
+            statuses[i] = batch[i].status;
         }
-        g_logger.total_logged += batch_count;
+
+        if (db_sensor_log_insert_batch(g_logger.db, module_ids, values, statuses, batch_count) == RESULT_OK) {
+            g_logger.total_logged += batch_count;
+        }
     }
 
     // Send to remote if enabled and network is connected

@@ -13,120 +13,155 @@ extern led_status_manager_t g_led_mgr;
 #include <unistd.h>
 #include <string.h>
 
+/* Data collected from sensor reads - used to process outside mutex */
+typedef struct {
+    int module_id;
+    int slot;
+    float value;
+    bool success;
+    data_quality_t quality;
+    float last_value;  /* For failed reads */
+} sensor_read_result_t;
+
+#define MAX_SENSOR_UPDATES 64
+
 // Worker thread function
 static void* sensor_worker_thread(void *arg) {
     sensor_manager_t *mgr = (sensor_manager_t *)arg;
-    
+
     LOG_INFO("Sensor worker thread started");
-    
+
+    /* Pre-allocated buffer for sensor updates - avoids allocation in loop */
+    sensor_read_result_t updates[MAX_SENSOR_UPDATES];
+    int update_count = 0;
+
     while (mgr->running) {
-        struct timespec start_time;
-        clock_gettime(CLOCK_MONOTONIC, &start_time);
-        
+        update_count = 0;
+
+        /*
+         * CRITICAL SECTION: Only hold mutex while reading sensors
+         * LED updates and alarm checks moved outside to reduce contention
+         */
         pthread_mutex_lock(&mgr->mutex);
-        
-        // Read all sensors
-        for (int i = 0; i < mgr->instance_count; i++) {
+
+        // Read all sensors - collect results for processing outside mutex
+        for (int i = 0; i < mgr->instance_count && update_count < MAX_SENSOR_UPDATES; i++) {
             sensor_instance_t *instance = mgr->instances[i];
             if (!instance) continue;
-            
+
             // Check if it's time to poll this sensor
             uint64_t now_ms = get_time_ms();
             uint64_t elapsed_ms = now_ms - instance->last_read_ms;
-            
+
             if (elapsed_ms >= (uint64_t)instance->poll_rate_ms) {
-                float value;
-                result_t result = sensor_instance_read(instance, &value);
-                
+                sensor_read_result_t *upd = &updates[update_count];
+                upd->module_id = instance->module_id;
+                upd->slot = instance->slot;
+                upd->last_value = instance->current_value;
+
+                result_t result = sensor_instance_read(instance, &upd->value);
+                upd->success = (result == RESULT_OK);
+                upd->quality = sensor_instance_get_quality(instance);
+
                 mgr->total_reads++;
-                
-                if (result == RESULT_OK) {
+                if (upd->success) {
                     mgr->successful_reads++;
-
-                    // Check alarm rules for this sensor value
-                    if (alarm_manager_is_running()) {
-                        alarm_manager_check_value(instance->module_id, value);
-                    }
-
-#ifdef LED_SUPPORT
-                    // Update LED status for this sensor slot (slots 1-4 map to sensor LEDs 0-3)
-                    if (g_led_mgr.initialized && instance->slot >= 1 && instance->slot <= 4) {
-                        bool has_alarm = false;
-                        bool has_warning = false;
-                        if (alarm_manager_is_running()) {
-                            int critical_count = 0, high_count = 0;
-                            alarm_manager_get_active_by_severity(ALARM_SEVERITY_CRITICAL, &critical_count);
-                            alarm_manager_get_active_by_severity(ALARM_SEVERITY_HIGH, &high_count);
-                            has_alarm = (critical_count > 0);
-                            has_warning = (high_count > 0);
-                        }
-                        int led_index = instance->slot - 1;
-                        led_set_sensor_status(&g_led_mgr, led_index, has_alarm, has_warning, false);
-                    }
-#endif
-
-                    /*
-                     * Write to PROFINET with quality (5-byte format)
-                     * Per DEVELOPMENT_GUIDELINES.md Part 1.2:
-                     *   Bytes 0-3: Float32 value (big-endian)
-                     *   Byte 4:    Quality indicator
-                     */
-                    if (mgr->profinet_mgr) {
-                        data_quality_t quality = sensor_instance_get_quality(instance);
-                        profinet_manager_update_input_with_quality(
-                            instance->slot,
-                            0,  /* subslot */
-                            value,
-                            quality
-                        );
-
-                        /* Set IOPS based on quality */
-                        uint8_t iops = (quality == QUALITY_GOOD) ? PNET_IOXS_GOOD : PNET_IOXS_BAD;
-                        profinet_manager_set_input_iops(mgr->profinet_mgr,
-                                                       instance->slot, 0, iops);
-                    }
-
-                    LOG_DEBUG("Read sensor slot=%d: %.2f", instance->slot, value);
-
                 } else {
                     mgr->failed_reads++;
-
-#ifdef LED_SUPPORT
-                    /* Set LED to fault status for failed sensor read */
-                    if (g_led_mgr.initialized && instance->slot >= 1 && instance->slot <= 4) {
-                        int led_index = instance->slot - 1;
-                        led_set_status(&g_led_mgr, LED_FUNC_SENSOR_1 + led_index, LED_STATUS_FAULT);
-                    }
-#endif
-
-                    /*
-                     * Send last known value with BAD quality on error
-                     * Per DEVELOPMENT_GUIDELINES.md - stale data is marked, not hidden
-                     */
-                    if (mgr->profinet_mgr) {
-                        data_quality_t quality = sensor_instance_get_quality(instance);
-                        profinet_manager_update_input_with_quality(
-                            instance->slot,
-                            0,  /* subslot */
-                            instance->current_value,  /* last known value */
-                            quality  /* will be BAD or NOT_CONNECTED */
-                        );
-                        profinet_manager_set_input_iops(mgr->profinet_mgr,
-                                                       instance->slot, 0,
-                                                       PNET_IOXS_BAD);
-                    }
-
-                    LOG_WARNING("Failed to read sensor slot=%d", instance->slot);
                 }
+
+                update_count++;
             }
         }
-        
+
         pthread_mutex_unlock(&mgr->mutex);
-        
+        /* END CRITICAL SECTION */
+
+        /*
+         * Process collected sensor updates OUTSIDE mutex
+         * This reduces lock contention with other threads accessing sensor_manager
+         */
+        for (int i = 0; i < update_count; i++) {
+            sensor_read_result_t *upd = &updates[i];
+
+            if (upd->success) {
+                // Check alarm rules for this sensor value
+                if (alarm_manager_is_running()) {
+                    alarm_manager_check_value(upd->module_id, upd->value);
+                }
+
+#ifdef LED_SUPPORT
+                // Update LED status for this sensor slot (slots 1-4 map to sensor LEDs 0-3)
+                if (g_led_mgr.initialized && upd->slot >= 1 && upd->slot <= 4) {
+                    bool has_alarm = false;
+                    bool has_warning = false;
+                    if (alarm_manager_is_running()) {
+                        int critical_count = 0, high_count = 0;
+                        alarm_manager_get_active_by_severity(ALARM_SEVERITY_CRITICAL, &critical_count);
+                        alarm_manager_get_active_by_severity(ALARM_SEVERITY_HIGH, &high_count);
+                        has_alarm = (critical_count > 0);
+                        has_warning = (high_count > 0);
+                    }
+                    int led_index = upd->slot - 1;
+                    led_set_sensor_status(&g_led_mgr, led_index, has_alarm, has_warning, false);
+                }
+#endif
+
+                /*
+                 * Write to PROFINET with quality (5-byte format)
+                 * Per DEVELOPMENT_GUIDELINES.md Part 1.2:
+                 *   Bytes 0-3: Float32 value (big-endian)
+                 *   Byte 4:    Quality indicator
+                 */
+                if (mgr->profinet_mgr) {
+                    profinet_manager_update_input_with_quality(
+                        upd->slot,
+                        0,  /* subslot */
+                        upd->value,
+                        upd->quality
+                    );
+
+                    /* Set IOPS based on quality */
+                    uint8_t iops = (upd->quality == QUALITY_GOOD) ? PNET_IOXS_GOOD : PNET_IOXS_BAD;
+                    profinet_manager_set_input_iops(mgr->profinet_mgr,
+                                                   upd->slot, 0, iops);
+                }
+
+                LOG_DEBUG("Read sensor slot=%d: %.2f", upd->slot, upd->value);
+
+            } else {
+#ifdef LED_SUPPORT
+                /* Set LED to fault status for failed sensor read */
+                if (g_led_mgr.initialized && upd->slot >= 1 && upd->slot <= 4) {
+                    int led_index = upd->slot - 1;
+                    led_set_status(&g_led_mgr, LED_FUNC_SENSOR_1 + led_index, LED_STATUS_FAULT);
+                }
+#endif
+
+                /*
+                 * Send last known value with BAD quality on error
+                 * Per DEVELOPMENT_GUIDELINES.md - stale data is marked, not hidden
+                 */
+                if (mgr->profinet_mgr) {
+                    profinet_manager_update_input_with_quality(
+                        upd->slot,
+                        0,  /* subslot */
+                        upd->last_value,  /* last known value */
+                        upd->quality  /* will be BAD or NOT_CONNECTED */
+                    );
+                    profinet_manager_set_input_iops(mgr->profinet_mgr,
+                                                   upd->slot, 0,
+                                                   PNET_IOXS_BAD);
+                }
+
+                LOG_WARNING("Failed to read sensor slot=%d", upd->slot);
+            }
+        }
+
         // Sleep for a short interval (10ms)
         usleep(10000);
     }
-    
+
     LOG_INFO("Sensor worker thread stopped");
     return NULL;
 }

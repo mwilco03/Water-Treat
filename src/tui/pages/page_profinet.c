@@ -67,29 +67,22 @@ static void refresh_io_slots(void) {
 
     g_page.slot_count = 0;
 
-    // Get input modules (sensors)
-    db_module_t *modules = NULL;
+    /* Use optimized JOIN query - single query instead of N+1 */
+    db_module_with_status_t *modules = NULL;
     int count = 0;
 
-    if (db_module_list(db, &modules, &count) == RESULT_OK && modules) {
+    if (db_module_list_with_status(db, &modules, &count) == RESULT_OK && modules) {
         for (int i = 0; i < count && g_page.slot_count < MAX_IO_SLOTS; i++) {
             io_slot_info_t *slot = &g_page.slots[g_page.slot_count];
 
-            slot->slot = modules[i].slot;
-            slot->subslot = modules[i].subslot;
-            SAFE_STRNCPY(slot->name, modules[i].name, sizeof(slot->name));
+            slot->slot = modules[i].module.slot;
+            slot->subslot = modules[i].module.subslot;
+            SAFE_STRNCPY(slot->name, modules[i].module.name, sizeof(slot->name));
             SAFE_STRNCPY(slot->direction, "Input", sizeof(slot->direction));
 
-            // Get current value
-            float value;
-            char status[16];
-            if (db_sensor_status_get(db, modules[i].id, &value, status, sizeof(status)) == RESULT_OK) {
-                slot->value = value;
-                slot->valid = (strcmp(status, "ok") == 0);
-            } else {
-                slot->value = 0.0f;
-                slot->valid = false;
-            }
+            /* Value and status come from JOIN - no additional query needed */
+            slot->value = modules[i].value;
+            slot->valid = (strcmp(modules[i].sensor_status, "ok") == 0);
 
             g_page.slot_count++;
         }

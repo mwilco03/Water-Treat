@@ -62,29 +62,23 @@ static void refresh_sensor_data(void) {
         return;
     }
 
-    db_module_t *modules = NULL;
+    /* Use optimized JOIN query - single query instead of N+1 */
+    db_module_with_status_t *modules = NULL;
     int count = 0;
 
-    if (db_module_list(db, &modules, &count) != RESULT_OK || !modules) {
+    if (db_module_list_with_status(db, &modules, &count) != RESULT_OK || !modules) {
         tui_list_set_count(&g_page.list, 0);
         return;
     }
 
     for (int i = 0; i < count && i < MAX_DISPLAY_SENSORS; i++) {
         sensor_display_t *s = &g_page.sensors[sensor_count];
-        s->id = modules[i].id;
-        s->slot = modules[i].slot;
-        SAFE_STRNCPY(s->name, modules[i].name, sizeof(s->name));
-
-        float value;
-        char status[16];
-        if (db_sensor_status_get(db, modules[i].id, &value, status, sizeof(status)) == RESULT_OK) {
-            s->value = value;
-            SAFE_STRNCPY(s->status, status, sizeof(s->status));
-        } else {
-            s->value = 0;
-            SAFE_STRNCPY(s->status, "unknown", sizeof(s->status));
-        }
+        s->id = modules[i].module.id;
+        s->slot = modules[i].module.slot;
+        SAFE_STRNCPY(s->name, modules[i].module.name, sizeof(s->name));
+        /* Value and status come from JOIN - no additional query needed */
+        s->value = modules[i].value;
+        SAFE_STRNCPY(s->status, modules[i].sensor_status, sizeof(s->status));
 
         sensor_count++;
     }

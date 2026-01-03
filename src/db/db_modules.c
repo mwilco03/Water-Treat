@@ -630,22 +630,109 @@ result_t db_sensor_status_update(database_t *db, int module_id, float value, con
 result_t db_sensor_status_get(database_t *db, int module_id, float *value, char *status, size_t status_size) {
     CHECK_NULL(db);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
+
     const char *sql = "SELECT value, status FROM sensor_status WHERE module_id=?;";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
     sqlite3_bind_int(stmt, 1, module_id);
-    
+
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
         return RESULT_NOT_FOUND;
     }
-    
+
     if (value) *value = sqlite3_column_double(stmt, 0);
     if (status) SAFE_STRNCPY(status, (const char*)sqlite3_column_text(stmt, 1), status_size);
-    
+
     sqlite3_finalize(stmt);
+    return RESULT_OK;
+}
+
+/* ============================================================================
+ * Optimized Module + Status Query (eliminates N+1 queries)
+ * ========================================================================== */
+
+result_t db_module_list_with_status(database_t *db, db_module_with_status_t **modules, int *count) {
+    CHECK_NULL(db); CHECK_NULL(modules); CHECK_NULL(count);
+    if (!db->db) return RESULT_NOT_INITIALIZED;
+
+    *modules = NULL;
+    *count = 0;
+
+    /* Single JOIN query replaces N+1 queries */
+    const char *sql =
+        "SELECT m.id, m.slot, m.subslot, m.name, m.module_type, m.module_ident, "
+        "       m.submodule_ident, m.status, "
+        "       COALESCE(s.value, 0.0), COALESCE(s.status, 'unknown') "
+        "FROM modules m "
+        "LEFT JOIN sensor_status s ON m.id = s.module_id "
+        "ORDER BY m.slot;";
+
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        LOG_ERROR("Prepare failed: %s", sqlite3_errmsg(db->db));
+        return RESULT_ERROR;
+    }
+
+    /* Dynamic array growth */
+    int capacity = MODULE_LIST_INITIAL_CAPACITY;
+    int idx = 0;
+    db_module_with_status_t *arr = calloc(capacity, sizeof(db_module_with_status_t));
+    if (!arr) {
+        sqlite3_finalize(stmt);
+        return RESULT_NO_MEMORY;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        /* Grow array if needed */
+        if (idx >= capacity) {
+            capacity *= 2;
+            db_module_with_status_t *new_arr = realloc(arr, capacity * sizeof(db_module_with_status_t));
+            if (!new_arr) {
+                free(arr);
+                sqlite3_finalize(stmt);
+                return RESULT_NO_MEMORY;
+            }
+            arr = new_arr;
+            memset(&arr[idx], 0, (capacity - idx) * sizeof(db_module_with_status_t));
+        }
+
+        /* Map module columns (0-7) */
+        db_module_t *m = &arr[idx].module;
+        m->id = sqlite3_column_int(stmt, 0);
+        m->slot = sqlite3_column_int(stmt, 1);
+        m->subslot = sqlite3_column_int(stmt, 2);
+        SAFE_STRNCPY(m->name, (const char*)sqlite3_column_text(stmt, 3), sizeof(m->name));
+        SAFE_STRNCPY(m->module_type, (const char*)sqlite3_column_text(stmt, 4), sizeof(m->module_type));
+        m->module_ident = sqlite3_column_int(stmt, 5);
+        m->submodule_ident = sqlite3_column_int(stmt, 6);
+        SAFE_STRNCPY(m->status, (const char*)sqlite3_column_text(stmt, 7), sizeof(m->status));
+
+        /* Map status columns (8-9) from JOIN */
+        arr[idx].value = sqlite3_column_double(stmt, 8);
+        const char *status_text = (const char*)sqlite3_column_text(stmt, 9);
+        SAFE_STRNCPY(arr[idx].sensor_status, status_text ? status_text : "unknown",
+                     sizeof(arr[idx].sensor_status));
+
+        idx++;
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (idx == 0) {
+        free(arr);
+        return RESULT_OK;
+    }
+
+    /* Shrink to actual size */
+    if (idx < capacity) {
+        db_module_with_status_t *final = realloc(arr, idx * sizeof(db_module_with_status_t));
+        if (final) arr = final;
+    }
+
+    *modules = arr;
+    *count = idx;
     return RESULT_OK;
 }
 
@@ -656,12 +743,12 @@ result_t db_sensor_status_get(database_t *db, int module_id, float *value, char 
 result_t db_sensor_log_insert(database_t *db, int module_id, float value, const char *status) {
     CHECK_NULL(db);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
+
     const char *sql = "INSERT INTO sensor_data_log (module_id, value, status) VALUES (?, ?, ?);";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
-    
+
     sqlite3_bind_int(stmt, 1, module_id);
     sqlite3_bind_double(stmt, 2, value);
     sqlite3_bind_text(stmt, 3, status ? status : STATUS_OK, -1, SQLITE_TRANSIENT);
@@ -669,6 +756,58 @@ result_t db_sensor_log_insert(database_t *db, int module_id, float value, const 
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return rc == SQLITE_DONE ? RESULT_OK : RESULT_ERROR;
+}
+
+result_t db_sensor_log_insert_batch(database_t *db, const int *module_ids,
+                                     const float *values, const char **statuses, int count) {
+    CHECK_NULL(db); CHECK_NULL(module_ids); CHECK_NULL(values);
+    if (!db->db) return RESULT_NOT_INITIALIZED;
+    if (count <= 0) return RESULT_OK;
+
+    /* Start transaction for batch - much faster than individual commits */
+    char *err = NULL;
+    if (sqlite3_exec(db->db, "BEGIN TRANSACTION", NULL, NULL, &err) != SQLITE_OK) {
+        LOG_ERROR("Begin transaction failed: %s", err);
+        sqlite3_free(err);
+        return RESULT_ERROR;
+    }
+
+    const char *sql = "INSERT INTO sensor_data_log (module_id, value, status) VALUES (?, ?, ?);";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+        return RESULT_ERROR;
+    }
+
+    int inserted = 0;
+    for (int i = 0; i < count; i++) {
+        sqlite3_reset(stmt);
+        sqlite3_bind_int(stmt, 1, module_ids[i]);
+        sqlite3_bind_double(stmt, 2, values[i]);
+        sqlite3_bind_text(stmt, 3, (statuses && statuses[i]) ? statuses[i] : STATUS_OK,
+                          -1, SQLITE_TRANSIENT);
+
+        if (sqlite3_step(stmt) == SQLITE_DONE) {
+            inserted++;
+        }
+    }
+
+    sqlite3_finalize(stmt);
+
+    /* Commit transaction */
+    if (sqlite3_exec(db->db, "COMMIT", NULL, NULL, &err) != SQLITE_OK) {
+        LOG_ERROR("Commit failed: %s", err);
+        sqlite3_free(err);
+        sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, NULL);
+        return RESULT_ERROR;
+    }
+
+    if (inserted < count) {
+        LOG_WARNING("Batch insert: %d/%d entries inserted", inserted, count);
+    }
+
+    return RESULT_OK;
 }
 
 result_t db_sensor_log_cleanup(database_t *db, int retention_days) {
