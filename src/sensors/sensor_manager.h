@@ -9,12 +9,18 @@
 // Forward declarations
 typedef struct profinet_manager_t profinet_manager_t;
 
+/* Maximum slot number for O(1) lookup (PROFINET slots typically 1-64) */
+#define SENSOR_MAX_SLOT 64
+
 typedef struct {
     database_t *db;
     profinet_manager_t *profinet_mgr;
 
     sensor_instance_t *instances[MAX_SENSOR_INSTANCES];
     int instance_count;
+
+    /* O(1) slot lookup: slot_map[slot] -> instance pointer (NULL if no sensor at slot) */
+    sensor_instance_t *slot_map[SENSOR_MAX_SLOT + 1];
 
     pthread_t worker_thread;
     pthread_mutex_t mutex;

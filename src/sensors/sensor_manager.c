@@ -203,7 +203,7 @@ void sensor_manager_destroy(sensor_manager_t *mgr) {
 result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
     pthread_mutex_lock(&mgr->mutex);
     
-    // Destroy existing instances
+    // Destroy existing instances and clear slot map
     for (int i = 0; i < mgr->instance_count; i++) {
         if (mgr->instances[i]) {
             sensor_instance_destroy(mgr->instances[i]);
@@ -211,8 +211,9 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
             mgr->instances[i] = NULL;
         }
     }
-    
+
     mgr->instance_count = 0;
+    memset(mgr->slot_map, 0, sizeof(mgr->slot_map));
     
     // Load modules from database
     db_module_t *modules = NULL;
@@ -242,7 +243,12 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
         result = sensor_instance_create_from_db(instance, module, mgr->db);
         if (result == RESULT_OK) {
             mgr->instances[mgr->instance_count++] = instance;
-            
+
+            /* Update slot_map for O(1) lookup */
+            if (instance->slot >= 0 && instance->slot <= SENSOR_MAX_SLOT) {
+                mgr->slot_map[instance->slot] = instance;
+            }
+
             // Add module to PROFINET if configured
             if (mgr->profinet_mgr && instance->type != SENSOR_INSTANCE_CALCULATED) {
                 profinet_manager_add_module(
@@ -273,30 +279,28 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
 
 result_t sensor_manager_get_sensor_value(sensor_manager_t *mgr, int slot, float *value) {
     pthread_mutex_lock(&mgr->mutex);
-    
-    for (int i = 0; i < mgr->instance_count; i++) {
-        if (mgr->instances[i] && mgr->instances[i]->slot == slot) {
-            *value = mgr->instances[i]->current_value;
-            pthread_mutex_unlock(&mgr->mutex);
-            return RESULT_OK;
-        }
+
+    /* O(1) lookup via slot_map */
+    if (slot >= 0 && slot <= SENSOR_MAX_SLOT && mgr->slot_map[slot]) {
+        *value = mgr->slot_map[slot]->current_value;
+        pthread_mutex_unlock(&mgr->mutex);
+        return RESULT_OK;
     }
-    
+
     pthread_mutex_unlock(&mgr->mutex);
     return RESULT_NOT_FOUND;
 }
 
 result_t sensor_manager_test_sensor(sensor_manager_t *mgr, int slot) {
     pthread_mutex_lock(&mgr->mutex);
-    
-    for (int i = 0; i < mgr->instance_count; i++) {
-        if (mgr->instances[i] && mgr->instances[i]->slot == slot) {
-            result_t result = sensor_instance_test(mgr->instances[i]);
-            pthread_mutex_unlock(&mgr->mutex);
-            return result;
-        }
+
+    /* O(1) lookup via slot_map */
+    if (slot >= 0 && slot <= SENSOR_MAX_SLOT && mgr->slot_map[slot]) {
+        result_t result = sensor_instance_test(mgr->slot_map[slot]);
+        pthread_mutex_unlock(&mgr->mutex);
+        return result;
     }
-    
+
     pthread_mutex_unlock(&mgr->mutex);
     return RESULT_NOT_FOUND;
 }
