@@ -435,23 +435,13 @@ void tui_format_timestamp(char *buffer, size_t buf_size, time_t timestamp) {
  * ========================================================================== */
 
 int tui_status_color(const char *status) {
-    if (!status) return TUI_COLOR_NORMAL;
-    
-    if (strcmp(status, "ok") == 0 || strcmp(status, "good") == 0 || 
-        strcmp(status, "connected") == 0 || strcmp(status, "active") == 0) {
-        return TUI_COLOR_STATUS;
+    /* Use centralized status classification from common.h */
+    switch (status_classify(status)) {
+        case STATUS_TYPE_OK:      return TUI_COLOR_STATUS;
+        case STATUS_TYPE_ERROR:   return TUI_COLOR_ERROR;
+        case STATUS_TYPE_WARNING: return TUI_COLOR_WARNING;
+        default:                  return TUI_COLOR_NORMAL;
     }
-    
-    if (strcmp(status, "error") == 0 || strcmp(status, "fail") == 0 ||
-        strcmp(status, "critical") == 0 || strcmp(status, "disconnected") == 0) {
-        return TUI_COLOR_ERROR;
-    }
-    
-    if (strcmp(status, "warning") == 0 || strcmp(status, "warn") == 0) {
-        return TUI_COLOR_WARNING;
-    }
-    
-    return TUI_COLOR_NORMAL;
 }
 
 int tui_value_color(float value, float low_warn, float low_err, float high_warn, float high_err) {

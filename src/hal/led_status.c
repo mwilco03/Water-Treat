@@ -10,11 +10,25 @@
 #include "utils/logger.h"
 #include <string.h>
 
-/* Animation timing constants (based on 50Hz update rate) */
-#define ANIM_BLINK_SLOW_PERIOD  50   /* 1 Hz (50 ticks = 1 second) */
-#define ANIM_BLINK_FAST_PERIOD  12   /* ~4 Hz */
-#define ANIM_PULSE_PERIOD       100  /* 2 second pulse cycle */
-#define ANIM_FLASH_DURATION     5    /* 100ms flash */
+/* ============================================================================
+ * Animation Timing Constants
+ * ============================================================================
+ * All timing is derived from the LED update rate and desired frequencies.
+ * This makes the relationship between values explicit and self-documenting.
+ */
+#define LED_UPDATE_RATE_HZ      50      /* LED update frequency */
+
+/* Blink frequencies */
+#define BLINK_SLOW_HZ           1       /* Slow blink: 1 Hz */
+#define BLINK_FAST_HZ           4       /* Fast blink: 4 Hz */
+#define PULSE_CYCLE_SEC         2       /* Pulse cycle: 2 seconds */
+#define FLASH_DURATION_MS       100     /* Flash duration: 100ms */
+
+/* Calculated animation periods (in ticks) */
+#define ANIM_BLINK_SLOW_PERIOD  (LED_UPDATE_RATE_HZ / BLINK_SLOW_HZ)
+#define ANIM_BLINK_FAST_PERIOD  (LED_UPDATE_RATE_HZ / BLINK_FAST_HZ)
+#define ANIM_PULSE_PERIOD       (LED_UPDATE_RATE_HZ * PULSE_CYCLE_SEC)
+#define ANIM_FLASH_DURATION     (LED_UPDATE_RATE_HZ * FLASH_DURATION_MS / 1000)
 
 /* ============================================================================
  * Color and Status Mapping

@@ -1664,7 +1664,7 @@ static bool save_sensor(void) {
     SAFE_STRNCPY(module.name, g_wiz.name, sizeof(module.name));
     module.module_ident = 0x00000001;
     module.submodule_ident = 0x00000001;
-    strcpy(module.status, "inactive");
+    strcpy(module.status, STATUS_INACTIVE);
 
     int sensor_id = 0;
 

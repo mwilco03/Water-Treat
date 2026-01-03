@@ -103,15 +103,8 @@ static void draw_sensor_list(WINDOW *win) {
             wattron(win, A_REVERSE);
         }
         
-        // Status color
-        int color = TUI_COLOR_NORMAL;
-        if (strcmp(s->status, "ok") == 0) {
-            color = TUI_COLOR_STATUS;
-        } else if (strcmp(s->status, "error") == 0) {
-            color = TUI_COLOR_ERROR;
-        } else if (strcmp(s->status, "warning") == 0) {
-            color = TUI_COLOR_WARNING;
-        }
+        /* Use centralized status color function */
+        int color = tui_status_color(s->status);
         
         mvwprintw(win, row, 2, "%-4d %-20s %-12s ", s->slot, s->name, s->type);
         

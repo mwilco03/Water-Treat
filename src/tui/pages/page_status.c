@@ -231,10 +231,7 @@ static void draw_sensor_table(WINDOW *win, int *row) {
         int idx = g_page.scroll_offset + i;
         sensor_display_t *s = &g_page.sensors[idx];
         
-        int color = TUI_COLOR_NORMAL;
-        if (strcmp(s->status, "ok") == 0) color = TUI_COLOR_STATUS;
-        else if (strcmp(s->status, "error") == 0) color = TUI_COLOR_ERROR;
-        else if (strcmp(s->status, "warning") == 0) color = TUI_COLOR_WARNING;
+        int color = tui_status_color(s->status);
         
         mvwprintw(win, *row, 4, "%-4d %-24s ", s->slot, s->name);
         

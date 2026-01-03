@@ -7,6 +7,38 @@
 #include "utils/logger.h"
 
 /* ============================================================================
+ * SQL String Constants
+ * ============================================================================
+ * Centralized SQL fragments to reduce duplication and prevent typos.
+ * Column order must be consistent with map_row_to_module().
+ */
+#define MODULE_COLUMNS \
+    "id, slot, subslot, name, module_type, module_ident, submodule_ident, status"
+
+#define MODULE_SELECT "SELECT " MODULE_COLUMNS " FROM modules"
+
+/* ============================================================================
+ * Row Mapping Helpers
+ * ============================================================================
+ * Extract common code for mapping SQLite rows to structs.
+ */
+
+/**
+ * Map a single row from a modules query to db_module_t struct.
+ * Column order must match MODULE_COLUMNS.
+ */
+static void map_row_to_module(sqlite3_stmt *stmt, db_module_t *module) {
+    module->id = sqlite3_column_int(stmt, 0);
+    module->slot = sqlite3_column_int(stmt, 1);
+    module->subslot = sqlite3_column_int(stmt, 2);
+    SAFE_STRNCPY(module->name, (const char*)sqlite3_column_text(stmt, 3), sizeof(module->name));
+    SAFE_STRNCPY(module->module_type, (const char*)sqlite3_column_text(stmt, 4), sizeof(module->module_type));
+    module->module_ident = sqlite3_column_int(stmt, 5);
+    module->submodule_ident = sqlite3_column_int(stmt, 6);
+    SAFE_STRNCPY(module->status, (const char*)sqlite3_column_text(stmt, 7), sizeof(module->status));
+}
+
+/* ============================================================================
  * Module CRUD Operations
  * ========================================================================== */
 
@@ -28,7 +60,7 @@ result_t db_module_create(database_t *db, db_module_t *module, int *module_id) {
     sqlite3_bind_text(stmt, 4, module->module_type, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 5, module->module_ident);
     sqlite3_bind_int(stmt, 6, module->submodule_ident);
-    sqlite3_bind_text(stmt, 7, module->status[0] ? module->status : "inactive", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 7, module->status[0] ? module->status : STATUS_INACTIVE, -1, SQLITE_TRANSIENT);
     
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -101,27 +133,19 @@ result_t db_module_delete(database_t *db, int module_id) {
 result_t db_module_get(database_t *db, int module_id, db_module_t *module) {
     CHECK_NULL(db); CHECK_NULL(module);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
-    const char *sql = "SELECT id, slot, subslot, name, module_type, module_ident, submodule_ident, status FROM modules WHERE id=?;";
+
+    const char *sql = MODULE_SELECT " WHERE id=?;";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
     sqlite3_bind_int(stmt, 1, module_id);
-    
+
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
         return RESULT_NOT_FOUND;
     }
-    
-    module->id = sqlite3_column_int(stmt, 0);
-    module->slot = sqlite3_column_int(stmt, 1);
-    module->subslot = sqlite3_column_int(stmt, 2);
-    SAFE_STRNCPY(module->name, (const char*)sqlite3_column_text(stmt, 3), sizeof(module->name));
-    SAFE_STRNCPY(module->module_type, (const char*)sqlite3_column_text(stmt, 4), sizeof(module->module_type));
-    module->module_ident = sqlite3_column_int(stmt, 5);
-    module->submodule_ident = sqlite3_column_int(stmt, 6);
-    SAFE_STRNCPY(module->status, (const char*)sqlite3_column_text(stmt, 7), sizeof(module->status));
-    
+
+    map_row_to_module(stmt, module);
     sqlite3_finalize(stmt);
     return RESULT_OK;
 }
@@ -129,27 +153,19 @@ result_t db_module_get(database_t *db, int module_id, db_module_t *module) {
 result_t db_module_get_by_slot(database_t *db, int slot, db_module_t *module) {
     CHECK_NULL(db); CHECK_NULL(module);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
-    const char *sql = "SELECT id, slot, subslot, name, module_type, module_ident, submodule_ident, status FROM modules WHERE slot=?;";
+
+    const char *sql = MODULE_SELECT " WHERE slot=?;";
     sqlite3_stmt *stmt;
-    
+
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
     sqlite3_bind_int(stmt, 1, slot);
-    
+
     if (sqlite3_step(stmt) != SQLITE_ROW) {
         sqlite3_finalize(stmt);
         return RESULT_NOT_FOUND;
     }
-    
-    module->id = sqlite3_column_int(stmt, 0);
-    module->slot = sqlite3_column_int(stmt, 1);
-    module->subslot = sqlite3_column_int(stmt, 2);
-    SAFE_STRNCPY(module->name, (const char*)sqlite3_column_text(stmt, 3), sizeof(module->name));
-    SAFE_STRNCPY(module->module_type, (const char*)sqlite3_column_text(stmt, 4), sizeof(module->module_type));
-    module->module_ident = sqlite3_column_int(stmt, 5);
-    module->submodule_ident = sqlite3_column_int(stmt, 6);
-    SAFE_STRNCPY(module->status, (const char*)sqlite3_column_text(stmt, 7), sizeof(module->status));
-    
+
+    map_row_to_module(stmt, module);
     sqlite3_finalize(stmt);
     return RESULT_OK;
 }
@@ -157,44 +173,37 @@ result_t db_module_get_by_slot(database_t *db, int slot, db_module_t *module) {
 result_t db_module_list(database_t *db, db_module_t **modules, int *count) {
     CHECK_NULL(db); CHECK_NULL(modules); CHECK_NULL(count);
     if (!db->db) return RESULT_NOT_INITIALIZED;
-    
+
     *modules = NULL;
     *count = 0;
-    
-    // Count first
+
+    /* Count first */
     const char *count_sql = "SELECT COUNT(*) FROM modules;";
     sqlite3_stmt *stmt;
     if (sqlite3_prepare_v2(db->db, count_sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
-    
+
     int total = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) total = sqlite3_column_int(stmt, 0);
     sqlite3_finalize(stmt);
-    
+
     if (total == 0) return RESULT_OK;
-    
+
     *modules = calloc(total, sizeof(db_module_t));
     if (!*modules) return RESULT_NO_MEMORY;
-    
-    const char *sql = "SELECT id, slot, subslot, name, module_type, module_ident, submodule_ident, status FROM modules ORDER BY slot;";
+
+    const char *sql = MODULE_SELECT " ORDER BY slot;";
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         free(*modules);
         *modules = NULL;
         return RESULT_ERROR;
     }
-    
+
     int idx = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW && idx < total) {
-        (*modules)[idx].id = sqlite3_column_int(stmt, 0);
-        (*modules)[idx].slot = sqlite3_column_int(stmt, 1);
-        (*modules)[idx].subslot = sqlite3_column_int(stmt, 2);
-        SAFE_STRNCPY((*modules)[idx].name, (const char*)sqlite3_column_text(stmt, 3), sizeof((*modules)[idx].name));
-        SAFE_STRNCPY((*modules)[idx].module_type, (const char*)sqlite3_column_text(stmt, 4), sizeof((*modules)[idx].module_type));
-        (*modules)[idx].module_ident = sqlite3_column_int(stmt, 5);
-        (*modules)[idx].submodule_ident = sqlite3_column_int(stmt, 6);
-        SAFE_STRNCPY((*modules)[idx].status, (const char*)sqlite3_column_text(stmt, 7), sizeof((*modules)[idx].status));
+        map_row_to_module(stmt, &(*modules)[idx]);
         idx++;
     }
-    
+
     sqlite3_finalize(stmt);
     *count = idx;
     return RESULT_OK;
@@ -587,8 +596,8 @@ result_t db_sensor_status_update(database_t *db, int module_id, float value, con
     
     sqlite3_bind_int(stmt, 1, module_id);
     sqlite3_bind_double(stmt, 2, value);
-    sqlite3_bind_text(stmt, 3, status ? status : "ok", -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 4, status ? status : "ok", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, status ? status : STATUS_OK, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, status ? status : STATUS_OK, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 5, module_id);
     
     int rc = sqlite3_step(stmt);
@@ -633,8 +642,8 @@ result_t db_sensor_log_insert(database_t *db, int module_id, float value, const 
     
     sqlite3_bind_int(stmt, 1, module_id);
     sqlite3_bind_double(stmt, 2, value);
-    sqlite3_bind_text(stmt, 3, status ? status : "ok", -1, SQLITE_TRANSIENT);
-    
+    sqlite3_bind_text(stmt, 3, status ? status : STATUS_OK, -1, SQLITE_TRANSIENT);
+
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return rc == SQLITE_DONE ? RESULT_OK : RESULT_ERROR;

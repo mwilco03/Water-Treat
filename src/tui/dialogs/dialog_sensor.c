@@ -220,7 +220,7 @@ static result_t save_sensor(sensor_form_t *form, int *sensor_id) {
     SAFE_STRNCPY(module.module_type, form->module_type, sizeof(module.module_type));
     module.module_ident = form->module_ident;
     module.submodule_ident = form->submodule_ident;
-    strcpy(module.status, "inactive");
+    strcpy(module.status, STATUS_INACTIVE);
 
     r = db_module_create(db, &module, sensor_id);
     if (r != RESULT_OK) return r;

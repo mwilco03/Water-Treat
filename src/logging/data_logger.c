@@ -434,7 +434,7 @@ result_t data_logger_log(int module_id, float value, const char *status) {
     log_entry_t *entry = &g_logger.queue[g_logger.queue_head];
     entry->module_id = module_id;
     entry->value = value;
-    SAFE_STRNCPY(entry->status, status ? status : "ok", sizeof(entry->status));
+    SAFE_STRNCPY(entry->status, status ? status : STATUS_OK, sizeof(entry->status));
     entry->timestamp = time(NULL);
     
     g_logger.queue_head = (g_logger.queue_head + 1) % LOG_QUEUE_SIZE;
@@ -455,7 +455,7 @@ result_t data_logger_log_batch(int *module_ids, float *values, const char **stat
     CHECK_NULL(module_ids); CHECK_NULL(values);
     
     for (int i = 0; i < count; i++) {
-        data_logger_log(module_ids[i], values[i], statuses ? statuses[i] : "ok");
+        data_logger_log(module_ids[i], values[i], statuses ? statuses[i] : STATUS_OK);
     }
     
     return RESULT_OK;
