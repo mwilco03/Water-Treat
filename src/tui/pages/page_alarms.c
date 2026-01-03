@@ -56,8 +56,7 @@ static struct {
     rule_display_t rules[MAX_RULES];
     int rule_count;
 
-    int selected;
-    int scroll_offset;
+    tui_list_state_t list;    /* Reusable list widget for navigation */
 
     int view_mode;  // 0 = active, 1 = history, 2 = rules
     bool show_dialog;
@@ -65,15 +64,21 @@ static struct {
 
 static void load_active_alarms(void) {
     g_page.alarm_count = 0;
-    
+
     database_t *db = tui_get_database();
-    if (!db) return;
-    
+    if (!db) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
+    }
+
     db_alarm_history_t *alarms = NULL;
     int count = 0;
-    
-    if (db_alarm_list_active(db, &alarms, &count) != RESULT_OK || !alarms) return;
-    
+
+    if (db_alarm_list_active(db, &alarms, &count) != RESULT_OK || !alarms) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
+    }
+
     for (int i = 0; i < count && i < MAX_ALARMS; i++) {
         alarm_display_t *a = &g_page.alarms[g_page.alarm_count];
         a->id = alarms[i].id;
@@ -87,20 +92,27 @@ static void load_active_alarms(void) {
         SAFE_STRNCPY(a->acknowledged_by, alarms[i].acknowledged_by, sizeof(a->acknowledged_by));
         g_page.alarm_count++;
     }
-    
+
     free(alarms);
+    tui_list_set_count(&g_page.list, g_page.alarm_count);
 }
 
 static void load_alarm_rules(void) {
     g_page.rule_count = 0;
 
     database_t *db = tui_get_database();
-    if (!db) return;
+    if (!db) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
+    }
 
     db_alarm_rule_t *rules = NULL;
     int count = 0;
 
-    if (db_alarm_rule_list(db, &rules, &count) != RESULT_OK || !rules) return;
+    if (db_alarm_rule_list(db, &rules, &count) != RESULT_OK || !rules) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
+    }
 
     for (int i = 0; i < count && i < MAX_RULES; i++) {
         rule_display_t *r = &g_page.rules[g_page.rule_count];
@@ -129,6 +141,7 @@ static void load_alarm_rules(void) {
     }
 
     free(rules);
+    tui_list_set_count(&g_page.list, g_page.rule_count);
 }
 
 static const char* interlock_action_str(interlock_action_t action) {
@@ -250,21 +263,22 @@ static void draw_alarm_list(WINDOW *win, int *row) {
     wattroff(win, A_BOLD);
     (*row)++;
     
-    if (g_page.alarm_count == 0) {
+    if (g_page.list.item_count == 0) {
         (*row)++;
         wattron(win, COLOR_PAIR(TUI_COLOR_STATUS));
         mvwprintw(win, *row, 6, "No active alarms");
         wattroff(win, COLOR_PAIR(TUI_COLOR_STATUS));
         return;
     }
-    
-    int visible = MIN(VISIBLE_ROWS, g_page.alarm_count - g_page.scroll_offset);
-    
+
+    /* Use list widget helper */
+    int visible = tui_list_visible_count(&g_page.list);
+
     for (int i = 0; i < visible; i++) {
-        int idx = g_page.scroll_offset + i;
+        int idx = g_page.list.scroll_offset + i;
         alarm_display_t *a = &g_page.alarms[idx];
-        
-        if (idx == g_page.selected) {
+
+        if (idx == g_page.list.selected) {
             wattron(win, A_REVERSE);
         }
         
@@ -295,11 +309,11 @@ static void draw_alarm_list(WINDOW *win, int *row) {
         strncpy(msg_truncated, a->message, 40);
         msg_truncated[40] = '\0';
         wprintw(win, "%-40s", msg_truncated);
-        
-        if (idx == g_page.selected) {
+
+        if (idx == g_page.list.selected) {
             wattroff(win, A_REVERSE);
         }
-        
+
         (*row)++;
     }
 }
@@ -342,7 +356,7 @@ static void draw_rules_list(WINDOW *win, int *row) {
     wattroff(win, A_BOLD);
     (*row)++;
 
-    if (g_page.rule_count == 0) {
+    if (g_page.list.item_count == 0) {
         (*row)++;
         wattron(win, COLOR_PAIR(TUI_COLOR_STATUS));
         mvwprintw(win, *row, 6, "No alarm rules configured. Press 'n' to create one.");
@@ -350,13 +364,14 @@ static void draw_rules_list(WINDOW *win, int *row) {
         return;
     }
 
-    int visible = MIN(VISIBLE_ROWS, g_page.rule_count - g_page.scroll_offset);
+    /* Use list widget helper */
+    int visible = tui_list_visible_count(&g_page.list);
 
     for (int i = 0; i < visible; i++) {
-        int idx = g_page.scroll_offset + i;
+        int idx = g_page.list.scroll_offset + i;
         rule_display_t *r = &g_page.rules[idx];
 
-        if (idx == g_page.selected) {
+        if (idx == g_page.list.selected) {
             wattron(win, A_REVERSE);
         }
 
@@ -406,7 +421,7 @@ static void draw_rules_list(WINDOW *win, int *row) {
 
         wprintw(win, "%s", r->enabled ? "[X]" : "[ ]");
 
-        if (idx == g_page.selected) {
+        if (idx == g_page.list.selected) {
             wattroff(win, A_REVERSE);
         }
 
@@ -432,9 +447,9 @@ static void draw_help(WINDOW *win) {
 }
 
 static void show_alarm_details(void) {
-    if (g_page.selected >= g_page.alarm_count) return;
-    
-    alarm_display_t *a = &g_page.alarms[g_page.selected];
+    if (g_page.list.selected >= g_page.alarm_count) return;
+
+    alarm_display_t *a = &g_page.alarms[g_page.list.selected];
     
     WINDOW *dialog = newwin(14, 70, 5, 5);
     box(dialog, 0, 0);
@@ -477,9 +492,9 @@ static void show_alarm_details(void) {
 }
 
 static void acknowledge_selected(void) {
-    if (g_page.selected >= g_page.alarm_count) return;
-    
-    alarm_display_t *a = &g_page.alarms[g_page.selected];
+    if (g_page.list.selected >= g_page.alarm_count) return;
+
+    alarm_display_t *a = &g_page.alarms[g_page.list.selected];
     
     if (a->state == ALARM_STATE_ACTIVE) {
         if (alarm_manager_acknowledge(a->id, "operator") == RESULT_OK) {
@@ -502,8 +517,7 @@ static void acknowledge_all(void) {
 
 void page_alarms_init(WINDOW *win) {
     g_page.win = win;
-    g_page.selected = 0;
-    g_page.scroll_offset = 0;
+    tui_list_init(&g_page.list, VISIBLE_ROWS);
     g_page.view_mode = 0;
     load_active_alarms();
 }
@@ -526,9 +540,9 @@ void page_alarms_draw(WINDOW *win) {
 }
 
 static void toggle_rule_enabled(void) {
-    if (g_page.view_mode != 2 || g_page.selected >= g_page.rule_count) return;
+    if (g_page.view_mode != 2 || g_page.list.selected >= g_page.rule_count) return;
 
-    rule_display_t *r = &g_page.rules[g_page.selected];
+    rule_display_t *r = &g_page.rules[g_page.list.selected];
     database_t *db = tui_get_database();
     if (!db) return;
 
@@ -541,8 +555,9 @@ static void toggle_rule_enabled(void) {
 
 static void switch_view(int mode) {
     g_page.view_mode = mode;
-    g_page.selected = 0;
-    g_page.scroll_offset = 0;
+    /* Reset list widget for new view */
+    g_page.list.selected = 0;
+    g_page.list.scroll_offset = 0;
 
     if (mode == 0 || mode == 1) {
         load_active_alarms();
@@ -554,63 +569,38 @@ static void switch_view(int mode) {
 void page_alarms_input(WINDOW *win, int ch) {
     UNUSED(win);
 
-    int item_count = (g_page.view_mode == 2) ? g_page.rule_count : g_page.alarm_count;
-
+    /* Handle view switching first (before list widget) */
     switch (ch) {
-        /* View switching */
         case '1':
             switch_view(0);
             tui_set_status("Active alarms view");
-            break;
+            return;
 
         case '2':
             switch_view(1);
             tui_set_status("Alarm history view");
-            break;
+            return;
 
         case '3':
             switch_view(2);
             tui_set_status("Alarm rules configuration (%d rules)", g_page.rule_count);
-            break;
+            return;
+    }
 
-        /* Navigation */
-        case KEY_UP:
-            if (g_page.selected > 0) {
-                g_page.selected--;
-                if (g_page.selected < g_page.scroll_offset) {
-                    g_page.scroll_offset = g_page.selected;
-                }
-            }
-            break;
+    /* Let list widget handle navigation keys */
+    if (tui_list_input(&g_page.list, ch)) {
+        return;
+    }
 
-        case KEY_DOWN:
-            if (g_page.selected < item_count - 1) {
-                g_page.selected++;
-                if (g_page.selected >= g_page.scroll_offset + VISIBLE_ROWS) {
-                    g_page.scroll_offset = g_page.selected - VISIBLE_ROWS + 1;
-                }
-            }
-            break;
-
-        case KEY_PPAGE:
-            g_page.selected = MAX(0, g_page.selected - VISIBLE_ROWS);
-            g_page.scroll_offset = MAX(0, g_page.scroll_offset - VISIBLE_ROWS);
-            break;
-
-        case KEY_NPAGE:
-            g_page.selected = MIN(item_count - 1, g_page.selected + VISIBLE_ROWS);
-            g_page.scroll_offset = MIN(MAX(0, item_count - VISIBLE_ROWS),
-                                       g_page.scroll_offset + VISIBLE_ROWS);
-            break;
-
-        /* Actions */
+    /* Handle page-specific keys */
+    switch (ch) {
         case '\n':
         case KEY_ENTER:
             if (g_page.view_mode == 2 && g_page.rule_count > 0) {
                 /* Edit selected rule */
                 database_t *db = tui_get_database();
                 if (db) {
-                    rule_display_t *rule = &g_page.rules[g_page.selected];
+                    rule_display_t *rule = &g_page.rules[g_page.list.selected];
                     db_alarm_rule_t db_rule = {0};
                     if (db_alarm_rule_get(db, rule->id, &db_rule) == RESULT_OK) {
                         alarm_form_t form;
@@ -680,13 +670,11 @@ void page_alarms_input(WINDOW *win, int ch) {
                 /* Delete selected rule */
                 database_t *db = tui_get_database();
                 if (db) {
-                    rule_display_t *rule = &g_page.rules[g_page.selected];
+                    rule_display_t *rule = &g_page.rules[g_page.list.selected];
                     if (db_alarm_rule_delete(db, rule->id) == RESULT_OK) {
                         tui_set_status("Rule '%s' deleted", rule->name);
                         load_alarm_rules();
-                        if (g_page.selected >= g_page.rule_count && g_page.rule_count > 0) {
-                            g_page.selected = g_page.rule_count - 1;
-                        }
+                        /* tui_list_set_count() in load_alarm_rules() adjusts selection */
                     }
                 }
             }
