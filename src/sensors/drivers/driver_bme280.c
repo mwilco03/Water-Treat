@@ -1,16 +1,19 @@
 /**
  * @file driver_bme280.c
  * @brief BME280/BMP280 Environmental sensor driver (I2C)
- * Supports temperature, pressure, and humidity (BME280 only)
+ *
+ * Supports temperature, pressure, and humidity (BME280 only).
+ * Uses shared I2C HAL from hw_interface.h for bus operations.
  */
 
 #include "common.h"
+#include "hardware/hw_interface.h"
 #include "utils/logger.h"
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/i2c-dev.h>
 #include <math.h>
+
+/* ============================================================================
+ * BME280 Register Definitions
+ * ========================================================================== */
 
 #define BME280_ADDR_PRIMARY     0x76
 #define BME280_ADDR_SECONDARY   0x77
@@ -48,9 +51,7 @@ typedef struct {
 } bme280_calib_t;
 
 typedef struct {
-    int fd;
-    uint8_t address;
-    int bus;
+    i2c_device_t i2c;           /* Shared I2C HAL device */
     uint8_t chip_id;
     bool has_humidity;
     bme280_calib_t calib;
@@ -58,20 +59,10 @@ typedef struct {
     bool initialized;
 } bme280_t;
 
-static int i2c_read_bytes(int fd, uint8_t reg, uint8_t *buf, int len) {
-    if (write(fd, &reg, 1) != 1) return -1;
-    return read(fd, buf, len) == len ? 0 : -1;
-}
-
-static int i2c_write_byte(int fd, uint8_t reg, uint8_t value) {
-    uint8_t buf[2] = {reg, value};
-    return write(fd, buf, 2) == 2 ? 0 : -1;
-}
-
 static result_t read_calibration(bme280_t *dev) {
     uint8_t buf[26];
-    
-    if (i2c_read_bytes(dev->fd, BME280_REG_CALIB00, buf, 26) < 0) {
+
+    if (i2c_read_bytes(&dev->i2c, BME280_REG_CALIB00, buf, 26) != RESULT_OK) {
         return RESULT_IO_ERROR;
     }
     
@@ -91,7 +82,7 @@ static result_t read_calibration(bme280_t *dev) {
     
     if (dev->has_humidity) {
         uint8_t hum_buf[7];
-        if (i2c_read_bytes(dev->fd, BME280_REG_CALIB26, hum_buf, 7) < 0) {
+        if (i2c_read_bytes(&dev->i2c, BME280_REG_CALIB26, hum_buf, 7) != RESULT_OK) {
             return RESULT_IO_ERROR;
         }
         dev->calib.dig_H2 = hum_buf[0] | (hum_buf[1] << 8);
@@ -106,72 +97,63 @@ static result_t read_calibration(bme280_t *dev) {
 
 result_t bme280_init(bme280_t *dev, int bus, uint8_t address) {
     CHECK_NULL(dev);
-    
+
     memset(dev, 0, sizeof(*dev));
-    dev->bus = bus;
-    dev->address = address ? address : BME280_ADDR_PRIMARY;
-    
-    char path[32];
-    snprintf(path, sizeof(path), "/dev/i2c-%d", bus);
-    
-    dev->fd = open(path, O_RDWR);
-    if (dev->fd < 0) {
-        LOG_ERROR("Failed to open I2C bus %d", bus);
-        return RESULT_IO_ERROR;
+
+    /* Use shared I2C HAL for bus operations */
+    uint8_t addr = address ? address : BME280_ADDR_PRIMARY;
+    result_t result = i2c_open(&dev->i2c, bus, addr);
+    if (result != RESULT_OK) {
+        LOG_ERROR("BME280: Failed to open I2C bus %d, address 0x%02X", bus, addr);
+        return result;
     }
-    
-    if (ioctl(dev->fd, I2C_SLAVE, dev->address) < 0) {
-        LOG_ERROR("Failed to set I2C address 0x%02X", dev->address);
-        close(dev->fd);
-        return RESULT_IO_ERROR;
-    }
-    
-    // Read chip ID
+
+    /* Read chip ID to verify device */
     uint8_t chip_id;
-    if (i2c_read_bytes(dev->fd, BME280_REG_CHIP_ID, &chip_id, 1) < 0) {
-        LOG_ERROR("Failed to read chip ID");
-        close(dev->fd);
+    if (i2c_read_byte(&dev->i2c, BME280_REG_CHIP_ID, &chip_id) != RESULT_OK) {
+        LOG_ERROR("BME280: Failed to read chip ID");
+        i2c_close(&dev->i2c);
         return RESULT_IO_ERROR;
     }
-    
+
     dev->chip_id = chip_id;
     dev->has_humidity = (chip_id == BME280_CHIP_ID);
-    
+
     if (chip_id != BME280_CHIP_ID && chip_id != BMP280_CHIP_ID) {
-        LOG_ERROR("Unknown chip ID: 0x%02X", chip_id);
-        close(dev->fd);
+        LOG_ERROR("BME280: Unknown chip ID: 0x%02X", chip_id);
+        i2c_close(&dev->i2c);
         return RESULT_NOT_FOUND;
     }
-    
-    // Read calibration data
+
+    /* Read calibration data */
     if (read_calibration(dev) != RESULT_OK) {
-        close(dev->fd);
+        i2c_close(&dev->i2c);
         return RESULT_IO_ERROR;
     }
-    
-    // Configure sensor: humidity oversampling x1
+
+    /* Configure sensor: humidity oversampling x1 */
     if (dev->has_humidity) {
-        i2c_write_byte(dev->fd, BME280_REG_CTRL_HUM, 0x01);
+        i2c_write_byte(&dev->i2c, BME280_REG_CTRL_HUM, 0x01);
     }
-    
-    // Configure: temp x1, pressure x1, normal mode
-    i2c_write_byte(dev->fd, BME280_REG_CTRL_MEAS, 0x27);
-    
-    // Config: standby 1000ms, filter off
-    i2c_write_byte(dev->fd, BME280_REG_CONFIG, 0xA0);
-    
+
+    /* Configure: temp x1, pressure x1, normal mode */
+    i2c_write_byte(&dev->i2c, BME280_REG_CTRL_MEAS, 0x27);
+
+    /* Config: standby 1000ms, filter off */
+    i2c_write_byte(&dev->i2c, BME280_REG_CONFIG, 0xA0);
+
     dev->initialized = true;
     LOG_INFO("%s initialized on bus %d, address 0x%02X",
-             dev->has_humidity ? "BME280" : "BMP280", bus, dev->address);
+             dev->has_humidity ? "BME280" : "BMP280", bus, addr);
     return RESULT_OK;
 }
 
 result_t bme280_read(bme280_t *dev, float *temperature, float *pressure, float *humidity) {
     CHECK_NULL(dev);
     if (!dev->initialized) return RESULT_NOT_INITIALIZED;
-    
+
     uint8_t data[8];
-    if (i2c_read_bytes(dev->fd, BME280_REG_DATA, data, 8) < 0) {
+    if (i2c_read_bytes(&dev->i2c, BME280_REG_DATA, data, 8) != RESULT_OK) {
         return RESULT_IO_ERROR;
     }
     
@@ -231,9 +213,8 @@ result_t bme280_read(bme280_t *dev, float *temperature, float *pressure, float *
 }
 
 void bme280_close(bme280_t *dev) {
-    if (dev && dev->fd >= 0) {
-        close(dev->fd);
-        dev->fd = -1;
+    if (dev && dev->initialized) {
+        i2c_close(&dev->i2c);
         dev->initialized = false;
     }
 }

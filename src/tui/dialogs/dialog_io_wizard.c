@@ -1664,27 +1664,27 @@ static bool save_sensor(void) {
     SAFE_STRNCPY(module.name, g_wiz.name, sizeof(module.name));
     module.module_ident = 0x00000001;
     module.submodule_ident = 0x00000001;
-    strcpy(module.status, "inactive");
+    SAFE_STRNCPY(module.status, STATUS_INACTIVE, sizeof(module.status));
 
     int sensor_id = 0;
 
     /* Determine sensor type and create appropriate record */
     if (g_wiz.selected_onewire_id[0]) {
         /* DS18B20 Temperature Sensor */
-        strcpy(module.module_type, "physical");
+        SAFE_STRNCPY(module.module_type, "physical", sizeof(module.module_type));
 
         result_t r = db_module_create(db, &module, &sensor_id);
         if (r != RESULT_OK) return false;
 
         db_physical_sensor_t phys = {0};
         phys.module_id = sensor_id;
-        strcpy(phys.sensor_type, "DS18B20");
-        strcpy(phys.hardware_type, "DS18B20");
-        strcpy(phys.interface, "1wire");
+        SAFE_STRNCPY(phys.sensor_type, "DS18B20", sizeof(phys.sensor_type));
+        SAFE_STRNCPY(phys.hardware_type, "DS18B20", sizeof(phys.hardware_type));
+        SAFE_STRNCPY(phys.interface, "1wire", sizeof(phys.interface));
         SAFE_STRNCPY(phys.address, g_wiz.selected_onewire_id, sizeof(phys.address));
         phys.bus = 0;
         phys.channel = 0;
-        strcpy(phys.unit, "°C");
+        SAFE_STRNCPY(phys.unit, "°C", sizeof(phys.unit));
         phys.min_value = -55.0f;
         phys.max_value = 125.0f;
         phys.poll_rate_ms = 1000;
@@ -1693,7 +1693,7 @@ static bool save_sensor(void) {
 
     } else if (g_wiz.selected_i2c_type != I2C_DEVICE_UNKNOWN) {
         /* I2C Sensor (BME280, etc.) */
-        strcpy(module.module_type, "physical");
+        SAFE_STRNCPY(module.module_type, "physical", sizeof(module.module_type));
 
         result_t r = db_module_create(db, &module, &sensor_id);
         if (r != RESULT_OK) return false;
@@ -1704,7 +1704,7 @@ static bool save_sensor(void) {
                      sizeof(phys.sensor_type));
         SAFE_STRNCPY(phys.hardware_type, i2c_device_type_name(g_wiz.selected_i2c_type),
                      sizeof(phys.hardware_type));
-        strcpy(phys.interface, "i2c");
+        SAFE_STRNCPY(phys.interface, "i2c", sizeof(phys.interface));
         snprintf(phys.address, sizeof(phys.address), "0x%02X", g_wiz.selected_i2c_address);
         phys.bus = g_wiz.selected_i2c_bus;
         phys.poll_rate_ms = 1000;
@@ -1712,7 +1712,7 @@ static bool save_sensor(void) {
         /* Set defaults based on sensor type */
         if (g_wiz.selected_i2c_type == I2C_DEVICE_BME280 ||
             g_wiz.selected_i2c_type == I2C_DEVICE_BMP280) {
-            strcpy(phys.unit, "°C");
+            SAFE_STRNCPY(phys.unit, "°C", sizeof(phys.unit));
             phys.min_value = -40.0f;
             phys.max_value = 85.0f;
         }
@@ -1721,7 +1721,7 @@ static bool save_sensor(void) {
 
     } else if (g_wiz.selected_adc_channel >= 0) {
         /* ADC-based sensor */
-        strcpy(module.module_type, "adc");
+        SAFE_STRNCPY(module.module_type, "adc", sizeof(module.module_type));
 
         result_t r = db_module_create(db, &module, &sensor_id);
         if (r != RESULT_OK) return false;
@@ -1730,8 +1730,8 @@ static bool save_sensor(void) {
 
         db_adc_sensor_t adc = {0};
         adc.module_id = sensor_id;
-        strcpy(adc.adc_type, "ADS1115");
-        strcpy(adc.interface, "i2c");
+        SAFE_STRNCPY(adc.adc_type, "ADS1115", sizeof(adc.adc_type));
+        SAFE_STRNCPY(adc.interface, "i2c", sizeof(adc.interface));
         snprintf(adc.address, sizeof(adc.address), "0x%02X", g_wiz.selected_adc_address);
         adc.bus = g_wiz.selected_adc_bus;
         adc.channel = g_wiz.selected_adc_channel;
@@ -1746,7 +1746,7 @@ static bool save_sensor(void) {
 
     } else {
         /* GPIO-based sensor */
-        strcpy(module.module_type, "physical");
+        SAFE_STRNCPY(module.module_type, "physical", sizeof(module.module_type));
 
         result_t r = db_module_create(db, &module, &sensor_id);
         if (r != RESULT_OK) return false;
@@ -1757,7 +1757,7 @@ static bool save_sensor(void) {
         phys.module_id = sensor_id;
         SAFE_STRNCPY(phys.sensor_type, st->name, sizeof(phys.sensor_type));
         SAFE_STRNCPY(phys.hardware_type, st->name, sizeof(phys.hardware_type));
-        strcpy(phys.interface, "gpio");
+        SAFE_STRNCPY(phys.interface, "gpio", sizeof(phys.interface));
         snprintf(phys.address, sizeof(phys.address), "%d", g_wiz.selected_gpio_pin);
         phys.bus = 0;
         phys.channel = 0;

@@ -10,62 +10,68 @@
 #include "utils/logger.h"
 #include <string.h>
 
-/* Animation timing constants (based on 50Hz update rate) */
-#define ANIM_BLINK_SLOW_PERIOD  50   /* 1 Hz (50 ticks = 1 second) */
-#define ANIM_BLINK_FAST_PERIOD  12   /* ~4 Hz */
-#define ANIM_PULSE_PERIOD       100  /* 2 second pulse cycle */
-#define ANIM_FLASH_DURATION     5    /* 100ms flash */
+/* ============================================================================
+ * Animation Timing Constants
+ * ============================================================================
+ * All timing is derived from the LED update rate and desired frequencies.
+ * This makes the relationship between values explicit and self-documenting.
+ */
+#define LED_UPDATE_RATE_HZ      50      /* LED update frequency */
+
+/* Blink frequencies */
+#define BLINK_SLOW_HZ           1       /* Slow blink: 1 Hz */
+#define BLINK_FAST_HZ           4       /* Fast blink: 4 Hz */
+#define PULSE_CYCLE_SEC         2       /* Pulse cycle: 2 seconds */
+#define FLASH_DURATION_MS       100     /* Flash duration: 100ms */
+
+/* Calculated animation periods (in ticks) */
+#define ANIM_BLINK_SLOW_PERIOD  (LED_UPDATE_RATE_HZ / BLINK_SLOW_HZ)
+#define ANIM_BLINK_FAST_PERIOD  (LED_UPDATE_RATE_HZ / BLINK_FAST_HZ)
+#define ANIM_PULSE_PERIOD       (LED_UPDATE_RATE_HZ * PULSE_CYCLE_SEC)
+#define ANIM_FLASH_DURATION     (LED_UPDATE_RATE_HZ * FLASH_DURATION_MS / 1000)
 
 /* ============================================================================
- * Color and Status Mapping
- * ========================================================================== */
+ * Status Mapping Lookup Table
+ * ============================================================================
+ * Consolidated table replaces three separate switch statements.
+ * Order MUST match led_status_level_t enum values.
+ */
+typedef struct {
+    led_color_t     color;
+    led_animation_t animation;
+    const char     *name;
+} led_status_info_t;
+
+static const led_status_info_t status_table[] = {
+    /* LED_STATUS_OFF */          { LED_COLOR_OFF,     LED_ANIM_SOLID,      "off"          },
+    /* LED_STATUS_OK */           { LED_COLOR_GREEN,   LED_ANIM_SOLID,      "ok"           },
+    /* LED_STATUS_WARNING */      { LED_COLOR_YELLOW,  LED_ANIM_BLINK_SLOW, "warning"      },
+    /* LED_STATUS_ALARM */        { LED_COLOR_RED,     LED_ANIM_BLINK_FAST, "alarm"        },
+    /* LED_STATUS_FAULT */        { LED_COLOR_RED,     LED_ANIM_SOLID,      "fault"        },
+    /* LED_STATUS_MANUAL */       { LED_COLOR_BLUE,    LED_ANIM_SOLID,      "manual"       },
+    /* LED_STATUS_COMM_ACTIVE */  { LED_COLOR_CYAN,    LED_ANIM_BLINK_FAST, "comm_active"  },
+    /* LED_STATUS_CALIBRATING */  { LED_COLOR_MAGENTA, LED_ANIM_PULSE,      "calibrating"  },
+    /* LED_STATUS_STANDBY */      { LED_COLOR_WHITE,   LED_ANIM_SOLID,      "standby"      },
+    /* LED_STATUS_INITIALIZING */ { LED_COLOR_WHITE,   LED_ANIM_PULSE,      "initializing" },
+};
+
+#define STATUS_TABLE_SIZE (sizeof(status_table) / sizeof(status_table[0]))
+
+/* Accessor functions use the lookup table */
 
 led_color_t led_status_to_color(led_status_level_t status) {
-    switch (status) {
-        case LED_STATUS_OFF:          return LED_COLOR_OFF;
-        case LED_STATUS_OK:           return LED_COLOR_GREEN;
-        case LED_STATUS_WARNING:      return LED_COLOR_YELLOW;
-        case LED_STATUS_ALARM:        return LED_COLOR_RED;
-        case LED_STATUS_FAULT:        return LED_COLOR_RED;
-        case LED_STATUS_MANUAL:       return LED_COLOR_BLUE;
-        case LED_STATUS_COMM_ACTIVE:  return LED_COLOR_CYAN;
-        case LED_STATUS_CALIBRATING:  return LED_COLOR_MAGENTA;
-        case LED_STATUS_STANDBY:      return LED_COLOR_WHITE;
-        case LED_STATUS_INITIALIZING: return LED_COLOR_WHITE;
-        default:                      return LED_COLOR_OFF;
-    }
+    if (status >= STATUS_TABLE_SIZE) return LED_COLOR_OFF;
+    return status_table[status].color;
 }
 
 static led_animation_t status_to_animation(led_status_level_t status) {
-    switch (status) {
-        case LED_STATUS_OFF:          return LED_ANIM_SOLID;
-        case LED_STATUS_OK:           return LED_ANIM_SOLID;
-        case LED_STATUS_WARNING:      return LED_ANIM_BLINK_SLOW;
-        case LED_STATUS_ALARM:        return LED_ANIM_BLINK_FAST;
-        case LED_STATUS_FAULT:        return LED_ANIM_SOLID;
-        case LED_STATUS_MANUAL:       return LED_ANIM_SOLID;
-        case LED_STATUS_COMM_ACTIVE:  return LED_ANIM_BLINK_FAST;
-        case LED_STATUS_CALIBRATING:  return LED_ANIM_PULSE;
-        case LED_STATUS_STANDBY:      return LED_ANIM_SOLID;
-        case LED_STATUS_INITIALIZING: return LED_ANIM_PULSE;
-        default:                      return LED_ANIM_SOLID;
-    }
+    if (status >= STATUS_TABLE_SIZE) return LED_ANIM_SOLID;
+    return status_table[status].animation;
 }
 
 const char *led_status_name(led_status_level_t status) {
-    switch (status) {
-        case LED_STATUS_OFF:          return "off";
-        case LED_STATUS_OK:           return "ok";
-        case LED_STATUS_WARNING:      return "warning";
-        case LED_STATUS_ALARM:        return "alarm";
-        case LED_STATUS_FAULT:        return "fault";
-        case LED_STATUS_MANUAL:       return "manual";
-        case LED_STATUS_COMM_ACTIVE:  return "comm_active";
-        case LED_STATUS_CALIBRATING:  return "calibrating";
-        case LED_STATUS_STANDBY:      return "standby";
-        case LED_STATUS_INITIALIZING: return "initializing";
-        default:                      return "unknown";
-    }
+    if (status >= STATUS_TABLE_SIZE) return "unknown";
+    return status_table[status].name;
 }
 
 /* ============================================================================

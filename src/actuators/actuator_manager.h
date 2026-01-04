@@ -53,6 +53,9 @@ typedef struct {
 
 #define MAX_ACTUATORS 16
 
+/* Maximum slot number for O(1) lookup */
+#define ACTUATOR_MAX_SLOT 64
+
 typedef struct {
     int id;
     char name[MAX_NAME_LEN];
@@ -112,6 +115,9 @@ typedef struct {
 
     actuator_instance_t actuators[MAX_ACTUATORS];
     int actuator_count;
+
+    /* O(1) slot lookup: slot_map[slot] -> index in actuators[] (-1 if none) */
+    int slot_map[ACTUATOR_MAX_SLOT + 1];
 
     // PROFINET connection state
     bool profinet_connected;

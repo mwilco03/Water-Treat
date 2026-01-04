@@ -43,9 +43,7 @@ typedef struct {
 static struct {
     WINDOW *win;
     actuator_item_t actuators[MAX_ACTUATORS_DISPLAY];
-    int actuator_count;
-    int selected;
-    int scroll_offset;
+    tui_list_state_t list;    /* Reusable list widget for navigation */
 } g_page = {0};
 
 /* Show GPIO pin conflict error dialog */
@@ -74,20 +72,24 @@ static void show_gpio_conflict_dialog(int gpio_pin, const char *conflict_name) {
 }
 
 static void load_actuators(void) {
-    g_page.actuator_count = 0;
+    int actuator_count = 0;
 
     database_t *db = tui_get_database();
-    if (!db) return;
+    if (!db) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
+    }
 
     db_actuator_t *actuators = NULL;
     int count = 0;
 
     if (db_actuator_list(db, &actuators, &count) != RESULT_OK || !actuators) {
+        tui_list_set_count(&g_page.list, 0);
         return;
     }
 
     for (int i = 0; i < count && i < MAX_ACTUATORS_DISPLAY; i++) {
-        actuator_item_t *a = &g_page.actuators[g_page.actuator_count];
+        actuator_item_t *a = &g_page.actuators[actuator_count];
         a->id = actuators[i].id;
         a->slot = actuators[i].slot;
         SAFE_STRNCPY(a->name, actuators[i].name, sizeof(a->name));
@@ -133,10 +135,11 @@ static void load_actuators(void) {
             SAFE_STRNCPY(a->status, "OFF", sizeof(a->status));
         }
 
-        g_page.actuator_count++;
+        actuator_count++;
     }
 
     free(actuators);
+    tui_list_set_count(&g_page.list, actuator_count);
 }
 
 static void draw_actuator_list(WINDOW *win) {
@@ -153,20 +156,21 @@ static void draw_actuator_list(WINDOW *win) {
 
     mvwhline(win, row++, 2, ACS_HLINE, max_x - 4);
 
-    if (g_page.actuator_count == 0) {
+    if (g_page.list.item_count == 0) {
         wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
         mvwprintw(win, row + 2, 4, "No actuators configured. Press 'a' to add an actuator.");
         wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
         return;
     }
 
-    int visible = MIN(VISIBLE_ROWS, g_page.actuator_count - g_page.scroll_offset);
+    /* Use list widget helper */
+    int visible = tui_list_visible_count(&g_page.list);
 
     for (int i = 0; i < visible; i++) {
-        int idx = g_page.scroll_offset + i;
+        int idx = g_page.list.scroll_offset + i;
         actuator_item_t *a = &g_page.actuators[idx];
 
-        if (idx == g_page.selected) {
+        if (idx == g_page.list.selected) {
             wattron(win, A_REVERSE);
         }
 
@@ -198,7 +202,7 @@ static void draw_actuator_list(WINDOW *win) {
             wprintw(win, "AUTO");
         }
 
-        if (idx == g_page.selected) {
+        if (idx == g_page.list.selected) {
             wattroff(win, A_REVERSE);
         }
 
@@ -226,9 +230,9 @@ static void draw_help(WINDOW *win) {
 }
 
 static void toggle_actuator(void) {
-    if (g_page.selected >= g_page.actuator_count) return;
+    if (g_page.list.selected >= g_page.list.item_count) return;
 
-    actuator_item_t *a = &g_page.actuators[g_page.selected];
+    actuator_item_t *a = &g_page.actuators[g_page.list.selected];
 
     /* Toggle state using manual control */
     actuator_state_t new_state = a->state ? ACTUATOR_STATE_OFF : ACTUATOR_STATE_ON;
@@ -246,9 +250,9 @@ static void toggle_actuator(void) {
 }
 
 static void adjust_pwm(int delta) {
-    if (g_page.selected >= g_page.actuator_count) return;
+    if (g_page.list.selected >= g_page.list.item_count) return;
 
-    actuator_item_t *a = &g_page.actuators[g_page.selected];
+    actuator_item_t *a = &g_page.actuators[g_page.list.selected];
 
     int new_duty = a->pwm_duty + delta;
     if (new_duty < 0) new_duty = 0;
@@ -294,8 +298,7 @@ static void emergency_stop(void) {
 
 void page_actuators_init(WINDOW *win) {
     g_page.win = win;
-    g_page.selected = 0;
-    g_page.scroll_offset = 0;
+    tui_list_init(&g_page.list, VISIBLE_ROWS);
     load_actuators();
 }
 
@@ -307,25 +310,13 @@ void page_actuators_draw(WINDOW *win) {
 void page_actuators_input(WINDOW *win, int ch) {
     UNUSED(win);
 
+    /* Let list widget handle navigation keys */
+    if (tui_list_input(&g_page.list, ch)) {
+        return;
+    }
+
+    /* Handle page-specific keys */
     switch (ch) {
-        case KEY_UP:
-            if (g_page.selected > 0) {
-                g_page.selected--;
-                if (g_page.selected < g_page.scroll_offset) {
-                    g_page.scroll_offset = g_page.selected;
-                }
-            }
-            break;
-
-        case KEY_DOWN:
-            if (g_page.selected < g_page.actuator_count - 1) {
-                g_page.selected++;
-                if (g_page.selected >= g_page.scroll_offset + VISIBLE_ROWS) {
-                    g_page.scroll_offset = g_page.selected - VISIBLE_ROWS + 1;
-                }
-            }
-            break;
-
         case ' ':  /* Space - toggle ON/OFF */
             toggle_actuator();
             break;
@@ -360,9 +351,9 @@ void page_actuators_input(WINDOW *win, int ch) {
                     load_actuators();
 
                     /* Select the newly added actuator */
-                    for (int i = 0; i < g_page.actuator_count; i++) {
+                    for (int i = 0; i < g_page.list.item_count; i++) {
                         if (g_page.actuators[i].id == result.created_id) {
-                            g_page.selected = i;
+                            g_page.list.selected = i;
                             break;
                         }
                     }
@@ -374,10 +365,10 @@ void page_actuators_input(WINDOW *win, int ch) {
         case '\n':
         case KEY_ENTER:
             /* Edit selected actuator */
-            if (g_page.actuator_count > 0) {
+            if (g_page.list.item_count > 0) {
                 database_t *db = tui_get_database();
                 if (db) {
-                    actuator_item_t *item = &g_page.actuators[g_page.selected];
+                    actuator_item_t *item = &g_page.actuators[g_page.list.selected];
                     db_actuator_t db_act = {0};
                     if (db_actuator_get(db, item->id, &db_act) == RESULT_OK) {
                         actuator_form_t form;
@@ -410,17 +401,15 @@ void page_actuators_input(WINDOW *win, int ch) {
         case 'd':
         case KEY_DC:
             /* Delete selected actuator */
-            if (g_page.actuator_count > 0) {
+            if (g_page.list.item_count > 0) {
                 database_t *db = tui_get_database();
                 if (db) {
-                    actuator_item_t *item = &g_page.actuators[g_page.selected];
+                    actuator_item_t *item = &g_page.actuators[g_page.list.selected];
                     if (dialog_actuator_confirm_delete(item->name)) {
                         if (db_actuator_delete(db, item->id) == RESULT_OK) {
                             tui_set_status("Actuator '%s' deleted", item->name);
                             load_actuators();
-                            if (g_page.selected >= g_page.actuator_count && g_page.actuator_count > 0) {
-                                g_page.selected = g_page.actuator_count - 1;
-                            }
+                            /* tui_list_set_count() in load_actuators() adjusts selection */
                         } else {
                             tui_set_status("Failed to delete actuator");
                         }
@@ -436,7 +425,7 @@ void page_actuators_input(WINDOW *win, int ch) {
         case 'r':
         case 'R':
             load_actuators();
-            tui_set_status("Refreshed %d actuators", g_page.actuator_count);
+            tui_set_status("Refreshed %d actuators", g_page.list.item_count);
             break;
     }
 }

@@ -160,6 +160,65 @@ static inline const char* quality_to_string(data_quality_t quality) {
 #define CHECK_RESULT(expr) do { result_t _r = (expr); if (_r != RESULT_OK) return _r; } while(0)
 #define SAFE_FREE(ptr) do { if ((ptr) != NULL) { free(ptr); (ptr) = NULL; } } while(0)
 
+/* ============================================================================
+ * Centralized Status Strings
+ * ============================================================================
+ * These constants define canonical status strings used throughout the codebase
+ * for sensor readings, module status, alarm states, and display purposes.
+ * Using constants prevents typos and enables future i18n if needed.
+ */
+#define STATUS_OK           "ok"
+#define STATUS_ERROR        "error"
+#define STATUS_WARNING      "warning"
+#define STATUS_UNKNOWN      "unknown"
+#define STATUS_INACTIVE     "inactive"
+#define STATUS_ACTIVE       "active"
+#define STATUS_CONNECTED    "connected"
+#define STATUS_DISCONNECTED "disconnected"
+#define STATUS_GOOD         "good"
+#define STATUS_BAD          "bad"
+#define STATUS_FAIL         "fail"
+
+/**
+ * Status type classification for UI color mapping
+ */
+typedef enum {
+    STATUS_TYPE_OK = 0,     /* Green - normal operation */
+    STATUS_TYPE_WARNING,    /* Yellow - attention needed */
+    STATUS_TYPE_ERROR,      /* Red - failure condition */
+    STATUS_TYPE_UNKNOWN     /* Gray - indeterminate state */
+} status_type_t;
+
+/**
+ * Classify a status string into a type for UI display
+ */
+static inline status_type_t status_classify(const char *status) {
+    if (!status || !status[0]) return STATUS_TYPE_UNKNOWN;
+
+    /* OK states */
+    if (strcmp(status, STATUS_OK) == 0 ||
+        strcmp(status, STATUS_GOOD) == 0 ||
+        strcmp(status, STATUS_CONNECTED) == 0 ||
+        strcmp(status, STATUS_ACTIVE) == 0) {
+        return STATUS_TYPE_OK;
+    }
+
+    /* Error states */
+    if (strcmp(status, STATUS_ERROR) == 0 ||
+        strcmp(status, STATUS_FAIL) == 0 ||
+        strcmp(status, STATUS_BAD) == 0 ||
+        strcmp(status, STATUS_DISCONNECTED) == 0) {
+        return STATUS_TYPE_ERROR;
+    }
+
+    /* Warning states */
+    if (strcmp(status, STATUS_WARNING) == 0) {
+        return STATUS_TYPE_WARNING;
+    }
+
+    return STATUS_TYPE_UNKNOWN;
+}
+
 static inline const char* result_to_string(result_t result) {
     switch (result) {
         case RESULT_OK: return "OK";

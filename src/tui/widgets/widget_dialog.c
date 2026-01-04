@@ -105,7 +105,7 @@ void form_field_draw(WINDOW *win, form_field_t *field, int y, int x, int label_w
             snprintf(display, sizeof(display), "%.4f", field->value.float_val);
             break;
         case FIELD_TYPE_BOOL:
-            strcpy(display, field->value.bool_val ? "Yes" : "No");
+            SAFE_STRNCPY(display, field->value.bool_val ? "Yes" : "No", sizeof(display));
             break;
         case FIELD_TYPE_SELECT:
             if (field->value.int_val >= 0 && field->value.int_val < field->option_count) {

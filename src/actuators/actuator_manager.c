@@ -30,10 +30,9 @@ static int g_degraded_alarm_rule_id = -1;
  * ========================================================================== */
 
 static actuator_instance_t* find_actuator_by_slot(actuator_manager_t *mgr, int slot) {
-    for (int i = 0; i < mgr->actuator_count; i++) {
-        if (mgr->actuators[i].config.profinet_slot == slot) {
-            return &mgr->actuators[i];
-        }
+    /* O(1) lookup via slot_map */
+    if (slot >= 0 && slot <= ACTUATOR_MAX_SLOT && mgr->slot_map[slot] >= 0) {
+        return &mgr->actuators[mgr->slot_map[slot]];
     }
     return NULL;
 }
@@ -293,6 +292,11 @@ result_t actuator_manager_init(actuator_manager_t *mgr, database_t *db) {
     memset(mgr, 0, sizeof(*mgr));
     mgr->db = db;
 
+    /* Initialize slot_map to -1 (no actuator at any slot) */
+    for (int i = 0; i <= ACTUATOR_MAX_SLOT; i++) {
+        mgr->slot_map[i] = -1;
+    }
+
     pthread_mutex_init(&mgr->mutex, NULL);
 
     mgr->initialized = true;
@@ -421,6 +425,12 @@ result_t actuator_manager_add(actuator_manager_t *mgr, const actuator_config_t *
                                      sizeof(actuator_output_data_t));  // Output data size
     }
 
+    /* Update slot_map for O(1) lookup before incrementing count */
+    int slot = config->profinet_slot;
+    if (slot >= 0 && slot <= ACTUATOR_MAX_SLOT) {
+        mgr->slot_map[slot] = mgr->actuator_count;
+    }
+
     mgr->actuator_count++;
 
     pthread_mutex_unlock(&mgr->mutex);
@@ -437,20 +447,32 @@ result_t actuator_manager_remove(actuator_manager_t *mgr, int profinet_slot) {
 
     pthread_mutex_lock(&mgr->mutex);
 
-    for (int i = 0; i < mgr->actuator_count; i++) {
-        if (mgr->actuators[i].config.profinet_slot == profinet_slot) {
-            destroy_actuator_driver(&mgr->actuators[i]);
+    /* Use O(1) lookup to find index */
+    int idx = -1;
+    if (profinet_slot >= 0 && profinet_slot <= ACTUATOR_MAX_SLOT) {
+        idx = mgr->slot_map[profinet_slot];
+    }
 
-            // Shift remaining actuators
-            for (int j = i; j < mgr->actuator_count - 1; j++) {
-                mgr->actuators[j] = mgr->actuators[j + 1];
+    if (idx >= 0 && idx < mgr->actuator_count) {
+        destroy_actuator_driver(&mgr->actuators[idx]);
+
+        /* Clear slot_map entry for removed actuator */
+        mgr->slot_map[profinet_slot] = -1;
+
+        /* Shift remaining actuators and rebuild affected slot_map entries */
+        for (int j = idx; j < mgr->actuator_count - 1; j++) {
+            mgr->actuators[j] = mgr->actuators[j + 1];
+            /* Update slot_map for shifted actuator */
+            int shifted_slot = mgr->actuators[j].config.profinet_slot;
+            if (shifted_slot >= 0 && shifted_slot <= ACTUATOR_MAX_SLOT) {
+                mgr->slot_map[shifted_slot] = j;
             }
-            mgr->actuator_count--;
-
-            pthread_mutex_unlock(&mgr->mutex);
-            LOG_INFO("Removed actuator at slot %d", profinet_slot);
-            return RESULT_OK;
         }
+        mgr->actuator_count--;
+
+        pthread_mutex_unlock(&mgr->mutex);
+        LOG_INFO("Removed actuator at slot %d", profinet_slot);
+        return RESULT_OK;
     }
 
     pthread_mutex_unlock(&mgr->mutex);

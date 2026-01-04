@@ -18,6 +18,7 @@ extern actuator_manager_t g_actuator_mgr;
 
 #define MAX_ALARM_RULES 256
 #define ALARM_CHECK_INTERVAL_MS 1000
+#define CACHE_REFRESH_INTERVAL_MS (5 * 60 * 1000)  /* Safety net: refresh every 5 minutes */
 
 typedef struct {
     int rule_id;
@@ -33,12 +34,23 @@ typedef struct {
     database_t *db;
     alarm_rule_state_t states[MAX_ALARM_RULES];
     int state_count;
-    
+
+    /* Cached alarm rules - avoids DB query every check cycle */
+    db_alarm_rule_t *cached_rules;
+    int cached_rule_count;
+    bool cache_dirty;  /* Set true when rules change, triggers refresh */
+    uint64_t last_cache_refresh;  /* Timestamp for periodic refresh safety net */
+
+    /* Performance metrics */
+    uint64_t cache_hits;      /* Checks using cached rules */
+    uint64_t cache_refreshes; /* Times cache was refreshed from DB */
+    uint64_t total_checks;    /* Total rule checks performed */
+
     pthread_t check_thread;
     pthread_mutex_t mutex;
     volatile bool running;
     bool initialized;
-    
+
     alarm_callback_t on_alarm_raised;
     alarm_callback_t on_alarm_cleared;
     void *callback_ctx;
@@ -49,6 +61,43 @@ static alarm_manager_t g_alarm_mgr = {0};
 /* ============================================================================
  * Internal Functions
  * ========================================================================== */
+
+/**
+ * Refresh the cached alarm rules from database.
+ * Called when cache_dirty is true or periodically as safety net.
+ * Caller must hold mutex.
+ */
+static void refresh_rule_cache(void) {
+    if (g_alarm_mgr.cached_rules) {
+        free(g_alarm_mgr.cached_rules);
+        g_alarm_mgr.cached_rules = NULL;
+        g_alarm_mgr.cached_rule_count = 0;
+    }
+
+    db_alarm_rule_list(g_alarm_mgr.db, &g_alarm_mgr.cached_rules, &g_alarm_mgr.cached_rule_count);
+    g_alarm_mgr.cache_dirty = false;
+    g_alarm_mgr.last_cache_refresh = get_time_ms();
+}
+
+/**
+ * Check if cache needs refresh (dirty or periodic timeout)
+ */
+static bool cache_needs_refresh(void) {
+    if (g_alarm_mgr.cache_dirty || !g_alarm_mgr.cached_rules) {
+        return true;
+    }
+    /* Safety net: periodic refresh catches external DB modifications */
+    uint64_t now = get_time_ms();
+    return (now - g_alarm_mgr.last_cache_refresh) >= CACHE_REFRESH_INTERVAL_MS;
+}
+
+/**
+ * Mark cache as dirty - triggers refresh on next check cycle.
+ * Used when rules are created, deleted, or enabled/disabled.
+ */
+static void invalidate_rule_cache(void) {
+    g_alarm_mgr.cache_dirty = true;
+}
 
 static alarm_rule_state_t* find_state(int rule_id) {
     for (int i = 0; i < g_alarm_mgr.state_count; i++) {
@@ -236,32 +285,37 @@ static void check_rule(db_alarm_rule_t *rule, float current_value) {
 
 static void* alarm_check_thread(void *arg) {
     UNUSED(arg);
-    
+
     while (g_alarm_mgr.running) {
         pthread_mutex_lock(&g_alarm_mgr.mutex);
-        
-        db_alarm_rule_t *rules = NULL;
-        int count = 0;
-        
-        if (db_alarm_rule_list(g_alarm_mgr.db, &rules, &count) == RESULT_OK && rules) {
-            for (int i = 0; i < count; i++) {
-                if (!rules[i].enabled) continue;
-                
-                float value;
-                char status[16];
-                if (db_sensor_status_get(g_alarm_mgr.db, rules[i].module_id, &value, status, sizeof(status)) == RESULT_OK) {
-                    if (strcmp(status, "ok") == 0 || strcmp(status, "unknown") == 0) {
-                        check_rule(&rules[i], value);
-                    }
+
+        /* Refresh cache if dirty or periodic timeout (safety net for external DB changes) */
+        if (cache_needs_refresh()) {
+            refresh_rule_cache();
+            g_alarm_mgr.cache_refreshes++;
+        } else {
+            g_alarm_mgr.cache_hits++;
+        }
+
+        /* Use cached rules - no DB query unless cache is dirty */
+        for (int i = 0; i < g_alarm_mgr.cached_rule_count; i++) {
+            db_alarm_rule_t *rule = &g_alarm_mgr.cached_rules[i];
+            if (!rule->enabled) continue;
+
+            float value;
+            char status[16];
+            if (db_sensor_status_get(g_alarm_mgr.db, rule->module_id, &value, status, sizeof(status)) == RESULT_OK) {
+                if (strcmp(status, "ok") == 0 || strcmp(status, "unknown") == 0) {
+                    check_rule(rule, value);
+                    g_alarm_mgr.total_checks++;
                 }
             }
-            free(rules);
         }
-        
+
         pthread_mutex_unlock(&g_alarm_mgr.mutex);
         usleep(ALARM_CHECK_INTERVAL_MS * 1000);
     }
-    
+
     return NULL;
 }
 
@@ -272,12 +326,13 @@ static void* alarm_check_thread(void *arg) {
 result_t alarm_manager_init(database_t *db) {
     CHECK_NULL(db);
     if (g_alarm_mgr.initialized) return RESULT_OK;
-    
+
     memset(&g_alarm_mgr, 0, sizeof(g_alarm_mgr));
     g_alarm_mgr.db = db;
+    g_alarm_mgr.cache_dirty = true;  /* Force initial cache load */
     pthread_mutex_init(&g_alarm_mgr.mutex, NULL);
     g_alarm_mgr.initialized = true;
-    
+
     LOG_INFO("Alarm manager initialized");
     return RESULT_OK;
 }
@@ -310,6 +365,14 @@ result_t alarm_manager_stop(void) {
 
 void alarm_manager_shutdown(void) {
     alarm_manager_stop();
+
+    /* Free cached rules */
+    if (g_alarm_mgr.cached_rules) {
+        free(g_alarm_mgr.cached_rules);
+        g_alarm_mgr.cached_rules = NULL;
+        g_alarm_mgr.cached_rule_count = 0;
+    }
+
     pthread_mutex_destroy(&g_alarm_mgr.mutex);
     g_alarm_mgr.initialized = false;
     LOG_INFO("Alarm manager shutdown");
@@ -375,11 +438,11 @@ result_t alarm_manager_get_active_by_severity(alarm_severity_t severity, int *co
 }
 
 result_t alarm_manager_create_rule(int module_id, const char *name, alarm_condition_t condition,
-                                   float threshold_high, float threshold_low, 
+                                   float threshold_high, float threshold_low,
                                    alarm_severity_t severity, int *rule_id) {
     CHECK_NULL(name); CHECK_NULL(rule_id);
     if (!g_alarm_mgr.initialized) return RESULT_NOT_INITIALIZED;
-    
+
     db_alarm_rule_t rule = {0};
     rule.module_id = module_id;
     SAFE_STRNCPY(rule.name, name, sizeof(rule.name));
@@ -390,35 +453,42 @@ result_t alarm_manager_create_rule(int module_id, const char *name, alarm_condit
     rule.enabled = true;
     rule.auto_clear = true;
     rule.hysteresis_percent = 5;
-    
-    return db_alarm_rule_create(g_alarm_mgr.db, &rule, rule_id);
+
+    result_t r = db_alarm_rule_create(g_alarm_mgr.db, &rule, rule_id);
+    if (r == RESULT_OK) {
+        invalidate_rule_cache();  /* New rule added, refresh cache on next check */
+    }
+    return r;
 }
 
 result_t alarm_manager_delete_rule(int rule_id) {
     if (!g_alarm_mgr.initialized) return RESULT_NOT_INITIALIZED;
-    
+
     pthread_mutex_lock(&g_alarm_mgr.mutex);
     db_alarm_clear_by_rule(g_alarm_mgr.db, rule_id);
-    
+
     for (int i = 0; i < g_alarm_mgr.state_count; i++) {
         if (g_alarm_mgr.states[i].rule_id == rule_id) {
-            memmove(&g_alarm_mgr.states[i], &g_alarm_mgr.states[i + 1], 
+            memmove(&g_alarm_mgr.states[i], &g_alarm_mgr.states[i + 1],
                     (g_alarm_mgr.state_count - i - 1) * sizeof(alarm_rule_state_t));
             g_alarm_mgr.state_count--;
             break;
         }
     }
-    
+
     result_t r = db_alarm_rule_delete(g_alarm_mgr.db, rule_id);
+    if (r == RESULT_OK) {
+        invalidate_rule_cache();  /* Rule deleted, refresh cache on next check */
+    }
     pthread_mutex_unlock(&g_alarm_mgr.mutex);
     return r;
 }
 
 result_t alarm_manager_enable_rule(int rule_id, bool enabled) {
     if (!g_alarm_mgr.initialized) return RESULT_NOT_INITIALIZED;
-    
+
     pthread_mutex_lock(&g_alarm_mgr.mutex);
-    
+
     if (!enabled) {
         alarm_rule_state_t *state = find_state(rule_id);
         if (state && state->in_alarm) {
@@ -427,12 +497,29 @@ result_t alarm_manager_enable_rule(int rule_id, bool enabled) {
                 clear_alarm(&rule, state);
         }
     }
-    
+
     result_t r = db_alarm_rule_set_enabled(g_alarm_mgr.db, rule_id, enabled);
+    if (r == RESULT_OK) {
+        invalidate_rule_cache();  /* Rule enabled/disabled, refresh cache on next check */
+    }
     pthread_mutex_unlock(&g_alarm_mgr.mutex);
     return r;
 }
 
 bool alarm_manager_is_running(void) {
     return g_alarm_mgr.running;
+}
+
+result_t alarm_manager_get_stats(alarm_manager_stats_t *stats) {
+    CHECK_NULL(stats);
+    if (!g_alarm_mgr.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_alarm_mgr.mutex);
+    stats->cache_hits = g_alarm_mgr.cache_hits;
+    stats->cache_refreshes = g_alarm_mgr.cache_refreshes;
+    stats->total_checks = g_alarm_mgr.total_checks;
+    stats->cached_rule_count = g_alarm_mgr.cached_rule_count;
+    pthread_mutex_unlock(&g_alarm_mgr.mutex);
+
+    return RESULT_OK;
 }

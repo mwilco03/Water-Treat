@@ -27,61 +27,64 @@ typedef struct {
     time_t last_update;
 } sensor_display_t;
 
+/* Visible rows in sensor table (calculated from window size) */
+#define STATUS_VISIBLE_ROWS 10
+
 static struct {
     WINDOW *win;
-    
+
     sensor_display_t sensors[MAX_DISPLAY_SENSORS];
-    int sensor_count;
-    int scroll_offset;
-    
+    tui_list_state_t list;    /* Reusable list widget for scrolling */
+
     // System stats
     float cpu_temp;
     float memory_percent;
     long uptime_seconds;
-    
+
     // PROFINET stats
     bool pn_connected;
     const char *pn_state;
     uint32_t pn_cycles;
-    
+
     // Alarm stats
     int active_alarms;
     int critical_alarms;
-    
+
     uint64_t last_refresh;
 } g_page = {0};
 
 static void refresh_sensor_data(void) {
-    g_page.sensor_count = 0;
-    
+    int sensor_count = 0;
+
     database_t *db = tui_get_database();
-    if (!db) return;
-    
-    db_module_t *modules = NULL;
-    int count = 0;
-    
-    if (db_module_list(db, &modules, &count) != RESULT_OK || !modules) return;
-    
-    for (int i = 0; i < count && i < MAX_DISPLAY_SENSORS; i++) {
-        sensor_display_t *s = &g_page.sensors[g_page.sensor_count];
-        s->id = modules[i].id;
-        s->slot = modules[i].slot;
-        SAFE_STRNCPY(s->name, modules[i].name, sizeof(s->name));
-        
-        float value;
-        char status[16];
-        if (db_sensor_status_get(db, modules[i].id, &value, status, sizeof(status)) == RESULT_OK) {
-            s->value = value;
-            SAFE_STRNCPY(s->status, status, sizeof(s->status));
-        } else {
-            s->value = 0;
-            strcpy(s->status, "unknown");
-        }
-        
-        g_page.sensor_count++;
+    if (!db) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
     }
-    
+
+    /* Use optimized JOIN query - single query instead of N+1 */
+    db_module_with_status_t *modules = NULL;
+    int count = 0;
+
+    if (db_module_list_with_status(db, &modules, &count) != RESULT_OK || !modules) {
+        tui_list_set_count(&g_page.list, 0);
+        return;
+    }
+
+    for (int i = 0; i < count && i < MAX_DISPLAY_SENSORS; i++) {
+        sensor_display_t *s = &g_page.sensors[sensor_count];
+        s->id = modules[i].module.id;
+        s->slot = modules[i].module.slot;
+        SAFE_STRNCPY(s->name, modules[i].module.name, sizeof(s->name));
+        /* Value and status come from JOIN - no additional query needed */
+        s->value = modules[i].value;
+        SAFE_STRNCPY(s->status, modules[i].sensor_status, sizeof(s->status));
+
+        sensor_count++;
+    }
+
     free(modules);
+    tui_list_set_count(&g_page.list, sensor_count);
 }
 
 static void refresh_system_stats(void) {
@@ -203,49 +206,48 @@ static void draw_profinet_status(WINDOW *win, int *row) {
 static void draw_sensor_table(WINDOW *win, int *row) {
     int max_x = getmaxx(win);
     int max_y = getmaxy(win);
-    
+
     wattron(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
-    mvwprintw(win, *row, 2, "Sensor Values (%d)", g_page.sensor_count);
+    mvwprintw(win, *row, 2, "Sensor Values (%d)", g_page.list.item_count);
     wattroff(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
     (*row)++;
-    
+
     mvwhline(win, *row, 2, ACS_HLINE, max_x - 4);
     (*row)++;
-    
+
     // Header
     wattron(win, A_BOLD);
     mvwprintw(win, *row, 4, "%-4s %-24s %-12s %-10s", "Slot", "Name", "Value", "Status");
     wattroff(win, A_BOLD);
     (*row)++;
-    
-    if (g_page.sensor_count == 0) {
+
+    if (g_page.list.item_count == 0) {
         wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
         mvwprintw(win, *row + 1, 6, "No sensors configured");
         wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
         return;
     }
-    
-    int visible = MIN(max_y - *row - 4, g_page.sensor_count - g_page.scroll_offset);
-    
+
+    /* Use list widget for visible count */
+    int visible = tui_list_visible_count(&g_page.list);
+    visible = MIN(visible, max_y - *row - 4);
+
     for (int i = 0; i < visible; i++) {
-        int idx = g_page.scroll_offset + i;
+        int idx = g_page.list.scroll_offset + i;
         sensor_display_t *s = &g_page.sensors[idx];
-        
-        int color = TUI_COLOR_NORMAL;
-        if (strcmp(s->status, "ok") == 0) color = TUI_COLOR_STATUS;
-        else if (strcmp(s->status, "error") == 0) color = TUI_COLOR_ERROR;
-        else if (strcmp(s->status, "warning") == 0) color = TUI_COLOR_WARNING;
-        
+
+        int color = tui_status_color(s->status);
+
         mvwprintw(win, *row, 4, "%-4d %-24s ", s->slot, s->name);
-        
+
         wattron(win, COLOR_PAIR(color));
         wprintw(win, "%-12.3f", s->value);
         wattroff(win, COLOR_PAIR(color));
-        
+
         wattron(win, COLOR_PAIR(color));
         wprintw(win, "%-10s", s->status);
         wattroff(win, COLOR_PAIR(color));
-        
+
         (*row)++;
     }
 }
@@ -261,9 +263,9 @@ static void draw_help(WINDOW *win) {
 
 void page_status_init(WINDOW *win) {
     g_page.win = win;
-    g_page.scroll_offset = 0;
+    tui_list_init(&g_page.list, STATUS_VISIBLE_ROWS);
     g_page.last_refresh = 0;
-    
+
     refresh_sensor_data();
     refresh_system_stats();
     refresh_profinet_stats();
@@ -290,20 +292,14 @@ void page_status_draw(WINDOW *win) {
 
 void page_status_input(WINDOW *win, int ch) {
     UNUSED(win);
-    
+
+    /* Let list widget handle navigation keys */
+    if (tui_list_input(&g_page.list, ch)) {
+        return;
+    }
+
+    /* Handle page-specific keys */
     switch (ch) {
-        case KEY_UP:
-            if (g_page.scroll_offset > 0) g_page.scroll_offset--;
-            break;
-        case KEY_DOWN:
-            if (g_page.scroll_offset < g_page.sensor_count - 1) g_page.scroll_offset++;
-            break;
-        case KEY_PPAGE:
-            g_page.scroll_offset = MAX(0, g_page.scroll_offset - 10);
-            break;
-        case KEY_NPAGE:
-            g_page.scroll_offset = MIN(MAX(0, g_page.sensor_count - 10), g_page.scroll_offset + 10);
-            break;
         case 'r':
         case 'R':
             refresh_sensor_data();

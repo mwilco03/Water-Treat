@@ -50,8 +50,8 @@ static void init_form(sensor_form_t *form) {
     form->subslot = 1;
     form->module_ident = 0x00000001;
     form->submodule_ident = 0x00000001;
-    strcpy(form->module_type, "physical");
-    strcpy(form->interface, "i2c");
+    SAFE_STRNCPY(form->module_type, "physical", sizeof(form->module_type));
+    SAFE_STRNCPY(form->interface, "i2c", sizeof(form->interface));
     form->reference_voltage = 3.3f;
     form->poll_rate_ms = 1000;
     form->max_value = 100.0f;
@@ -220,7 +220,7 @@ static result_t save_sensor(sensor_form_t *form, int *sensor_id) {
     SAFE_STRNCPY(module.module_type, form->module_type, sizeof(module.module_type));
     module.module_ident = form->module_ident;
     module.submodule_ident = form->submodule_ident;
-    strcpy(module.status, "inactive");
+    SAFE_STRNCPY(module.status, STATUS_INACTIVE, sizeof(module.status));
 
     r = db_module_create(db, &module, sensor_id);
     if (r != RESULT_OK) return r;

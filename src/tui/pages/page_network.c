@@ -133,7 +133,7 @@ static void load_network_config(void) {
     f->label = "DHCP Enabled";
     f->editable = true;
     f->config_key = "dhcp_enabled";
-    strcpy(f->value, cfg->network.dhcp_enabled ? "true" : "false");
+    SAFE_STRNCPY(f->value, cfg->network.dhcp_enabled ? "true" : "false", sizeof(f->value));
     
     // IP Address
     f = &g_page.fields[g_page.field_count++];

@@ -27,4 +27,14 @@ result_t alarm_manager_enable_rule(int rule_id, bool enabled);
 
 bool alarm_manager_is_running(void);
 
+/* Performance metrics for observability */
+typedef struct {
+    uint64_t cache_hits;       /* Check cycles using cached rules */
+    uint64_t cache_refreshes;  /* Times cache was refreshed from DB */
+    uint64_t total_checks;     /* Total rule checks performed */
+    int cached_rule_count;     /* Current number of cached rules */
+} alarm_manager_stats_t;
+
+result_t alarm_manager_get_stats(alarm_manager_stats_t *stats);
+
 #endif

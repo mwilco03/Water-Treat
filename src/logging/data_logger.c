@@ -236,20 +236,45 @@ static void process_queue(void) {
     log_entry_t batch[MAX_LOG_BATCH_SIZE];
     int batch_count = 0;
 
-    // Extract batch from queue
-    while (g_logger.queue_count > 0 && batch_count < MAX_LOG_BATCH_SIZE) {
-        batch[batch_count++] = g_logger.queue[g_logger.queue_tail];
-        g_logger.queue_tail = (g_logger.queue_tail + 1) % LOG_QUEUE_SIZE;
-        g_logger.queue_count--;
+    /*
+     * PEEK entries from queue without removing them yet.
+     * We only advance tail pointer after successful insert to prevent data loss.
+     */
+    int peek_idx = g_logger.queue_tail;
+    int peek_remaining = g_logger.queue_count;
+    while (peek_remaining > 0 && batch_count < MAX_LOG_BATCH_SIZE) {
+        batch[batch_count++] = g_logger.queue[peek_idx];
+        peek_idx = (peek_idx + 1) % LOG_QUEUE_SIZE;
+        peek_remaining--;
     }
 
-    // Log to local database
-    if (g_logger.config.local_enabled && g_logger.db) {
+    // Log to local database using batch insert for efficiency
+    if (g_logger.config.local_enabled && g_logger.db && batch_count > 0) {
+        /* Prepare arrays for batch insert (10-100x faster than individual inserts) */
+        int module_ids[MAX_LOG_BATCH_SIZE];
+        float values[MAX_LOG_BATCH_SIZE];
+        const char *statuses[MAX_LOG_BATCH_SIZE];
+
         for (int i = 0; i < batch_count; i++) {
-            db_sensor_log_insert(g_logger.db, batch[i].module_id,
-                                 batch[i].value, batch[i].status);
+            module_ids[i] = batch[i].module_id;
+            values[i] = batch[i].value;
+            statuses[i] = batch[i].status;
         }
-        g_logger.total_logged += batch_count;
+
+        if (db_sensor_log_insert_batch(g_logger.db, module_ids, values, statuses, batch_count) == RESULT_OK) {
+            g_logger.total_logged += batch_count;
+            /* SUCCESS: Now safe to dequeue the entries we just inserted */
+            g_logger.queue_tail = peek_idx;
+            g_logger.queue_count -= batch_count;
+        } else {
+            /* FAILURE: Entries remain in queue for retry on next cycle */
+            LOG_WARNING("Batch insert failed, %d entries remain queued for retry", batch_count);
+            return;  /* Don't proceed to remote - local failed */
+        }
+    } else if (!g_logger.config.local_enabled) {
+        /* Local logging disabled - dequeue for remote-only processing */
+        g_logger.queue_tail = peek_idx;
+        g_logger.queue_count -= batch_count;
     }
 
     // Send to remote if enabled and network is connected
@@ -434,7 +459,7 @@ result_t data_logger_log(int module_id, float value, const char *status) {
     log_entry_t *entry = &g_logger.queue[g_logger.queue_head];
     entry->module_id = module_id;
     entry->value = value;
-    SAFE_STRNCPY(entry->status, status ? status : "ok", sizeof(entry->status));
+    SAFE_STRNCPY(entry->status, status ? status : STATUS_OK, sizeof(entry->status));
     entry->timestamp = time(NULL);
     
     g_logger.queue_head = (g_logger.queue_head + 1) % LOG_QUEUE_SIZE;
@@ -455,7 +480,7 @@ result_t data_logger_log_batch(int *module_ids, float *values, const char **stat
     CHECK_NULL(module_ids); CHECK_NULL(values);
     
     for (int i = 0; i < count; i++) {
-        data_logger_log(module_ids[i], values[i], statuses ? statuses[i] : "ok");
+        data_logger_log(module_ids[i], values[i], statuses ? statuses[i] : STATUS_OK);
     }
     
     return RESULT_OK;
