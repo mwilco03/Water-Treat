@@ -53,6 +53,8 @@ static const char *SCHEMA_STATEMENTS[] = {
     "interlock_action INTEGER DEFAULT 0, interlock_pwm_duty INTEGER DEFAULT 0, release_on_clear INTEGER DEFAULT 1, "
     "FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE)",
 
+    "CREATE INDEX IF NOT EXISTS idx_alarm_rules_module ON alarm_rules(module_id)",
+
     "CREATE TABLE IF NOT EXISTS alarm_history (id INTEGER PRIMARY KEY AUTOINCREMENT, "
     "rule_id INTEGER, module_id INTEGER NOT NULL, severity INTEGER NOT NULL, "
     "state TEXT NOT NULL DEFAULT 'active', message TEXT, trigger_value REAL, "

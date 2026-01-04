@@ -236,11 +236,16 @@ static void process_queue(void) {
     log_entry_t batch[MAX_LOG_BATCH_SIZE];
     int batch_count = 0;
 
-    // Extract batch from queue
-    while (g_logger.queue_count > 0 && batch_count < MAX_LOG_BATCH_SIZE) {
-        batch[batch_count++] = g_logger.queue[g_logger.queue_tail];
-        g_logger.queue_tail = (g_logger.queue_tail + 1) % LOG_QUEUE_SIZE;
-        g_logger.queue_count--;
+    /*
+     * PEEK entries from queue without removing them yet.
+     * We only advance tail pointer after successful insert to prevent data loss.
+     */
+    int peek_idx = g_logger.queue_tail;
+    int peek_remaining = g_logger.queue_count;
+    while (peek_remaining > 0 && batch_count < MAX_LOG_BATCH_SIZE) {
+        batch[batch_count++] = g_logger.queue[peek_idx];
+        peek_idx = (peek_idx + 1) % LOG_QUEUE_SIZE;
+        peek_remaining--;
     }
 
     // Log to local database using batch insert for efficiency
@@ -258,7 +263,18 @@ static void process_queue(void) {
 
         if (db_sensor_log_insert_batch(g_logger.db, module_ids, values, statuses, batch_count) == RESULT_OK) {
             g_logger.total_logged += batch_count;
+            /* SUCCESS: Now safe to dequeue the entries we just inserted */
+            g_logger.queue_tail = peek_idx;
+            g_logger.queue_count -= batch_count;
+        } else {
+            /* FAILURE: Entries remain in queue for retry on next cycle */
+            LOG_WARNING("Batch insert failed, %d entries remain queued for retry", batch_count);
+            return;  /* Don't proceed to remote - local failed */
         }
+    } else if (!g_logger.config.local_enabled) {
+        /* Local logging disabled - dequeue for remote-only processing */
+        g_logger.queue_tail = peek_idx;
+        g_logger.queue_count -= batch_count;
     }
 
     // Send to remote if enabled and network is connected

@@ -18,6 +18,7 @@ extern actuator_manager_t g_actuator_mgr;
 
 #define MAX_ALARM_RULES 256
 #define ALARM_CHECK_INTERVAL_MS 1000
+#define CACHE_REFRESH_INTERVAL_MS (5 * 60 * 1000)  /* Safety net: refresh every 5 minutes */
 
 typedef struct {
     int rule_id;
@@ -38,6 +39,12 @@ typedef struct {
     db_alarm_rule_t *cached_rules;
     int cached_rule_count;
     bool cache_dirty;  /* Set true when rules change, triggers refresh */
+    uint64_t last_cache_refresh;  /* Timestamp for periodic refresh safety net */
+
+    /* Performance metrics */
+    uint64_t cache_hits;      /* Checks using cached rules */
+    uint64_t cache_refreshes; /* Times cache was refreshed from DB */
+    uint64_t total_checks;    /* Total rule checks performed */
 
     pthread_t check_thread;
     pthread_mutex_t mutex;
@@ -57,7 +64,7 @@ static alarm_manager_t g_alarm_mgr = {0};
 
 /**
  * Refresh the cached alarm rules from database.
- * Only called when cache_dirty is true, reducing DB queries from ~1/sec to ~1/change.
+ * Called when cache_dirty is true or periodically as safety net.
  * Caller must hold mutex.
  */
 static void refresh_rule_cache(void) {
@@ -69,6 +76,19 @@ static void refresh_rule_cache(void) {
 
     db_alarm_rule_list(g_alarm_mgr.db, &g_alarm_mgr.cached_rules, &g_alarm_mgr.cached_rule_count);
     g_alarm_mgr.cache_dirty = false;
+    g_alarm_mgr.last_cache_refresh = get_time_ms();
+}
+
+/**
+ * Check if cache needs refresh (dirty or periodic timeout)
+ */
+static bool cache_needs_refresh(void) {
+    if (g_alarm_mgr.cache_dirty || !g_alarm_mgr.cached_rules) {
+        return true;
+    }
+    /* Safety net: periodic refresh catches external DB modifications */
+    uint64_t now = get_time_ms();
+    return (now - g_alarm_mgr.last_cache_refresh) >= CACHE_REFRESH_INTERVAL_MS;
 }
 
 /**
@@ -269,9 +289,12 @@ static void* alarm_check_thread(void *arg) {
     while (g_alarm_mgr.running) {
         pthread_mutex_lock(&g_alarm_mgr.mutex);
 
-        /* Only refresh from DB when rules have changed */
-        if (g_alarm_mgr.cache_dirty || !g_alarm_mgr.cached_rules) {
+        /* Refresh cache if dirty or periodic timeout (safety net for external DB changes) */
+        if (cache_needs_refresh()) {
             refresh_rule_cache();
+            g_alarm_mgr.cache_refreshes++;
+        } else {
+            g_alarm_mgr.cache_hits++;
         }
 
         /* Use cached rules - no DB query unless cache is dirty */
@@ -284,6 +307,7 @@ static void* alarm_check_thread(void *arg) {
             if (db_sensor_status_get(g_alarm_mgr.db, rule->module_id, &value, status, sizeof(status)) == RESULT_OK) {
                 if (strcmp(status, "ok") == 0 || strcmp(status, "unknown") == 0) {
                     check_rule(rule, value);
+                    g_alarm_mgr.total_checks++;
                 }
             }
         }
@@ -484,4 +508,18 @@ result_t alarm_manager_enable_rule(int rule_id, bool enabled) {
 
 bool alarm_manager_is_running(void) {
     return g_alarm_mgr.running;
+}
+
+result_t alarm_manager_get_stats(alarm_manager_stats_t *stats) {
+    CHECK_NULL(stats);
+    if (!g_alarm_mgr.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_alarm_mgr.mutex);
+    stats->cache_hits = g_alarm_mgr.cache_hits;
+    stats->cache_refreshes = g_alarm_mgr.cache_refreshes;
+    stats->total_checks = g_alarm_mgr.total_checks;
+    stats->cached_rule_count = g_alarm_mgr.cached_rule_count;
+    pthread_mutex_unlock(&g_alarm_mgr.mutex);
+
+    return RESULT_OK;
 }
