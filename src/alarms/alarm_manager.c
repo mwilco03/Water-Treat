@@ -109,8 +109,22 @@ static alarm_rule_state_t* find_state(int rule_id) {
 static alarm_rule_state_t* get_or_create_state(int rule_id) {
     alarm_rule_state_t *state = find_state(rule_id);
     if (state) return state;
-    if (g_alarm_mgr.state_count >= MAX_ALARM_RULES) return NULL;
-    
+
+    if (g_alarm_mgr.state_count >= MAX_ALARM_RULES) {
+        LOG_ERROR("LIMIT REACHED: Maximum alarm rules (%d) exceeded. "
+                  "Cannot track state for rule %d. Delete unused rules or increase MAX_ALARM_RULES.",
+                  MAX_ALARM_RULES, rule_id);
+        return NULL;
+    }
+
+    /* Warn at 80% capacity */
+    int warning_threshold = MAX_ALARM_RULES * 80 / 100;
+    if (g_alarm_mgr.state_count >= warning_threshold) {
+        LOG_WARNING("Alarm rules approaching limit: %d/%d (%.0f%% used)",
+                    g_alarm_mgr.state_count + 1, MAX_ALARM_RULES,
+                    100.0f * (g_alarm_mgr.state_count + 1) / MAX_ALARM_RULES);
+    }
+
     state = &g_alarm_mgr.states[g_alarm_mgr.state_count++];
     memset(state, 0, sizeof(*state));
     state->rule_id = rule_id;

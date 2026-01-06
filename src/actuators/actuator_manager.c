@@ -6,6 +6,7 @@
 #include "actuator_manager.h"
 #include "profinet/profinet_manager.h"
 #include "alarms/alarm_manager.h"
+#include "config/config.h"
 #include "db/db_events.h"
 #include "db/db_modules.h"
 #include "drivers/digital/relay_output.h"
@@ -14,9 +15,18 @@
 #include <string.h>
 #include <unistd.h>
 
-#define WATCHDOG_INTERVAL_MS    1000
-#define COMMAND_TIMEOUT_MS      5000    // Consider disconnected if no command for 5s
-#define DEGRADED_ALARM_DELAY_MS 3000    // Wait before declaring degraded mode
+/* Access to global config from main.c */
+extern app_config_t g_app_config;
+
+/* Default timeout values - can be overridden via [actuator] section in config */
+#define DEFAULT_WATCHDOG_INTERVAL_MS    1000
+#define DEFAULT_COMMAND_TIMEOUT_MS      5000    // Consider disconnected if no command for 5s
+#define DEFAULT_DEGRADED_ALARM_DELAY_MS 3000    // Wait before declaring degraded mode
+
+/* Runtime configurable timeouts (initialized from config on start) */
+static int g_watchdog_interval_ms = DEFAULT_WATCHDOG_INTERVAL_MS;
+static int g_command_timeout_ms = DEFAULT_COMMAND_TIMEOUT_MS;
+static int g_degraded_alarm_delay_ms = DEFAULT_DEGRADED_ALARM_DELAY_MS;
 
 /* ============================================================================
  * Internal Structures
@@ -170,7 +180,7 @@ static void check_safety_limits(actuator_manager_t *mgr) {
     for (int i = 0; i < mgr->actuator_count; i++) {
         actuator_instance_t *act = &mgr->actuators[i];
 
-        // Check max on time
+        // Check max on time (watchdog timeout protection)
         if (act->config.max_on_time_sec > 0 &&
             act->state == ACTUATOR_STATE_ON) {
 
@@ -178,8 +188,14 @@ static void check_safety_limits(actuator_manager_t *mgr) {
             uint64_t max_on_ms = (uint64_t)act->config.max_on_time_sec * 1000;
 
             if (on_duration_ms >= max_on_ms) {
-                LOG_WARNING("Actuator %s exceeded max on time (%d sec), forcing OFF",
-                            act->config.name, act->config.max_on_time_sec);
+                /* AUDIT: Log watchdog timeout with full context for compliance */
+                LOG_WARNING("WATCHDOG TIMEOUT: Actuator '%s' (slot %d, GPIO %d) "
+                            "exceeded max on time %d sec (was on for %lu sec), forcing OFF",
+                            act->config.name,
+                            act->config.profinet_slot,
+                            act->config.gpio_pin,
+                            act->config.max_on_time_sec,
+                            (unsigned long)(on_duration_ms / 1000));
 
                 act->state = ACTUATOR_STATE_OFF;
                 apply_actuator_state(act);
@@ -187,9 +203,12 @@ static void check_safety_limits(actuator_manager_t *mgr) {
                 if (mgr->db) {
                     char msg[256];
                     snprintf(msg, sizeof(msg),
-                             "Safety shutoff: %s exceeded max on time",
-                             act->config.name);
-                    DB_EVENT_WARNING(mgr->db, "actuator_manager", msg);
+                             "WATCHDOG SAFETY SHUTOFF: %s (slot %d) exceeded max on time "
+                             "%d sec - actuator forced OFF",
+                             act->config.name,
+                             act->config.profinet_slot,
+                             act->config.max_on_time_sec);
+                    DB_EVENT_ERROR(mgr->db, "watchdog", msg);
                 }
             }
         }
@@ -212,7 +231,7 @@ static void* watchdog_thread(void *arg) {
 
             for (int i = 0; i < mgr->actuator_count; i++) {
                 if (mgr->actuators[i].last_command_time_ms > 0 &&
-                    (now - mgr->actuators[i].last_command_time_ms) < COMMAND_TIMEOUT_MS) {
+                    (now - mgr->actuators[i].last_command_time_ms) < (uint64_t)g_command_timeout_ms) {
                     any_recent_command = true;
                     break;
                 }
@@ -220,14 +239,24 @@ static void* watchdog_thread(void *arg) {
 
             // If PROFINET says connected but no commands received, enter degraded
             // This catches the case where connection is stale
+            // Note: no_command_start must be static to persist across loop iterations
+            static uint64_t no_command_start = 0;
+
             if (!any_recent_command && mgr->actuator_count > 0) {
                 // Only enter degraded mode after delay
-                static uint64_t no_command_start = 0;
                 if (no_command_start == 0) {
                     no_command_start = now;
-                } else if ((now - no_command_start) > DEGRADED_ALARM_DELAY_MS) {
+                    LOG_DEBUG("WATCHDOG: No recent commands detected, starting %d ms delay before degraded mode",
+                              g_degraded_alarm_delay_ms);
+                } else if ((now - no_command_start) > (uint64_t)g_degraded_alarm_delay_ms) {
+                    LOG_WARNING("WATCHDOG: Command timeout exceeded %d ms - no commands for %lu ms, entering degraded mode",
+                                g_command_timeout_ms, (unsigned long)(now - no_command_start));
                     enter_degraded_mode(mgr);
+                    no_command_start = 0;  // Reset for next disconnect cycle
                 }
+            } else {
+                // Reset no_command_start when commands are being received
+                no_command_start = 0;
             }
         }
 
@@ -236,7 +265,7 @@ static void* watchdog_thread(void *arg) {
 
         pthread_mutex_unlock(&mgr->mutex);
 
-        usleep(WATCHDOG_INTERVAL_MS * 1000);
+        usleep(g_watchdog_interval_ms * 1000);
     }
 
     LOG_INFO("Actuator watchdog thread stopped");
@@ -310,6 +339,21 @@ result_t actuator_manager_start(actuator_manager_t *mgr) {
     CHECK_NULL(mgr);
     if (!mgr->initialized) return RESULT_NOT_INITIALIZED;
     if (mgr->running) return RESULT_OK;
+
+    /* Load configurable timeouts from [watchdog] section in config file
+     * Allows operators to tune for their network latency without rebuilding */
+    if (g_app_config.watchdog.watchdog_interval_ms > 0) {
+        g_watchdog_interval_ms = g_app_config.watchdog.watchdog_interval_ms;
+    }
+    if (g_app_config.watchdog.command_timeout_ms > 0) {
+        g_command_timeout_ms = g_app_config.watchdog.command_timeout_ms;
+    }
+    if (g_app_config.watchdog.degraded_alarm_delay_ms > 0) {
+        g_degraded_alarm_delay_ms = g_app_config.watchdog.degraded_alarm_delay_ms;
+    }
+
+    LOG_INFO("Actuator watchdog config: interval=%dms, command_timeout=%dms, degraded_delay=%dms",
+             g_watchdog_interval_ms, g_command_timeout_ms, g_degraded_alarm_delay_ms);
 
     // Register PROFINET callbacks
     result_t r = profinet_manager_set_callbacks(

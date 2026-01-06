@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <errno.h>
+#include <string.h>
 
 /* ============================================================================
  * Table-Driven Config Loading
@@ -133,6 +135,14 @@ static const config_field_t config_fields[] = {
       offsetof(app_config_t, led.gpio_pin), 0 },
     { "led", "dma_channel", CFG_TYPE_INT,
       offsetof(app_config_t, led.dma_channel), 0 },
+
+    /* Watchdog section - actuator timeout configuration */
+    { "watchdog", "interval_ms", CFG_TYPE_INT,
+      offsetof(app_config_t, watchdog.watchdog_interval_ms), 0 },
+    { "watchdog", "command_timeout_ms", CFG_TYPE_INT,
+      offsetof(app_config_t, watchdog.command_timeout_ms), 0 },
+    { "watchdog", "degraded_alarm_delay_ms", CFG_TYPE_INT,
+      offsetof(app_config_t, watchdog.degraded_alarm_delay_ms), 0 },
 };
 
 #define CONFIG_FIELD_COUNT (sizeof(config_fields) / sizeof(config_fields[0]))
@@ -278,7 +288,13 @@ void config_manager_destroy(config_manager_t *m) { if(m) memset(m,0,sizeof(*m));
 
 result_t config_load_file(config_manager_t *m, const char *p) {
     CHECK_NULL(m); CHECK_NULL(p);
-    FILE *f = fopen(p,"r"); if(!f) { LOG_ERROR("Cannot open: %s",p); return RESULT_IO_ERROR; }
+    FILE *f = fopen(p,"r");
+    if(!f) {
+        /* Provide detailed error context for operators troubleshooting config issues */
+        LOG_WARNING("Cannot open config file '%s': %s (errno=%d)",
+                    p, strerror(errno), errno);
+        return RESULT_IO_ERROR;
+    }
     SAFE_STRNCPY(m->config_path,p,sizeof(m->config_path)); m->entry_count=0;
     char line[1024], sec[MAX_NAME_LEN]="default";
     while(fgets(line,sizeof(line),f)) {
@@ -361,6 +377,11 @@ void config_get_defaults(app_config_t *c) {
     c->led.spi_speed_hz=2400000;
     c->led.gpio_pin=18;
     c->led.dma_channel=10;
+
+    /* Watchdog defaults - see config_defaults.h for rationale */
+    c->watchdog.watchdog_interval_ms = WT_WATCHDOG_INTERVAL_MS;
+    c->watchdog.command_timeout_ms = WT_COMMAND_TIMEOUT_MS;
+    c->watchdog.degraded_alarm_delay_ms = WT_DEGRADED_ALARM_DELAY_MS;
 }
 
 result_t config_load_app_config(config_manager_t *m, app_config_t *c) {

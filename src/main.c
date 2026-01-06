@@ -112,10 +112,17 @@ static result_t load_configuration(const char *config_path) {
             config_load_app_config(&g_config_mgr, &g_app_config);
             LOG_INFO("Loaded configuration from %s", config_path);
         } else {
-            LOG_WARNING("Failed to load config file, using defaults");
+            LOG_WARNING("Failed to parse config file '%s', using defaults. "
+                        "Check file syntax (INI format: [section] and key=value pairs)",
+                        config_path);
         }
+    } else if (config_path) {
+        LOG_WARNING("Config file '%s' not accessible, using defaults. "
+                    "Searched: /etc/water-treat/water-treat.conf, "
+                    "/etc/water-treat.conf, ./water-treat.conf", config_path);
     } else {
-        LOG_INFO("No configuration file found, using defaults");
+        LOG_INFO("No configuration file found (searched: /etc/water-treat/water-treat.conf, "
+                 "/etc/water-treat.conf, ./water-treat.conf), using defaults");
     }
 
     /* Validate configuration and log warnings/errors */

@@ -316,6 +316,9 @@ void sensor_instance_destroy(sensor_instance_t *instance) {
 result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
     pthread_mutex_lock(&instance->mutex);
 
+    /* Track total read attempts for health metrics */
+    instance->total_reads++;
+
     result_t result = RESULT_OK;
     float raw_value = 0.0f;
 
@@ -374,6 +377,7 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
     } else {
         instance->consecutive_failures++;
         instance->consecutive_successes = 0;
+        instance->total_failures++;  /* Track total failures for health metrics */
 
         if (instance->consecutive_failures >= instance->failure_threshold) {
             instance->connected = false;

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <limits.h>
 
 /* VERSION_STRING is defined by CMake from git tags */
 #ifndef VERSION_STRING
@@ -159,6 +160,72 @@ static inline const char* quality_to_string(data_quality_t quality) {
 #define CHECK_NULL(ptr) do { if ((ptr) == NULL) return RESULT_INVALID_PARAM; } while(0)
 #define CHECK_RESULT(expr) do { result_t _r = (expr); if (_r != RESULT_OK) return _r; } while(0)
 #define SAFE_FREE(ptr) do { if ((ptr) != NULL) { free(ptr); (ptr) = NULL; } } while(0)
+
+/* ============================================================================
+ * Safe Number Parsing (P3 operator request - prevent silent failures)
+ * ============================================================================
+ * These functions return RESULT_OK on success with validated output,
+ * or RESULT_PARSE_ERROR with an unchanged default value on failure.
+ * Unlike atoi()/atof(), they don't silently return 0 on invalid input.
+ */
+
+/**
+ * Parse string to int with validation
+ * @param str     String to parse (may be NULL)
+ * @param value   Output value (unchanged on error)
+ * @param min     Minimum valid value
+ * @param max     Maximum valid value
+ * @return RESULT_OK on success, RESULT_PARSE_ERROR on invalid input
+ */
+static inline result_t safe_parse_int(const char *str, int *value, int min, int max) {
+    if (!str || !value || str[0] == '\0') return RESULT_PARSE_ERROR;
+
+    char *endptr;
+    errno = 0;
+    long val = strtol(str, &endptr, 10);
+
+    /* Check for conversion errors */
+    if (errno != 0 || endptr == str || *endptr != '\0') {
+        return RESULT_PARSE_ERROR;
+    }
+
+    /* Check range (including int overflow) */
+    if (val < min || val > max || val < INT32_MIN || val > INT32_MAX) {
+        return RESULT_OUT_OF_RANGE;
+    }
+
+    *value = (int)val;
+    return RESULT_OK;
+}
+
+/**
+ * Parse string to float with validation
+ * @param str     String to parse (may be NULL)
+ * @param value   Output value (unchanged on error)
+ * @param min     Minimum valid value
+ * @param max     Maximum valid value
+ * @return RESULT_OK on success, RESULT_PARSE_ERROR on invalid input
+ */
+static inline result_t safe_parse_float(const char *str, float *value, float min, float max) {
+    if (!str || !value || str[0] == '\0') return RESULT_PARSE_ERROR;
+
+    char *endptr;
+    errno = 0;
+    double val = strtod(str, &endptr);
+
+    /* Check for conversion errors */
+    if (errno != 0 || endptr == str || *endptr != '\0') {
+        return RESULT_PARSE_ERROR;
+    }
+
+    /* Check range */
+    if (val < min || val > max) {
+        return RESULT_OUT_OF_RANGE;
+    }
+
+    *value = (float)val;
+    return RESULT_OK;
+}
 
 /* ============================================================================
  * Centralized Status Strings
