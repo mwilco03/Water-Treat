@@ -252,16 +252,22 @@ result_t profinet_manager_start(const char *interface) {
 
 #ifdef HAVE_PNET
     // Set network interface (use static buffer since if_cfg expects const char *)
-    if (interface) {
+    if (interface && interface[0] != '\0') {
         strncpy(g_netif_name, interface, sizeof(g_netif_name) - 1);
         g_netif_name[sizeof(g_netif_name) - 1] = '\0';
+        LOG_INFO("PROFINET using configured interface: %s", g_netif_name);
+    } else {
+        LOG_WARNING("No network interface specified, defaulting to '%s'. "
+                    "Set [network] interface in config file to change.", g_netif_name);
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
-    
+
     // Initialize p-net
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
     if (!g_pn.pnet) {
-        LOG_ERROR("Failed to initialize p-net stack");
+        LOG_ERROR("Failed to initialize p-net stack on interface '%s'. "
+                  "Check that interface exists (ip link show) and is configured. "
+                  "Common interfaces: eth0, eno1, enp0s3, end0", g_netif_name);
         return RESULT_ERROR;
     }
     
@@ -316,22 +322,44 @@ result_t profinet_manager_start(const char *interface) {
 result_t profinet_manager_stop(void) {
     if (!g_pn.running) return RESULT_OK;
 
+    LOG_INFO("Stopping PROFINET stack...");
     g_pn.running = false;
 
 #ifdef HAVE_PNET
+    /* Wait for tick thread to exit cleanly */
+    LOG_DEBUG("Waiting for PROFINET tick thread to terminate...");
     pthread_join(g_pn.tick_thread, NULL);
+    LOG_DEBUG("PROFINET tick thread terminated");
 
-    // p-net v0.2.0: No explicit close/destroy function
-    // Just nullify the handle; resources freed on process exit
+    /*
+     * p-net cleanup: The p-net library (v0.2.0+) may not have explicit
+     * pnet_close() depending on version. We attempt to call it if available,
+     * otherwise log that resources will be freed on process exit.
+     *
+     * NOTE: If you upgrade p-net and pnet_close() becomes available,
+     * enable this block to ensure clean shutdown without requiring reboot.
+     */
     if (g_pn.pnet) {
+#ifdef pnet_close
+        /* p-net newer versions may have explicit close */
+        LOG_DEBUG("Calling pnet_close() for clean resource release");
+        pnet_close(g_pn.pnet);
+#else
+        /* Older p-net: Resources freed on process exit.
+         * This is acceptable for service restart but not ideal.
+         * If you experience issues after service restart (duplicate
+         * registrations, port binding failures), a full reboot
+         * may be required. */
+        LOG_DEBUG("pnet_close() not available - resources freed on process exit");
+#endif
         g_pn.pnet = NULL;
     }
 #endif
-    
+
     g_pn.state = PROFINET_STATE_IDLE;
     g_pn.connected = false;
-    
-    LOG_INFO("PROFINET stack stopped");
+
+    LOG_INFO("PROFINET stack stopped cleanly");
     return RESULT_OK;
 }
 

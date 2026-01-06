@@ -73,6 +73,16 @@
 #define WT_ALARM_HYSTERESIS_PCT     5       /* Default hysteresis percentage */
 
 /* ============================================================================
+ * Actuator/Watchdog Configuration
+ * ============================================================================
+ * Configurable timeouts for actuator watchdog. Adjust these if experiencing
+ * false-positive degraded mode alarms due to network latency.
+ */
+#define WT_WATCHDOG_INTERVAL_MS         1000    /* How often watchdog thread runs */
+#define WT_COMMAND_TIMEOUT_MS           5000    /* Max time without command before concern */
+#define WT_DEGRADED_ALARM_DELAY_MS      3000    /* Delay before declaring degraded mode */
+
+/* ============================================================================
  * Station Identity
  * ============================================================================ */
 #define WT_STATION_NAME_DEFAULT     "water-treat-rtu"

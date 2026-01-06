@@ -6,9 +6,11 @@
 #include "health_check.h"
 #include "utils/logger.h"
 #include "sensors/sensor_manager.h"
+#include "sensors/sensor_instance.h"
 #include "actuators/actuator_manager.h"
 #include "alarms/alarm_manager.h"
 #include "profinet/profinet_manager.h"
+#include "logging/data_logger.h"
 #include "config/config.h"
 
 #ifdef LED_SUPPORT
@@ -289,7 +291,11 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
     snap = g_health.current_snapshot;
     pthread_mutex_unlock(&g_health.snapshot_mutex);
 
-    return snprintf(buffer, buffer_size,
+    /* Get data logger stats for observability */
+    data_logger_stats_t logger_stats = {0};
+    data_logger_get_stats(&logger_stats);
+
+    int len = snprintf(buffer, buffer_size,
         "# HELP water_treat_health Overall health status (0=ok, 1=degraded, 2=critical)\n"
         "# TYPE water_treat_health gauge\n"
         "water_treat_health %d\n"
@@ -334,6 +340,98 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         snap.active_actuators,
         snap.cpu_usage_percent,
         snap.memory_usage_percent);
+
+    /* Add data logger observability metrics (P2 operator request) */
+    len += snprintf(buffer + len, buffer_size - len,
+        "# HELP water_treat_logger_total_logged Total entries logged locally\n"
+        "# TYPE water_treat_logger_total_logged counter\n"
+        "water_treat_logger_total_logged %lu\n"
+        "# HELP water_treat_logger_remote_sent Total entries sent to remote successfully\n"
+        "# TYPE water_treat_logger_remote_sent counter\n"
+        "water_treat_logger_remote_sent %lu\n"
+        "# HELP water_treat_logger_remote_failed Total entries that failed to send to remote\n"
+        "# TYPE water_treat_logger_remote_failed counter\n"
+        "water_treat_logger_remote_failed %lu\n"
+        "# HELP water_treat_logger_queue_depth Current entries queued for remote transmission\n"
+        "# TYPE water_treat_logger_queue_depth gauge\n"
+        "water_treat_logger_queue_depth %d\n"
+        "# HELP water_treat_logger_queue_capacity Maximum queue capacity\n"
+        "# TYPE water_treat_logger_queue_capacity gauge\n"
+        "water_treat_logger_queue_capacity %d\n"
+        "# HELP water_treat_logger_remote_available Remote logging available (1=yes, 0=no)\n"
+        "# TYPE water_treat_logger_remote_available gauge\n"
+        "water_treat_logger_remote_available %d\n"
+        "# HELP water_treat_logger_consecutive_failures Consecutive remote send failures\n"
+        "# TYPE water_treat_logger_consecutive_failures gauge\n"
+        "water_treat_logger_consecutive_failures %d\n",
+        (unsigned long)logger_stats.total_logged,
+        (unsigned long)logger_stats.total_remote_sent,
+        (unsigned long)logger_stats.total_remote_failed,
+        logger_stats.queue_count,
+        logger_stats.queue_capacity,
+        logger_stats.remote_available ? 1 : 0,
+        logger_stats.remote_failures);
+
+    /* Add alarm rule capacity metrics (P2 operator request for capacity planning) */
+    alarm_manager_stats_t alarm_stats = {0};
+    if (alarm_manager_get_stats(&alarm_stats) == RESULT_OK) {
+        len += snprintf(buffer + len, buffer_size - len,
+            "# HELP water_treat_alarm_rules_configured Number of configured alarm rules\n"
+            "# TYPE water_treat_alarm_rules_configured gauge\n"
+            "water_treat_alarm_rules_configured %d\n"
+            "# HELP water_treat_alarm_rules_max Maximum alarm rules allowed\n"
+            "# TYPE water_treat_alarm_rules_max gauge\n"
+            "water_treat_alarm_rules_max %d\n"
+            "# HELP water_treat_alarm_cache_hits Alarm rule cache hits\n"
+            "# TYPE water_treat_alarm_cache_hits counter\n"
+            "water_treat_alarm_cache_hits %lu\n"
+            "# HELP water_treat_alarm_total_checks Total alarm rule checks performed\n"
+            "# TYPE water_treat_alarm_total_checks counter\n"
+            "water_treat_alarm_total_checks %lu\n",
+            alarm_stats.cached_rule_count,
+            256,  /* MAX_ALARM_RULES from alarm_manager.c */
+            (unsigned long)alarm_stats.cache_hits,
+            (unsigned long)alarm_stats.total_checks);
+    }
+
+    /* Add per-sensor health metrics (P2 operator request for predictive maintenance) */
+    extern sensor_manager_t g_sensor_mgr;
+    if (g_sensor_mgr.running && g_sensor_mgr.instance_count > 0) {
+        len += snprintf(buffer + len, buffer_size - len,
+            "# HELP water_treat_sensor_total_reads Total read attempts per sensor\n"
+            "# TYPE water_treat_sensor_total_reads counter\n");
+        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - 256; i++) {
+            sensor_instance_t *s = g_sensor_mgr.instances[i];
+            if (!s) continue;
+            len += snprintf(buffer + len, buffer_size - len,
+                "water_treat_sensor_total_reads{sensor=\"%s\",slot=\"%d\"} %lu\n",
+                s->name, s->slot, (unsigned long)s->total_reads);
+        }
+
+        len += snprintf(buffer + len, buffer_size - len,
+            "# HELP water_treat_sensor_total_failures Total failed reads per sensor\n"
+            "# TYPE water_treat_sensor_total_failures counter\n");
+        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - 256; i++) {
+            sensor_instance_t *s = g_sensor_mgr.instances[i];
+            if (!s) continue;
+            len += snprintf(buffer + len, buffer_size - len,
+                "water_treat_sensor_total_failures{sensor=\"%s\",slot=\"%d\"} %lu\n",
+                s->name, s->slot, (unsigned long)s->total_failures);
+        }
+
+        len += snprintf(buffer + len, buffer_size - len,
+            "# HELP water_treat_sensor_consecutive_failures Current consecutive failures per sensor\n"
+            "# TYPE water_treat_sensor_consecutive_failures gauge\n");
+        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - 256; i++) {
+            sensor_instance_t *s = g_sensor_mgr.instances[i];
+            if (!s) continue;
+            len += snprintf(buffer + len, buffer_size - len,
+                "water_treat_sensor_consecutive_failures{sensor=\"%s\",slot=\"%d\"} %d\n",
+                s->name, s->slot, s->consecutive_failures);
+        }
+    }
+
+    return len;
 }
 
 result_t health_check_write_file(const char *path) {

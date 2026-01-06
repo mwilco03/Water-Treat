@@ -102,6 +102,10 @@ typedef struct {
     int consecutive_successes;
     int consecutive_failures;
 
+    /* Total counters for health metrics (P2 operator observability) */
+    uint64_t total_reads;           /* Total read attempts since startup */
+    uint64_t total_failures;        /* Total failed read attempts */
+
     /* Data quality tracking (per DEVELOPMENT_GUIDELINES.md Part 2.4) */
     data_quality_t quality;         /* Current quality indicator */
     uint64_t timestamp_us;          /* Microseconds since epoch of last reading */

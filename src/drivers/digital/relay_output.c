@@ -11,6 +11,7 @@
 #include "utils/logger.h"
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 /* ============================================================================
  * Private Data
@@ -22,13 +23,14 @@ typedef struct {
     uint64_t off_start_time;
 } output_priv_t;
 
-/* Interlock tracking */
+/* Interlock tracking - mutex protected for thread safety (safety-critical) */
 #define MAX_INTERLOCKS 16
 static struct {
     int group_id;
     output_driver_t *active_output;
 } g_interlocks[MAX_INTERLOCKS];
 static int g_interlock_count = 0;
+static pthread_mutex_t g_interlock_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* ============================================================================
  * GPIO Operations (abstracted for portability)
@@ -93,24 +95,36 @@ static result_t gpio_set_pwm(int pin, float duty_cycle, int frequency_hz) {
 }
 
 /* ============================================================================
- * Interlock Management
+ * Interlock Management (thread-safe - all access protected by g_interlock_mutex)
+ *
+ * SAFETY CRITICAL: These functions manage mutual exclusion between actuators
+ * in the same interlock group. Race conditions here could allow multiple
+ * conflicting actuators to activate simultaneously.
  * ========================================================================== */
 
 static bool check_interlock_available(int group_id, output_driver_t *drv) {
+    pthread_mutex_lock(&g_interlock_mutex);
+    bool available = true;
     for (int i = 0; i < g_interlock_count; i++) {
         if (g_interlocks[i].group_id == group_id &&
             g_interlocks[i].active_output != NULL &&
             g_interlocks[i].active_output != drv) {
-            return false;  // Another output in this group is active
+            available = false;  // Another output in this group is active
+            break;
         }
     }
-    return true;
+    pthread_mutex_unlock(&g_interlock_mutex);
+    return available;
 }
 
 static void register_interlock_active(int group_id, output_driver_t *drv) {
+    pthread_mutex_lock(&g_interlock_mutex);
     for (int i = 0; i < g_interlock_count; i++) {
         if (g_interlocks[i].group_id == group_id) {
             g_interlocks[i].active_output = drv;
+            pthread_mutex_unlock(&g_interlock_mutex);
+            LOG_DEBUG("Interlock group %d: registered active output '%s'",
+                      group_id, drv->config.name);
             return;
         }
     }
@@ -120,16 +134,26 @@ static void register_interlock_active(int group_id, output_driver_t *drv) {
         g_interlocks[g_interlock_count].group_id = group_id;
         g_interlocks[g_interlock_count].active_output = drv;
         g_interlock_count++;
+        LOG_DEBUG("Interlock group %d: created and registered active output '%s'",
+                  group_id, drv->config.name);
+    } else {
+        LOG_ERROR("SAFETY WARNING: Max interlock groups (%d) exceeded, cannot register group %d",
+                  MAX_INTERLOCKS, group_id);
     }
+    pthread_mutex_unlock(&g_interlock_mutex);
 }
 
 static void clear_interlock_active(int group_id, output_driver_t *drv) {
+    pthread_mutex_lock(&g_interlock_mutex);
     for (int i = 0; i < g_interlock_count; i++) {
         if (g_interlocks[i].group_id == group_id &&
             g_interlocks[i].active_output == drv) {
             g_interlocks[i].active_output = NULL;
+            LOG_DEBUG("Interlock group %d: cleared active output '%s'",
+                      group_id, drv->config.name);
         }
     }
+    pthread_mutex_unlock(&g_interlock_mutex);
 }
 
 /* ============================================================================
