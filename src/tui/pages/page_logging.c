@@ -208,6 +208,9 @@ static void draw_config(WINDOW *win, int *row) {
             wattron(win, COLOR_PAIR(TUI_COLOR_INPUT));
             wprintw(win, "%-24s", g_page.edit_buffer);
             wattroff(win, COLOR_PAIR(TUI_COLOR_INPUT));
+            // Show cursor position (4 indent + 16 label + ": " = 22)
+            int cursor_x = 4 + 16 + 2 + g_page.edit_pos;
+            mvwchgat(win, *row, cursor_x, 1, A_UNDERLINE | A_BOLD, 0, NULL);
         } else {
             wattron(win, COLOR_PAIR(TUI_COLOR_STATUS));
             wprintw(win, "%-24s", f->value);
@@ -339,10 +342,13 @@ void page_logging_input(WINDOW *win, int ch) {
     UNUSED(win);
     
     if (g_page.editing) {
+        size_t len = strlen(g_page.edit_buffer);
+
         switch (ch) {
-            case 27:
+            case 27:  // Escape - cancel editing
                 g_page.editing = false;
                 break;
+
             case '\n':
             case KEY_ENTER:
                 SAFE_STRNCPY(g_page.fields[g_page.selected_field].value,
@@ -351,16 +357,53 @@ void page_logging_input(WINDOW *win, int ch) {
                 save_field(g_page.selected_field);
                 g_page.editing = false;
                 break;
+
             case KEY_BACKSPACE:
             case 127:
+            case '\b':
                 if (g_page.edit_pos > 0) {
-                    g_page.edit_buffer[--g_page.edit_pos] = '\0';
+                    memmove(&g_page.edit_buffer[g_page.edit_pos - 1],
+                            &g_page.edit_buffer[g_page.edit_pos],
+                            len - g_page.edit_pos + 1);
+                    g_page.edit_pos--;
                 }
                 break;
+
+            case KEY_DC:  // Delete key
+                if (g_page.edit_pos < (int)len) {
+                    memmove(&g_page.edit_buffer[g_page.edit_pos],
+                            &g_page.edit_buffer[g_page.edit_pos + 1],
+                            len - g_page.edit_pos);
+                }
+                break;
+
+            case KEY_LEFT:
+                if (g_page.edit_pos > 0) {
+                    g_page.edit_pos--;
+                }
+                break;
+
+            case KEY_RIGHT:
+                if (g_page.edit_pos < (int)len) {
+                    g_page.edit_pos++;
+                }
+                break;
+
+            case KEY_HOME:
+                g_page.edit_pos = 0;
+                break;
+
+            case KEY_END:
+                g_page.edit_pos = len;
+                break;
+
             default:
-                if (ch >= 32 && ch < 127 && g_page.edit_pos < (int)sizeof(g_page.edit_buffer) - 1) {
+                // Printable character - insert at cursor position
+                if (ch >= 32 && ch < 127 && len < sizeof(g_page.edit_buffer) - 1) {
+                    memmove(&g_page.edit_buffer[g_page.edit_pos + 1],
+                            &g_page.edit_buffer[g_page.edit_pos],
+                            len - g_page.edit_pos + 1);
                     g_page.edit_buffer[g_page.edit_pos++] = ch;
-                    g_page.edit_buffer[g_page.edit_pos] = '\0';
                 }
                 break;
         }

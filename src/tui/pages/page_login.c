@@ -26,8 +26,6 @@ static struct {
     bool show_error;
     int cursor_pos;
     int attempts;
-    bool confirm_exit;
-    time_t confirm_exit_time;
 } g_login = {0};
 
 /* Get database via TUI common */
@@ -171,13 +169,7 @@ void page_login_draw(void) {
 
     /* Draw buttons hint */
     attron(A_DIM);
-    //mvprintw(field_y + 5, field_x, "TAB: Next field | ENTER: Login | ESC: Quit");
-    if (g_login.confirm_exit && (time(NULL) - g_login.confirm_exit_time) <= 2) {
-        mvprintw(field_y + 5, field_x, "Press ESC again to quit");
-    } else {
-        mvprintw(field_y + 5, field_x, "TAB: Next field | ENTER: Login | ESC: Quit");
-    }
-    
+    mvprintw(field_y + 5, field_x, "TAB: Next field | ENTER: Login | ESC: Quit");
     attroff(A_DIM);
 
     /* Error message */
@@ -333,21 +325,32 @@ result_t page_login_run(void) {
     while (running) {
         page_login_draw();
         int ch = getch();
-    
-        if (ch == 27) {  /* ESC */
-            time_t now = time(NULL);
-            if (g_login.confirm_exit && (now - g_login.confirm_exit_time) <= 2) {
-                running = false; /* confirmed */
-            } else {
-                g_login.confirm_exit = true;
-                g_login.confirm_exit_time = now;
+
+        if (ch == 27) {  /* ESC - exit with confirmation */
+            /* Create a simple centered confirmation window */
+            int confirm_h = 5, confirm_w = 30;
+            int confirm_y = (LINES - confirm_h) / 2;
+            int confirm_x = (COLS - confirm_w) / 2;
+            WINDOW *confirm_win = newwin(confirm_h, confirm_w, confirm_y, confirm_x);
+            box(confirm_win, 0, 0);
+            mvwprintw(confirm_win, 0, (confirm_w - 11) / 2, "[ Confirm ]");
+            mvwprintw(confirm_win, 2, 3, "Exit application? (y/n)");
+            wrefresh(confirm_win);
+
+            int confirm_ch;
+            do {
+                confirm_ch = wgetch(confirm_win);
+            } while (confirm_ch != 'y' && confirm_ch != 'Y' &&
+                     confirm_ch != 'n' && confirm_ch != 'N' && confirm_ch != 27);
+
+            delwin(confirm_win);
+
+            if (confirm_ch == 'y' || confirm_ch == 'Y') {
+                running = false;
             }
             continue;
-        } else {
-            /* Any other key cancels pending exit confirmation */
-            g_login.confirm_exit = false;
         }
-    
+
         bool result = page_login_input(ch);
         if (ch == '\n' || ch == KEY_ENTER) {
             if (auth_is_logged_in()) {
