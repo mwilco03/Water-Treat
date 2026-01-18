@@ -74,6 +74,8 @@ set(SOURCES_DRIVERS_NEW
     src/sensors/analog/analog_sensor.c      # Replaces driver_ph, driver_tds, driver_turbidity
     src/drivers/digital/relay_output.c      # Replaces driver_pump, driver_solenoid
     src/drivers/bus/gpio_hal.c              # Modern GPIO HAL (libgpiod or sysfs fallback)
+    src/drivers/motor/l298n_driver.c        # L298N dual H-bridge motor driver
+    src/drivers/motor/dosing_pump.c         # Dosing pump control abstraction
 )
 
 # Legacy drivers (to be migrated to new architecture)

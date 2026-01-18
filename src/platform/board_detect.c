@@ -45,6 +45,14 @@ static const pin_config_t RPI_PINS = {
     .pwm_channel_1 = 19,        /* GPIO 19 (PWM1) - shared with input */
     .uart_tx = 14,              /* GPIO 14 (TXD) */
     .uart_rx = 15,              /* GPIO 15 (RXD) */
+    /* L298N Motor Driver - Motor A (dosing pump) */
+    .motor_a_enable = 18,       /* GPIO 18 (PWM0) - speed control */
+    .motor_a_in1 = 24,          /* GPIO 24 - direction */
+    .motor_a_in2 = 25,          /* GPIO 25 - direction */
+    /* L298N Motor Driver - Motor B (reserved) */
+    .motor_b_enable = 12,       /* GPIO 12 (PWM0 alt) - speed control */
+    .motor_b_in1 = 26,          /* GPIO 26 - direction */
+    .motor_b_in2 = 21,          /* GPIO 21 - direction */
     .gpio_chip = "gpiochip0",   /* BCM GPIO chip */
 };
 
@@ -70,6 +78,14 @@ static const pin_config_t RPI5_PINS = {
     .pwm_channel_1 = 19,
     .uart_tx = 14,
     .uart_rx = 15,
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = 18,
+    .motor_a_in1 = 24,
+    .motor_a_in2 = 25,
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = 12,
+    .motor_b_in1 = 26,
+    .motor_b_in2 = 21,
     .gpio_chip = "gpiochip4",   /* RPi 5 uses gpiochip4 for header GPIOs */
 };
 
@@ -108,6 +124,14 @@ static const pin_config_t OPI_ZERO3_PINS = {
     .pwm_channel_1 = -1,
     .uart_tx = H618_GPIO('H', 0),   /* UART0_TX = PH0 */
     .uart_rx = H618_GPIO('H', 1),   /* UART0_RX = PH1 */
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = H618_GPIO('H', 0),   /* PH0 = 224 (PWM) */
+    .motor_a_in1 = H618_GPIO('I', 13),     /* PI13 = 269 */
+    .motor_a_in2 = H618_GPIO('I', 14),     /* PI14 = 270 */
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = -1,
+    .motor_b_in1 = -1,
+    .motor_b_in2 = -1,
     .gpio_chip = "gpiochip0",
 };
 
@@ -133,6 +157,14 @@ static const pin_config_t OPI_ZERO2W_PINS = {
     .pwm_channel_1 = -1,
     .uart_tx = H618_GPIO('H', 0),
     .uart_rx = H618_GPIO('H', 1),
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = H618_GPIO('H', 0),
+    .motor_a_in1 = H618_GPIO('I', 13),
+    .motor_a_in2 = H618_GPIO('I', 14),
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = -1,
+    .motor_b_in1 = -1,
+    .motor_b_in2 = -1,
     .gpio_chip = "gpiochip0",
 };
 
@@ -175,6 +207,14 @@ static const pin_config_t LUCKFOX_LYRA_PINS = {
     .pwm_channel_1 = -1,
     .uart_tx = RK_GPIO(0, RK_B, 4),  /* UART2_TX */
     .uart_rx = RK_GPIO(0, RK_B, 5),  /* UART2_RX */
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = RK_GPIO(1, RK_A, 0),  /* GPIO1_A0 = 32 (PWM) */
+    .motor_a_in1 = RK_GPIO(1, RK_C, 4),     /* GPIO1_C4 = 52 */
+    .motor_a_in2 = RK_GPIO(1, RK_C, 5),     /* GPIO1_C5 = 53 */
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = -1,
+    .motor_b_in1 = -1,
+    .motor_b_in2 = -1,
     .gpio_chip = "gpiochip0",
 };
 
@@ -216,6 +256,14 @@ static const pin_config_t LIBRE_POTATO_PINS = {
     .pwm_channel_1 = 441,       /* GPIOX_4/PWM (Pin 35) */
     .uart_tx = 446,             /* GPIOX_9 - UART_C_TX */
     .uart_rx = 445,             /* GPIOX_8 - UART_C_RX */
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = 436,      /* GPIOX_0/PWM (Pin 12) */
+    .motor_a_in1 = 437,         /* GPIOX_1 (Pin 16) */
+    .motor_a_in2 = 438,         /* GPIOX_2 (Pin 18) */
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = 441,      /* GPIOX_4/PWM (Pin 35) */
+    .motor_b_in1 = 439,         /* GPIOX_3 (Pin 22) */
+    .motor_b_in2 = 440,         /* GPIOX_4 (Pin 24) */
     .gpio_chip = "gpiochip0",
 };
 
@@ -246,6 +294,14 @@ static const pin_config_t LIBRE_RENEGADE_PINS = {
     .pwm_channel_1 = 90,        /* GPIO2_D2/PWM3 (Pin 35) */
     .uart_tx = 14,              /* UART2_TX */
     .uart_rx = 15,              /* UART2_RX */
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = 89,       /* GPIO2_D1/PWM2 (Pin 12) */
+    .motor_a_in1 = 91,          /* GPIO2_D3 (Pin 16) */
+    .motor_a_in2 = 92,          /* GPIO2_D4 (Pin 18) */
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = 90,       /* GPIO2_D2/PWM3 (Pin 35) */
+    .motor_b_in1 = 93,          /* GPIO2_D5 (Pin 22) */
+    .motor_b_in2 = 94,          /* GPIO2_D6 (Pin 24) */
     .gpio_chip = "gpiochip0",
 };
 
@@ -275,6 +331,14 @@ static const pin_config_t ODROID_XU4_PINS = {
     .pwm_channel_1 = 191,       /* GPB2.1/PWM1 (Pin 35) */
     .uart_tx = -1,              /* UART via separate connector */
     .uart_rx = -1,
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = 190,      /* GPB2.0/PWM0 (Pin 12) */
+    .motor_a_in1 = 175,         /* GPX1.4 (Pin 16) */
+    .motor_a_in2 = 176,         /* GPX1.5 (Pin 18) */
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = 191,      /* GPB2.1/PWM1 (Pin 35) */
+    .motor_b_in1 = 177,         /* GPX1.6 (Pin 22) */
+    .motor_b_in2 = 178,         /* GPX1.7 (Pin 24) */
     .gpio_chip = "gpiochip0",
 };
 
@@ -303,6 +367,14 @@ static const pin_config_t ODROID_C4_PINS = {
     .pwm_channel_1 = 489,       /* GPIOX_13/PWM_F (Pin 35) */
     .uart_tx = 495,             /* GPIOX_19 */
     .uart_rx = 494,             /* GPIOX_18 */
+    /* L298N Motor Driver - Motor A */
+    .motor_a_enable = 488,      /* GPIOX_12/PWM_E (Pin 12) */
+    .motor_a_in1 = 490,         /* GPIOX_14 (Pin 16) */
+    .motor_a_in2 = 491,         /* GPIOX_15 (Pin 18) */
+    /* L298N Motor Driver - Motor B */
+    .motor_b_enable = 489,      /* GPIOX_13/PWM_F (Pin 35) */
+    .motor_b_in1 = 492,         /* GPIOX_16 (Pin 22) */
+    .motor_b_in2 = 493,         /* GPIOX_17 (Pin 24) */
     .gpio_chip = "gpiochip0",
 };
 
@@ -328,6 +400,13 @@ static const pin_config_t GENERIC_PINS = {
     .pwm_channel_1 = -1,
     .uart_tx = -1,
     .uart_rx = -1,
+    /* L298N Motor Driver - not available on generic */
+    .motor_a_enable = -1,
+    .motor_a_in1 = -1,
+    .motor_a_in2 = -1,
+    .motor_b_enable = -1,
+    .motor_b_in1 = -1,
+    .motor_b_in2 = -1,
     .gpio_chip = "gpiochip0",
 };
 

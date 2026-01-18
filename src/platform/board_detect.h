@@ -111,6 +111,17 @@ typedef struct {
     int uart_tx;                /* UART TX */
     int uart_rx;                /* UART RX */
 
+    /* Motor driver pins (L298N, DRV8833, etc.)
+     * Motor A: ENA + IN1 + IN2
+     * Motor B: ENB + IN3 + IN4
+     */
+    int motor_a_enable;         /* Motor A enable (PWM for speed) */
+    int motor_a_in1;            /* Motor A direction pin 1 */
+    int motor_a_in2;            /* Motor A direction pin 2 */
+    int motor_b_enable;         /* Motor B enable (PWM for speed) */
+    int motor_b_in1;            /* Motor B direction pin 1 */
+    int motor_b_in2;            /* Motor B direction pin 2 */
+
     /* GPIO chip name for libgpiod */
     char gpio_chip[32];         /* e.g., "gpiochip0" */
 
