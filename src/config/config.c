@@ -78,6 +78,12 @@ static const config_field_t config_fields[] = {
       offsetof(app_config_t, profinet.min_device_interval), 0 },
     { "profinet", "enabled", CFG_TYPE_BOOL,
       offsetof(app_config_t, profinet.enabled), 0 },
+    { "profinet", "controller_ip", CFG_TYPE_STRING,
+      offsetof(app_config_t, profinet.controller_ip),
+      sizeof(((app_config_t*)0)->profinet.controller_ip) },
+    { "profinet", "controller_name", CFG_TYPE_STRING,
+      offsetof(app_config_t, profinet.controller_name),
+      sizeof(((app_config_t*)0)->profinet.controller_name) },
 
     /* Database section */
     { "database", "path", CFG_TYPE_STRING,
@@ -348,6 +354,9 @@ void config_get_defaults(app_config_t *c) {
     c->profinet.device_id=0x0001;
     c->profinet.min_device_interval=32;
     c->profinet.enabled=true;
+    /* Controller fields - empty until configured or auto-discovered */
+    c->profinet.controller_ip[0]='\0';
+    c->profinet.controller_name[0]='\0';
 
     /* Database defaults */
     SAFE_STRNCPY(c->database.path,"/var/lib/water-treat/data.db",sizeof(c->database.path));

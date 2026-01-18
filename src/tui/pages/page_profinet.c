@@ -244,6 +244,9 @@ static void draw_protocol_info(WINDOW *win, int start_row) {
     int r = start_row;
     int col = 50;
 
+    /* Get config for controller info */
+    app_config_t *cfg = tui_get_app_config();
+
     wattron(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
     mvwprintw(win, r++, col, "Protocol Information");
     wattroff(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
@@ -251,8 +254,36 @@ static void draw_protocol_info(WINDOW *win, int start_row) {
 
     mvwprintw(win, r++, col, "Protocol:   PROFINET I/O");
     mvwprintw(win, r++, col, "Role:       I/O Device (RTU)");
-    mvwprintw(win, r++, col, "Vendor ID:  0x0493");
-    mvwprintw(win, r++, col, "Device ID:  0x0001");
+
+    if (cfg) {
+        mvwprintw(win, r++, col, "Vendor ID:  0x%04X", cfg->profinet.vendor_id);
+        mvwprintw(win, r++, col, "Device ID:  0x%04X", cfg->profinet.device_id);
+    } else {
+        mvwprintw(win, r++, col, "Vendor ID:  0x0493");
+        mvwprintw(win, r++, col, "Device ID:  0x0001");
+    }
+    r++;
+
+    /* Controller configuration */
+    wattron(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
+    mvwprintw(win, r++, col, "Controller");
+    wattroff(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
+
+    if (cfg && cfg->profinet.controller_ip[0] != '\0') {
+        mvwprintw(win, r++, col, "IP:     %s", cfg->profinet.controller_ip);
+    } else {
+        wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
+        mvwprintw(win, r++, col, "IP:     (not configured)");
+        wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
+    }
+
+    if (cfg && cfg->profinet.controller_name[0] != '\0') {
+        mvwprintw(win, r++, col, "Name:   %s", cfg->profinet.controller_name);
+    } else {
+        wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
+        mvwprintw(win, r++, col, "Name:   (not configured)");
+        wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
+    }
     r++;
 
     wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
