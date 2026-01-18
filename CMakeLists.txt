@@ -105,6 +105,7 @@ set(SOURCES_SUBSYSTEMS
     src/actuators/actuator_manager.c
     src/profinet/profinet_manager.c
     src/profinet/profinet_callbacks.c
+    src/profinet/controller_discovery.c
     src/health/health_check.c
 )
 
@@ -214,6 +215,19 @@ if(NOT SYSTEMD_FOUND)
 endif()
 
 # ============================================================================
+# Optional Avahi/mDNS Support for Controller Discovery
+# ============================================================================
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(AVAHI_CLIENT avahi-client)
+endif()
+
+if(AVAHI_CLIENT_FOUND)
+    message(STATUS "Avahi found - mDNS controller discovery enabled")
+else()
+    message(STATUS "Avahi not found - mDNS discovery disabled (manual/PROFINET discovery still available)")
+endif()
+
+# ============================================================================
 # Optional LED Status Indicator Support (WS2812B/WS2811)
 # ============================================================================
 option(ENABLE_LED_SUPPORT "Enable WS2812B LED status indicator support" OFF)
@@ -317,6 +331,16 @@ if(SYSTEMD_FOUND)
         target_link_directories(water-treat PRIVATE ${SYSTEMD_LIBRARY_DIRS})
     endif()
     target_link_libraries(water-treat ${SYSTEMD_LIBRARIES})
+endif()
+
+# Avahi for mDNS controller discovery
+if(AVAHI_CLIENT_FOUND)
+    target_compile_definitions(water-treat PRIVATE HAVE_AVAHI=1)
+    target_include_directories(water-treat PRIVATE ${AVAHI_CLIENT_INCLUDE_DIRS})
+    if(AVAHI_CLIENT_LIBRARY_DIRS)
+        target_link_directories(water-treat PRIVATE ${AVAHI_CLIENT_LIBRARY_DIRS})
+    endif()
+    target_link_libraries(water-treat ${AVAHI_CLIENT_LIBRARIES})
 endif()
 
 # LED status indicator support

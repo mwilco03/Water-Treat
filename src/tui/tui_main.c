@@ -130,27 +130,55 @@ static void draw_footer(void) {
     wattron(g_tui.footer, COLOR_PAIR(TUI_COLOR_HEADER));
     mvwhline(g_tui.footer, 0, 0, ' ', max_x);
 
-    int x = 2;
+    /*
+     * Calculate required width for right-side hints first.
+     * This ensures we don't let F-key labels collide with hints.
+     * Right side: "<->:Cycle E:ESTOP ESC:Back F10:Quit" = ~38 chars + padding
+     */
+    int right_hints_width = 42;  /* Reserve space for right-side hints */
+    int left_max_x = max_x - right_hints_width;
+
+    /* Render F-key labels with proper spacing */
+    int x = 1;
     for (int i = 0; i < PAGE_COUNT; i++) {
+        /* Calculate actual label width: "F#:" + title */
+        char label[32];
+        int label_len = snprintf(label, sizeof(label), "F%d:%s", i + 1, pages[i].title);
+
+        /* Stop if we would collide with right-side hints */
+        if (x + label_len >= left_max_x) {
+            break;
+        }
+
         if ((tui_page_t)i == g_tui.current_page) {
             wattron(g_tui.footer, A_REVERSE);
         }
-        mvwprintw(g_tui.footer, 0, x, "F%d:%s", i + 1, pages[i].title);
+        mvwprintw(g_tui.footer, 0, x, "%s", label);
         if ((tui_page_t)i == g_tui.current_page) {
             wattroff(g_tui.footer, A_REVERSE);
         }
-        x += strlen(pages[i].title) + 5;
+        x += label_len + 1;  /* +1 for single space between labels */
     }
 
-    /* Show navigation hints on the right side */
-    mvwprintw(g_tui.footer, 0, max_x - 45, "<->:Cycle");  /* Arrow key cycling */
-    wattron(g_tui.footer, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
-    mvwprintw(g_tui.footer, 0, max_x - 34, "E:ESTOP");    /* Global E-STOP per guidelines */
-    wattroff(g_tui.footer, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+    /*
+     * Render right-side navigation hints.
+     * Position from right edge with consistent spacing.
+     */
+    int rx = max_x - 9;  /* "F10:Quit" (8 chars) + 1 padding */
+    mvwprintw(g_tui.footer, 0, rx, "F10:Quit");
+
+    rx -= 9;  /* "ESC:Back" (8 chars) + 1 space */
     if (g_tui.history_top > 0) {
-        mvwprintw(g_tui.footer, 0, max_x - 24, "ESC:Back");
+        mvwprintw(g_tui.footer, 0, rx, "ESC:Back");
     }
-    mvwprintw(g_tui.footer, 0, max_x - 10, "F10:Quit");
+
+    rx -= 9;  /* "E:ESTOP" (7 chars) + 2 spaces */
+    wattron(g_tui.footer, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+    mvwprintw(g_tui.footer, 0, rx, "E:ESTOP");
+    wattroff(g_tui.footer, A_BOLD | COLOR_PAIR(TUI_COLOR_ERROR));
+
+    rx -= 10;  /* "<->:Cycle" (9 chars) + 1 space */
+    mvwprintw(g_tui.footer, 0, rx, "<->:Cycle");
 
     wattroff(g_tui.footer, COLOR_PAIR(TUI_COLOR_HEADER));
     wrefresh(g_tui.footer);

@@ -5,6 +5,7 @@
 
 #include "profinet_manager.h"
 #include "profinet_callbacks.h"
+#include "controller_discovery.h"
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "utils/logger.h"
@@ -231,13 +232,16 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     
     // Load modules from database
     load_modules_from_db();
-    
+
+    // Initialize controller discovery
+    controller_discovery_init(config);
+
     g_pn.state = PROFINET_STATE_IDLE;
     g_pn.initialized = true;
-    
+
     LOG_INFO("PROFINET manager initialized: station=%s, vendor=0x%04X, device=0x%04X",
              config->station_name, config->vendor_id, config->device_id);
-    
+
     return RESULT_OK;
 }
 
@@ -365,6 +369,7 @@ result_t profinet_manager_stop(void) {
 
 void profinet_manager_shutdown(void) {
     profinet_manager_stop();
+    controller_discovery_shutdown();
     pthread_mutex_destroy(&g_pn.mutex);
     g_pn.initialized = false;
     LOG_INFO("PROFINET manager shutdown");
@@ -563,9 +568,14 @@ void profinet_manager_set_connected(bool connected, uint32_t arep) {
     } else {
         g_pn.arep = 0;
     }
-#else
-    UNUSED(arep);
 #endif
+
+    /* Notify controller discovery module */
+    if (connected) {
+        controller_discovery_on_connect(arep);
+    } else {
+        controller_discovery_on_disconnect(arep);
+    }
 
     if (connected && g_pn.on_connect) {
         g_pn.on_connect(g_pn.callback_ctx);
