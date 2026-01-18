@@ -9,6 +9,7 @@
 #include "page_profinet.h"
 #include "../tui_common.h"
 #include "profinet/profinet_manager.h"
+#include "profinet/controller_discovery.h"
 #include "sensors/sensor_manager.h"
 #include "actuators/actuator_manager.h"
 #include "db/db_modules.h"
@@ -244,7 +245,7 @@ static void draw_protocol_info(WINDOW *win, int start_row) {
     int r = start_row;
     int col = 50;
 
-    /* Get config for controller info */
+    /* Get config for device info */
     app_config_t *cfg = tui_get_app_config();
 
     wattron(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
@@ -264,25 +265,51 @@ static void draw_protocol_info(WINDOW *win, int start_row) {
     }
     r++;
 
-    /* Controller configuration */
+    /* Controller discovery info */
     wattron(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
     mvwprintw(win, r++, col, "Controller");
     wattroff(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
 
-    if (cfg && cfg->profinet.controller_ip[0] != '\0') {
-        mvwprintw(win, r++, col, "IP:     %s", cfg->profinet.controller_ip);
-    } else {
-        wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
-        mvwprintw(win, r++, col, "IP:     (not configured)");
-        wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
-    }
+    discovered_controller_t controller;
+    if (controller_discovery_get(&controller) == RESULT_OK) {
+        /* Show IP with connection status */
+        if (controller.ip[0] != '\0') {
+            if (controller.connected) {
+                wattron(win, COLOR_PAIR(TUI_COLOR_STATUS));
+                mvwprintw(win, r++, col, "IP:     %s [CONNECTED]", controller.ip);
+                wattroff(win, COLOR_PAIR(TUI_COLOR_STATUS));
+            } else {
+                mvwprintw(win, r++, col, "IP:     %s", controller.ip);
+            }
+        } else {
+            wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
+            mvwprintw(win, r++, col, "IP:     (discovering...)");
+            wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
+        }
 
-    if (cfg && cfg->profinet.controller_name[0] != '\0') {
-        mvwprintw(win, r++, col, "Name:   %s", cfg->profinet.controller_name);
+        /* Show name */
+        if (controller.name[0] != '\0') {
+            mvwprintw(win, r++, col, "Name:   %s", controller.name);
+        } else {
+            wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
+            mvwprintw(win, r++, col, "Name:   (unknown)");
+            wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
+        }
+
+        /* Show discovery source */
+        wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
+        mvwprintw(win, r++, col, "Source: %s",
+                  discovery_source_to_string(controller.source));
+        wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
     } else {
+        /* No controller discovered */
         wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
-        mvwprintw(win, r++, col, "Name:   (not configured)");
+        mvwprintw(win, r++, col, "IP:     (not discovered)");
+        mvwprintw(win, r++, col, "Name:   (not discovered)");
         wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
+        wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
+        mvwprintw(win, r++, col, "Source: Awaiting connection");
+        wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
     }
     r++;
 
