@@ -35,6 +35,16 @@ typedef enum {
     INTERLOCK_ACTION_PWM,        /* Set PWM duty cycle */
 } interlock_action_t;
 
+/**
+ * Interlock release behavior when alarm clears
+ * Determines what happens to the actuator after the alarm condition resolves
+ */
+typedef enum {
+    INTERLOCK_RELEASE_OFF = 0,        /* Force actuator OFF (legacy default) */
+    INTERLOCK_RELEASE_TO_CONTROLLER,  /* Clear manual mode, let controller resume */
+    INTERLOCK_RELEASE_HOLD,           /* Keep current state until explicit command */
+} interlock_release_action_t;
+
 typedef struct {
     int id;
     int module_id;
@@ -52,7 +62,8 @@ typedef struct {
     int interlock_slot;               /* Target actuator slot (9-16) */
     interlock_action_t interlock_action;  /* Action to take on alarm */
     uint8_t interlock_pwm_duty;       /* PWM duty if action=PWM (0-100) */
-    bool release_on_clear;            /* Release to controller when alarm clears */
+    bool release_on_clear;            /* Release interlock when alarm clears */
+    interlock_release_action_t release_action; /* What to do on release (default: OFF) */
 } db_alarm_rule_t;
 
 typedef struct {

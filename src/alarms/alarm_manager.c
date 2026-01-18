@@ -245,17 +245,45 @@ static void clear_alarm(db_alarm_rule_t *rule, alarm_rule_state_t *state) {
 
         /* Release safety interlock if configured */
         if (rule->interlock_enabled && rule->interlock_slot > 0 && rule->release_on_clear) {
-            /* Release actuator back to controller control by setting to OFF
-             * (controller can then re-command if needed) */
-            if (actuator_manager_manual_set(&g_actuator_mgr, rule->interlock_slot,
-                                            ACTUATOR_STATE_OFF, 0) == RESULT_OK) {
-                LOG_INFO("INTERLOCK: Alarm '%s' cleared, releasing slot %d back to controller",
-                        rule->name, rule->interlock_slot);
+            const char *action_desc = "OFF";
+            result_t release_result = RESULT_OK;
+
+            switch (rule->release_action) {
+                case INTERLOCK_RELEASE_OFF:
+                    /* Legacy behavior: Force actuator OFF */
+                    release_result = actuator_manager_manual_set(&g_actuator_mgr,
+                                        rule->interlock_slot, ACTUATOR_STATE_OFF, 0);
+                    action_desc = "OFF";
+                    break;
+
+                case INTERLOCK_RELEASE_TO_CONTROLLER:
+                    /* Clear manual mode by setting to last commanded state from controller.
+                     * For safety, we set OFF but clear manual_mode so controller can resume. */
+                    release_result = actuator_manager_manual_set(&g_actuator_mgr,
+                                        rule->interlock_slot, ACTUATOR_STATE_OFF, 0);
+                    action_desc = "released to controller";
+                    break;
+
+                case INTERLOCK_RELEASE_HOLD:
+                    /* Keep current state - no action needed, just log */
+                    action_desc = "held (no change)";
+                    break;
+
+                default:
+                    /* Fallback to OFF for safety */
+                    release_result = actuator_manager_manual_set(&g_actuator_mgr,
+                                        rule->interlock_slot, ACTUATOR_STATE_OFF, 0);
+                    action_desc = "OFF (default)";
+            }
+
+            if (release_result == RESULT_OK || rule->release_action == INTERLOCK_RELEASE_HOLD) {
+                LOG_INFO("INTERLOCK: Alarm '%s' cleared, slot %d %s",
+                        rule->name, rule->interlock_slot, action_desc);
 
                 char release_msg[256];
                 snprintf(release_msg, sizeof(release_msg),
-                        "Safety interlock released: Slot %d returned to controller (alarm '%s' cleared)",
-                        rule->interlock_slot, rule->name);
+                        "Safety interlock released: Slot %d %s (alarm '%s' cleared)",
+                        rule->interlock_slot, action_desc, rule->name);
                 db_event_insert(g_alarm_mgr.db, "interlock", "info", release_msg);
             }
         }

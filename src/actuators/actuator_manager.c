@@ -727,7 +727,10 @@ result_t actuator_manager_set_callback(actuator_manager_t *mgr,
 
 bool actuator_manager_is_degraded(actuator_manager_t *mgr) {
     if (!mgr) return false;
-    return mgr->degraded_mode;
+    pthread_mutex_lock(&mgr->mutex);
+    bool degraded = mgr->degraded_mode;
+    pthread_mutex_unlock(&mgr->mutex);
+    return degraded;
 }
 
 int actuator_manager_get_count(actuator_manager_t *mgr) {
@@ -791,7 +794,8 @@ result_t actuator_manager_reload(actuator_manager_t *mgr) {
         config.pwm_capable = (db_act->type == ACTUATOR_TYPE_PWM ||
                               db_act->type == ACTUATOR_TYPE_PUMP);
         config.pwm_frequency_hz = db_act->pwm_frequency_hz;
-        config.max_on_time_sec = db_act->max_on_time_ms / 1000;
+        /* Round up to avoid truncation: 1500ms -> 2sec instead of 1sec */
+        config.max_on_time_sec = (db_act->max_on_time_ms + 999) / 1000;
         config.min_cycle_time_ms = db_act->min_on_time_ms;
 
         /* Add the actuator */
