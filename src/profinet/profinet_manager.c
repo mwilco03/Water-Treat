@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>     /* opendir, readdir for interface detection */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
 
 #define PROFINET_TICK_INTERVAL_US   1000
@@ -247,7 +248,58 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
 
 #ifdef HAVE_PNET
 // Static buffer for network interface name (p-net v0.2.0 uses const char *)
-static char g_netif_name[64] = "eth0";
+static char g_netif_name[64] = {0};
+
+/**
+ * Auto-detect first non-loopback network interface
+ * Checks common interface naming patterns in order of preference
+ */
+static bool detect_network_interface(char *buf, size_t buf_size) {
+    /* Common interface names by platform priority */
+    const char *candidates[] = {
+        "end0",    /* Raspberry Pi 5 / newer Debian */
+        "eth0",    /* Classic Linux / older Pi */
+        "eno1",    /* Dell/HP servers */
+        "enp0s3",  /* VirtualBox */
+        "enp0s25", /* Intel onboard */
+        "ens33",   /* VMware */
+        NULL
+    };
+
+    /* Try each candidate */
+    for (int i = 0; candidates[i] != NULL; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/sys/class/net/%s", candidates[i]);
+        if (access(path, F_OK) == 0) {
+            /* Verify it's not loopback */
+            char carrier_path[80];
+            snprintf(carrier_path, sizeof(carrier_path), "/sys/class/net/%s/carrier", candidates[i]);
+            if (access(carrier_path, F_OK) == 0) {
+                strncpy(buf, candidates[i], buf_size - 1);
+                buf[buf_size - 1] = '\0';
+                return true;
+            }
+        }
+    }
+
+    /* Fallback: scan /sys/class/net for first non-lo interface */
+    DIR *dir = opendir("/sys/class/net");
+    if (dir) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (entry->d_name[0] == '.' || strcmp(entry->d_name, "lo") == 0) {
+                continue;
+            }
+            strncpy(buf, entry->d_name, buf_size - 1);
+            buf[buf_size - 1] = '\0';
+            closedir(dir);
+            return true;
+        }
+        closedir(dir);
+    }
+
+    return false;
+}
 #endif
 
 result_t profinet_manager_start(const char *interface) {
@@ -261,8 +313,15 @@ result_t profinet_manager_start(const char *interface) {
         g_netif_name[sizeof(g_netif_name) - 1] = '\0';
         LOG_INFO("PROFINET using configured interface: %s", g_netif_name);
     } else {
-        LOG_WARNING("No network interface specified, defaulting to '%s'. "
-                    "Set [network] interface in config file to change.", g_netif_name);
+        // Auto-detect network interface
+        if (detect_network_interface(g_netif_name, sizeof(g_netif_name))) {
+            LOG_INFO("PROFINET auto-detected interface: %s", g_netif_name);
+        } else {
+            // Last resort fallback
+            strncpy(g_netif_name, "eth0", sizeof(g_netif_name) - 1);
+            LOG_WARNING("Could not auto-detect network interface, falling back to 'eth0'. "
+                        "Set [network] interface in config file if this is incorrect.");
+        }
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
 
