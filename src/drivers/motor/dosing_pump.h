@@ -36,11 +36,15 @@
  * Configuration
  * ========================================================================== */
 
-/** Default pump flow rate calibration (mL per minute at 100% duty) */
-#define DOSING_PUMP_DEFAULT_ML_PER_MIN 100.0f
+/** Default pump flow rate calibration (mL per minute at 100% duty)
+ *  Based on Kamoer NKP peristaltic pump specs: ~70-80 mL/min
+ */
+#define DOSING_PUMP_DEFAULT_ML_PER_MIN 75.0f
 
-/** Minimum duty cycle for pump to overcome inertia */
-#define DOSING_PUMP_MIN_DUTY 15
+/** Minimum duty cycle for pump to overcome inertia
+ *  Peristaltic pumps typically need ~20% to start rolling
+ */
+#define DOSING_PUMP_MIN_DUTY 20
 
 /** Default PWM frequency for dosing pumps (Hz) */
 #define DOSING_PUMP_PWM_FREQ_HZ 1000
