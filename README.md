@@ -4,6 +4,37 @@ A PROFINET I/O Device implementation for industrial water treatment monitoring a
 
 ## Quick Start
 
+### One-Liner Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Treat/main/bootstrap.sh | sudo bash
+```
+
+This will clone, build, install, and start the Water-Treat RTU service.
+
+**Default login:** `admin` / `H2OhYeah!`
+
+### Bootstrap Actions
+
+```bash
+# Fresh install (wipe + install from scratch)
+curl -fsSL .../bootstrap.sh | sudo bash -s -- fresh
+
+# Upgrade existing installation
+curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade
+
+# Reinstall (preserves config)
+curl -fsSL .../bootstrap.sh | sudo bash -s -- reinstall
+
+# Complete removal
+curl -fsSL .../bootstrap.sh | sudo bash -s -- wipe
+
+# Remove but keep config
+curl -fsSL .../bootstrap.sh | sudo bash -s -- remove --keep-config
+```
+
+### Manual Build
+
 ```bash
 # Install dependencies
 sudo apt install -y build-essential cmake libncurses5-dev libsqlite3-dev \
@@ -18,9 +49,7 @@ make -j$(nproc)
 sudo ./water-treat
 ```
 
-**Default login:** `admin` / `H2OhYeah!`
-
-For production deployment, install the systemd service:
+For production deployment:
 ```bash
 sudo make install
 sudo systemctl enable --now water-treat
