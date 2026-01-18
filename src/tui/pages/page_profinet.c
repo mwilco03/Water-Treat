@@ -8,6 +8,7 @@
 
 #include "page_profinet.h"
 #include "../tui_common.h"
+#include "../dialogs/dialog_helpers.h"
 #include "profinet/profinet_manager.h"
 #include "profinet/controller_discovery.h"
 #include "sensors/sensor_manager.h"
@@ -320,13 +321,67 @@ static void draw_protocol_info(WINDOW *win, int start_row) {
     wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
 }
 
+/**
+ * Edit controller configuration via dialog
+ */
+static void edit_controller_config(void) {
+    app_config_t *cfg = tui_get_app_config();
+    config_manager_t *mgr = tui_get_config_manager();
+
+    if (!cfg || !mgr) {
+        dialog_error("Configuration not available");
+        return;
+    }
+
+    /* Get current values from discovery or config */
+    discovered_controller_t controller;
+    char ip_buf[16] = {0};
+    char name_buf[MAX_NAME_LEN] = {0};
+
+    if (controller_discovery_get(&controller) == RESULT_OK) {
+        SAFE_STRNCPY(ip_buf, controller.ip, sizeof(ip_buf));
+        SAFE_STRNCPY(name_buf, controller.name, sizeof(name_buf));
+    } else {
+        SAFE_STRNCPY(ip_buf, cfg->profinet.controller_ip, sizeof(ip_buf));
+        SAFE_STRNCPY(name_buf, cfg->profinet.controller_name, sizeof(name_buf));
+    }
+
+    /* Edit IP address */
+    if (!dialog_input_string("Controller Configuration", "Controller IP Address", ip_buf, sizeof(ip_buf))) {
+        return;  /* Cancelled */
+    }
+
+    /* Edit name */
+    if (!dialog_input_string("Controller Configuration", "Controller Name", name_buf, sizeof(name_buf))) {
+        return;  /* Cancelled */
+    }
+
+    /* Update app config */
+    SAFE_STRNCPY(cfg->profinet.controller_ip, ip_buf, sizeof(cfg->profinet.controller_ip));
+    SAFE_STRNCPY(cfg->profinet.controller_name, name_buf, sizeof(cfg->profinet.controller_name));
+
+    /* Update discovery module */
+    controller_discovery_set(ip_buf, name_buf);
+
+    /* Save to config file */
+    config_set_string(mgr, "profinet", "controller_ip", ip_buf);
+    config_set_string(mgr, "profinet", "controller_name", name_buf);
+
+    if (config_save_file(mgr, NULL) == RESULT_OK) {
+        tui_set_status("Controller configuration saved");
+    } else {
+        dialog_warning("Failed to save config file - changes may be lost on restart");
+        tui_set_status("Config changed (save failed)");
+    }
+}
+
 static void draw_help(WINDOW *win) {
     int max_y = getmaxy(win);
     int row = max_y - 3;
 
     mvwhline(win, row++, 2, ACS_HLINE, getmaxx(win) - 4);
     wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
-    mvwprintw(win, row++, 2, "Up/Down:Select slot  r:Refresh  Space:Test selected");
+    mvwprintw(win, row++, 2, "Up/Down:Select  r:Refresh  c:Configure Controller  Space:Test");
     wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
 }
 
@@ -383,12 +438,16 @@ void page_profinet_input(WINDOW *win, int ch) {
             tui_set_status("Refreshed PROFINET status");
             break;
 
+        case 'c':
+        case 'C':
+            edit_controller_config();
+            break;
+
         case ' ':
-            // Test selected sensor
+            /* Test selected sensor */
             if (g_page.selected_slot < g_page.slot_count) {
                 io_slot_info_t *slot = &g_page.slots[g_page.selected_slot];
                 tui_set_status("Testing slot %d: %s", slot->slot, slot->name);
-                // Could trigger sensor_manager_test_sensor here
             }
             break;
     }
