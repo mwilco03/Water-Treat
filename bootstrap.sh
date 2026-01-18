@@ -6,12 +6,10 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Treat/main/bootstrap.sh | sudo bash
-#   curl -fsSL .../bootstrap.sh | sudo bash -s -- install
-#   curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade
-#   curl -fsSL .../bootstrap.sh | sudo bash -s -- remove
-#   curl -fsSL .../bootstrap.sh | sudo bash -s -- fresh
-#   curl -fsSL .../bootstrap.sh | sudo bash -s -- wipe
-#   curl -fsSL .../bootstrap.sh | sudo bash -s -- reinstall --keep-config
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- install   # First-time setup
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade   # Update/fix existing (preserves config)
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- wipe      # Complete removal
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- fresh     # Wipe + install from scratch
 #
 # Copyright (C) 2024-2025
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -912,70 +910,6 @@ do_upgrade() {
     return 0
 }
 
-do_remove() {
-    local keep_config="${1:-false}"
-    local yes="${2:-false}"
-
-    local state
-    state=$(detect_system_state)
-
-    if [[ "$state" == "fresh" ]]; then
-        log_info "No installation found"
-        return 0
-    fi
-
-    if [[ "$yes" != "true" ]]; then
-        echo ""
-        echo "This will remove Water-Treat RTU from this system."
-        if [[ "$keep_config" == "true" ]]; then
-            echo "Configuration will be preserved."
-        else
-            echo "ALL data and configuration will be DELETED."
-        fi
-        echo ""
-        local response
-        response=$(prompt_user "Are you sure? [y/N] ")
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            log_info "Removal cancelled"
-            return 0
-        fi
-    fi
-
-    log_step "Removing Water-Treat RTU..."
-
-    # Stop and disable service
-    log_info "Stopping service..."
-    run_privileged systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
-    run_privileged systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
-    run_privileged rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-    run_privileged systemctl daemon-reload
-
-    # Backup config if requested
-    if [[ "$keep_config" == "true" ]] && [[ -d "$CONFIG_DIR" ]]; then
-        local config_backup="${BACKUP_DIR}/config-$(date +%Y%m%d_%H%M%S)"
-        log_info "Backing up config to: $config_backup"
-        run_privileged mkdir -p "$config_backup"
-        run_privileged cp -r "$CONFIG_DIR" "$config_backup/"
-    fi
-
-    # Remove binary
-    run_privileged rm -f /usr/local/bin/water-treat
-
-    # Remove directories
-    log_info "Removing installation..."
-    run_privileged rm -rf "$INSTALL_DIR"
-
-    if [[ "$keep_config" != "true" ]]; then
-        run_privileged rm -rf "$CONFIG_DIR"
-        run_privileged rm -rf "$DATA_DIR"
-    fi
-
-    run_privileged rm -rf "$LOG_DIR"
-
-    log_info "Removal completed"
-    return 0
-}
-
 do_wipe() {
     log_step "Starting complete system wipe..."
 
@@ -1023,42 +957,6 @@ do_fresh() {
     return $?
 }
 
-do_reinstall() {
-    local branch="${1:-main}"
-    local keep_config="${2:-true}"
-
-    log_step "Starting reinstall..."
-
-    # Backup config
-    local config_backup=""
-    if [[ "$keep_config" == "true" ]] && [[ -d "$CONFIG_DIR" ]]; then
-        config_backup="/tmp/water-treat-config-backup-$$"
-        cp -r "$CONFIG_DIR" "$config_backup" 2>/dev/null || true
-    fi
-
-    # Wipe
-    do_wipe || {
-        log_error "Wipe failed"
-        return 1
-    }
-
-    # Validate environment
-    validate_environment || return 1
-
-    # Install
-    do_install "$branch" "true" || return 1
-
-    # Restore config
-    if [[ -n "$config_backup" ]] && [[ -d "$config_backup" ]]; then
-        log_info "Restoring configuration..."
-        run_privileged cp -r "$config_backup"/* "$CONFIG_DIR/" 2>/dev/null || true
-        rm -rf "$config_backup"
-    fi
-
-    log_info "Reinstall completed successfully!"
-    return 0
-}
-
 # =============================================================================
 # Help and Usage
 # =============================================================================
@@ -1071,46 +969,40 @@ USAGE:
     bootstrap.sh [ACTION] [OPTIONS]
 
 ACTIONS:
-    install     Install Water-Treat RTU (default for fresh systems)
-    upgrade     Upgrade existing installation
-    remove      Remove Water-Treat from this system
+    install     First-time setup (default for fresh systems)
+    upgrade     Update or fix existing installation (preserves config)
     wipe        Complete removal: binary, configs, data, logs
-    fresh       Wipe everything and install from scratch
-    reinstall   Wipe and reinstall, preserving configs
+    fresh       Wipe + install from scratch
 
 OPTIONS:
     --branch <name>     Use specific git branch (default: main)
     --force             Force action even if checks fail
-    --keep-config       Keep configuration files when removing
-    --yes, -y           Answer yes to all prompts
     --quiet, -q         Suppress non-essential output
     --verbose, -v       Show detailed output
     --help, -h          Show this help message
     --version           Show version information
 
-QUICK START:
-    # Fresh install
+EXAMPLES:
+    # First-time install
     curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash
 
-    # Uninstall (complete removal)
+    # Update existing installation
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- upgrade
+
+    # Complete removal
     curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- wipe
 
-    # Reinstall (wipe + install, preserve configs)
-    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- reinstall
+    # Start over from scratch
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- fresh
 
-EXAMPLES:
-    # Install from develop branch
+    # Install from specific branch
     curl -fsSL .../bootstrap.sh | sudo bash -s -- install --branch develop
-
-    # Remove but keep config
-    curl -fsSL .../bootstrap.sh | sudo bash -s -- remove --keep-config
 
 DIRECTORIES:
     Installation:   $INSTALL_DIR
     Configuration:  $CONFIG_DIR
     Data:           $DATA_DIR
     Logs:           $LOG_DIR
-    Backups:        $BACKUP_DIR
 
 For more information: https://github.com/mwilco03/Water-Treat
 EOF
@@ -1138,13 +1030,11 @@ main() {
     local action=""
     local branch="main"
     local force="false"
-    local keep_config="false"
-    local yes="false"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            install|upgrade|remove|wipe|fresh|reinstall)
+            install|upgrade|wipe|fresh)
                 action="$1"
                 shift
                 ;;
@@ -1154,14 +1044,6 @@ main() {
                 ;;
             --force)
                 force="true"
-                shift
-                ;;
-            --keep-config)
-                keep_config="true"
-                shift
-                ;;
-            --yes|-y)
-                yes="true"
                 shift
                 ;;
             --quiet|-q)
@@ -1208,14 +1090,13 @@ main() {
                 ;;
             corrupted)
                 log_warn "Corrupted installation detected"
-                action="install"
-                force="true"
+                action="fresh"
                 ;;
         esac
     fi
 
-    # Validate environment (except for remove/wipe)
-    if [[ "$action" != "remove" ]] && [[ "$action" != "wipe" ]]; then
+    # Validate environment (except for wipe)
+    if [[ "$action" != "wipe" ]]; then
         validate_environment || exit 1
     else
         check_root || exit 1
@@ -1229,17 +1110,11 @@ main() {
         upgrade)
             do_upgrade "$branch" "$force"
             ;;
-        remove)
-            do_remove "$keep_config" "$yes"
-            ;;
         wipe)
             do_wipe
             ;;
         fresh)
             do_fresh "$branch"
-            ;;
-        reinstall)
-            do_reinstall "$branch" "$keep_config"
             ;;
         *)
             log_error "Unknown action: $action"

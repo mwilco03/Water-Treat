@@ -16,21 +16,17 @@ This will clone, build, install, and start the Water-Treat RTU service.
 
 ### Bootstrap Actions
 
+| Action | Description |
+|--------|-------------|
+| `install` | First-time setup (auto-detected on fresh systems) |
+| `upgrade` | Update or fix existing installation (preserves config) |
+| `wipe` | Complete removal |
+| `fresh` | Wipe + install from scratch |
+
 ```bash
-# Fresh install (wipe + install from scratch)
-curl -fsSL .../bootstrap.sh | sudo bash -s -- fresh
-
-# Upgrade existing installation
-curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade
-
-# Reinstall (preserves config)
-curl -fsSL .../bootstrap.sh | sudo bash -s -- reinstall
-
-# Complete removal
-curl -fsSL .../bootstrap.sh | sudo bash -s -- wipe
-
-# Remove but keep config
-curl -fsSL .../bootstrap.sh | sudo bash -s -- remove --keep-config
+curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade  # Update existing
+curl -fsSL .../bootstrap.sh | sudo bash -s -- wipe     # Remove everything
+curl -fsSL .../bootstrap.sh | sudo bash -s -- fresh    # Start over
 ```
 
 ### Manual Build
