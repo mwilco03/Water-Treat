@@ -1,0 +1,1130 @@
+#!/bin/bash
+# =============================================================================
+# Water-Treat RTU Bootstrap Script
+# =============================================================================
+# One-liner entry point for installation, upgrade, and removal.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Treat/main/bootstrap.sh | sudo bash
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- install   # First-time setup
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade   # Update/fix existing (preserves config)
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- wipe      # Complete removal
+#   curl -fsSL .../bootstrap.sh | sudo bash -s -- fresh     # Wipe + install from scratch
+#
+# Copyright (C) 2024-2025
+# SPDX-License-Identifier: GPL-3.0-or-later
+# =============================================================================
+
+set -euo pipefail
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+readonly BOOTSTRAP_VERSION="1.0.0"
+readonly REPO_URL="https://github.com/mwilco03/Water-Treat.git"
+readonly REPO_RAW_URL="https://raw.githubusercontent.com/mwilco03/Water-Treat"
+readonly INSTALL_DIR="/opt/water-treat"
+readonly VERSION_FILE="$INSTALL_DIR/.version"
+readonly CONFIG_DIR="/etc/water-treat"
+readonly DATA_DIR="/var/lib/water-treat"
+readonly LOG_DIR="/var/log/water-treat"
+readonly BACKUP_DIR="/var/backups/water-treat"
+readonly BOOTSTRAP_LOG="/var/log/water-treat-bootstrap.log"
+readonly MIN_DISK_SPACE_MB=512
+readonly REQUIRED_TOOLS=("git" "curl" "cmake" "make" "gcc")
+readonly BUILD_DEPS=("build-essential" "cmake" "libncurses5-dev" "libsqlite3-dev" "libcurl4-openssl-dev" "libcjson-dev" "libgpiod-dev")
+
+# Service name
+readonly SERVICE_NAME="water-treat"
+
+# Global state
+QUIET_MODE="false"
+VERBOSE_MODE="false"
+CLEANUP_DIRS=()
+
+# Colors for output
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly NC='\033[0m'
+
+# =============================================================================
+# Logging Functions
+# =============================================================================
+
+init_logging() {
+    local log_dir
+    log_dir=$(dirname "$BOOTSTRAP_LOG")
+
+    if [[ -w "$log_dir" ]] || [[ $EUID -eq 0 ]]; then
+        if [[ $EUID -ne 0 ]]; then
+            sudo mkdir -p "$log_dir" 2>/dev/null || true
+            sudo touch "$BOOTSTRAP_LOG" 2>/dev/null || true
+            sudo chmod 644 "$BOOTSTRAP_LOG" 2>/dev/null || true
+        else
+            mkdir -p "$log_dir" 2>/dev/null || true
+            touch "$BOOTSTRAP_LOG" 2>/dev/null || true
+        fi
+    fi
+}
+
+write_log() {
+    local level="$1"
+    local message="$2"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    if [[ -w "$BOOTSTRAP_LOG" ]] || [[ $EUID -eq 0 ]]; then
+        if [[ $EUID -ne 0 ]]; then
+            echo "[$timestamp] [$level] $message" | sudo tee -a "$BOOTSTRAP_LOG" >/dev/null 2>&1 || true
+        else
+            echo "[$timestamp] [$level] $message" >> "$BOOTSTRAP_LOG" 2>/dev/null || true
+        fi
+    fi
+}
+
+log_info() {
+    write_log "INFO" "$1"
+    if [[ "$QUIET_MODE" != "true" ]]; then
+        echo -e "${GREEN}[INFO]${NC} $1" >&2
+    fi
+}
+
+log_warn() {
+    write_log "WARN" "$1"
+    if [[ "$QUIET_MODE" != "true" ]]; then
+        echo -e "${YELLOW}[WARN]${NC} $1" >&2
+    fi
+}
+
+log_error() {
+    write_log "ERROR" "$1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+log_step() {
+    write_log "STEP" "$1"
+    if [[ "$QUIET_MODE" != "true" ]]; then
+        echo -e "${BLUE}[STEP]${NC} $1" >&2
+    fi
+}
+
+log_debug() {
+    write_log "DEBUG" "$1"
+}
+
+log_verbose() {
+    write_log "VERBOSE" "$1"
+    if [[ "$VERBOSE_MODE" == "true" ]] && [[ "$QUIET_MODE" != "true" ]]; then
+        echo -e "  $1" >&2
+    fi
+}
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+run_privileged() {
+    if [[ $EUID -ne 0 ]]; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
+
+cleanup_all() {
+    local dir
+    for dir in "${CLEANUP_DIRS[@]}"; do
+        if [[ -n "$dir" ]] && [[ -d "$dir" ]]; then
+            log_debug "Cleaning up: $dir"
+            rm -rf "$dir" 2>/dev/null || true
+        fi
+    done
+    CLEANUP_DIRS=()
+}
+
+register_cleanup() {
+    local dir="$1"
+    CLEANUP_DIRS+=("$dir")
+    trap cleanup_all EXIT
+}
+
+prompt_user() {
+    local prompt="$1"
+    local response=""
+
+    if [[ -t 0 ]]; then
+        read -r -p "$prompt" response
+    elif [[ -e /dev/tty ]]; then
+        read -r -p "$prompt" response < /dev/tty
+    else
+        log_warn "No interactive terminal available, assuming 'no'"
+        response="n"
+    fi
+
+    echo "$response"
+}
+
+# =============================================================================
+# Discovery Functions
+# =============================================================================
+
+_LAST_DISCOVERY_ERROR=""
+_LAST_DISCOVERY_METHOD=""
+
+discover_network() {
+    local target="$1"
+    local timeout="${2:-10}"
+    _LAST_DISCOVERY_ERROR=""
+    _LAST_DISCOVERY_METHOD=""
+
+    if [[ -z "$target" ]]; then
+        _LAST_DISCOVERY_ERROR="No target specified"
+        return 1
+    fi
+
+    # If piped from github, network already proven
+    if [[ ! -t 0 ]] && [[ "$target" == *"github.com"* ]]; then
+        _LAST_DISCOVERY_METHOD="script was piped from remote source"
+        return 0
+    fi
+
+    if command -v curl &>/dev/null; then
+        local curl_error
+        if curl_error=$(curl -fsSL --connect-timeout "$timeout" --max-time "$timeout" "$target" -o /dev/null 2>&1); then
+            _LAST_DISCOVERY_METHOD="curl to $target"
+            return 0
+        else
+            if [[ "$curl_error" == *"Could not resolve"* ]]; then
+                _LAST_DISCOVERY_ERROR="DNS resolution failed for $target"
+            elif [[ "$curl_error" == *"Connection refused"* ]]; then
+                _LAST_DISCOVERY_ERROR="Connection refused by $target"
+            elif [[ "$curl_error" == *"timed out"* ]]; then
+                _LAST_DISCOVERY_ERROR="Connection to $target timed out"
+            else
+                _LAST_DISCOVERY_ERROR="Failed to reach $target: $curl_error"
+            fi
+            _LAST_DISCOVERY_METHOD="curl to $target"
+            return 1
+        fi
+    fi
+
+    if command -v wget &>/dev/null; then
+        if wget -q --timeout="$timeout" --spider "$target" 2>/dev/null; then
+            _LAST_DISCOVERY_METHOD="wget to $target"
+            return 0
+        fi
+        _LAST_DISCOVERY_ERROR="wget failed to reach $target"
+        _LAST_DISCOVERY_METHOD="wget to $target"
+        return 1
+    fi
+
+    _LAST_DISCOVERY_ERROR="No curl or wget available"
+    return 1
+}
+
+# =============================================================================
+# System Detection
+# =============================================================================
+
+detect_system_state() {
+    if [[ ! -d "$INSTALL_DIR" ]]; then
+        echo "fresh"
+        return 0
+    fi
+
+    if [[ -f "$VERSION_FILE" ]]; then
+        if grep -q '"commit_sha"' "$VERSION_FILE" 2>/dev/null; then
+            echo "installed"
+            return 0
+        fi
+    fi
+
+    # Check for partial installation
+    if [[ -f "$INSTALL_DIR/build/water-treat" ]] || \
+       [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+        echo "corrupted"
+        return 0
+    fi
+
+    local file_count
+    file_count=$(find "$INSTALL_DIR" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l)
+    if [[ "$file_count" -eq 0 ]]; then
+        echo "fresh"
+    else
+        echo "corrupted"
+    fi
+}
+
+get_installed_version() {
+    if [[ ! -f "$VERSION_FILE" ]]; then
+        echo ""
+        return 1
+    fi
+    grep -oP '"version"\s*:\s*"\K[^"]+' "$VERSION_FILE" 2>/dev/null || echo "unknown"
+}
+
+get_installed_sha() {
+    if [[ ! -f "$VERSION_FILE" ]]; then
+        echo ""
+        return 1
+    fi
+    grep -oP '"commit_sha"\s*:\s*"\K[^"]+' "$VERSION_FILE" 2>/dev/null
+}
+
+# =============================================================================
+# Validation Functions
+# =============================================================================
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        if ! command -v sudo &>/dev/null; then
+            log_error "sudo is not installed and not running as root"
+            return 1
+        fi
+        if sudo -v 2>/dev/null; then
+            log_info "Will use sudo for privileged operations"
+            return 0
+        else
+            log_error "This script requires root or sudo capability"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+check_required_tools() {
+    local missing=()
+    local tool
+
+    for tool in git curl; do
+        if ! command -v "$tool" &>/dev/null; then
+            missing+=("$tool")
+        fi
+    done
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        log_debug "Required tools present"
+        return 0
+    fi
+
+    log_warn "Missing tools: ${missing[*]}"
+    log_info "Attempting to install..."
+
+    if command -v apt-get &>/dev/null; then
+        run_privileged apt-get update -qq
+        run_privileged apt-get install -y "${missing[@]}"
+    elif command -v dnf &>/dev/null; then
+        run_privileged dnf install -y "${missing[@]}"
+    elif command -v yum &>/dev/null; then
+        run_privileged yum install -y "${missing[@]}"
+    elif command -v pacman &>/dev/null; then
+        run_privileged pacman -Sy --noconfirm "${missing[@]}"
+    else
+        log_error "No supported package manager found"
+        return 1
+    fi
+
+    return 0
+}
+
+check_build_deps() {
+    log_step "Checking build dependencies..."
+
+    if command -v apt-get &>/dev/null; then
+        log_info "Installing build dependencies..."
+        run_privileged apt-get update -qq
+        run_privileged apt-get install -y "${BUILD_DEPS[@]}"
+    elif command -v dnf &>/dev/null; then
+        run_privileged dnf install -y cmake make gcc ncurses-devel sqlite-devel libcurl-devel cjson-devel libgpiod-devel
+    elif command -v yum &>/dev/null; then
+        run_privileged yum install -y cmake make gcc ncurses-devel sqlite-devel libcurl-devel cjson-devel
+    else
+        log_warn "Could not auto-install build dependencies"
+        log_info "Please ensure cmake, make, gcc and development libraries are installed"
+    fi
+
+    # Verify critical tools
+    local critical_missing=()
+    for tool in cmake make gcc; do
+        if ! command -v "$tool" &>/dev/null; then
+            critical_missing+=("$tool")
+        fi
+    done
+
+    if [[ ${#critical_missing[@]} -gt 0 ]]; then
+        log_error "Missing critical build tools: ${critical_missing[*]}"
+        return 1
+    fi
+
+    log_info "Build dependencies ready"
+    return 0
+}
+
+check_network() {
+    log_info "Checking network connectivity..."
+
+    if discover_network "https://github.com" 10; then
+        log_debug "Network connectivity confirmed"
+        return 0
+    fi
+
+    log_warn "Network check issue: $_LAST_DISCOVERY_ERROR"
+
+    local max_retries=3
+    local retry_delay=2
+
+    for ((attempt=2; attempt<=max_retries; attempt++)); do
+        log_info "Retrying (attempt $attempt/$max_retries)..."
+        sleep "$retry_delay"
+
+        if discover_network "https://github.com" 10; then
+            log_info "Network connectivity confirmed on attempt $attempt"
+            return 0
+        fi
+
+        retry_delay=$((retry_delay * 2))
+    done
+
+    log_error "Cannot reach GitHub after $max_retries attempts"
+    return 1
+}
+
+check_disk_space() {
+    local target_dir="${1:-/opt}"
+    local required_mb="${2:-$MIN_DISK_SPACE_MB}"
+
+    while [[ ! -d "$target_dir" ]] && [[ "$target_dir" != "/" ]]; do
+        target_dir="$(dirname "$target_dir")"
+    done
+
+    local available_mb
+    available_mb=$(df -m "$target_dir" 2>/dev/null | awk 'NR==2 {print $4}')
+
+    if [[ -z "$available_mb" ]] || [[ "$available_mb" -lt "$required_mb" ]]; then
+        log_error "Insufficient disk space: ${available_mb:-0}MB available, ${required_mb}MB required"
+        return 1
+    fi
+
+    log_info "Disk space: ${available_mb}MB available"
+    return 0
+}
+
+validate_environment() {
+    log_step "Validating environment..."
+
+    check_root || return 1
+    check_required_tools || return 1
+    check_network || return 1
+    check_disk_space "/opt" "$MIN_DISK_SPACE_MB" || return 1
+
+    log_info "Environment validation passed"
+    return 0
+}
+
+# =============================================================================
+# Version Management
+# =============================================================================
+
+get_remote_sha() {
+    local branch="${1:-main}"
+    local ref="refs/heads/$branch"
+
+    if [[ "$branch" == v* ]]; then
+        ref="refs/tags/$branch"
+    fi
+
+    git ls-remote "$REPO_URL" "$ref" 2>/dev/null | awk '{print $1}'
+}
+
+preflight_version_check() {
+    local target_branch="${1:-main}"
+
+    log_step "Running pre-flight version check..."
+
+    local local_sha
+    local remote_sha
+
+    local_sha=$(get_installed_sha)
+    if [[ -z "$local_sha" ]]; then
+        log_info "No version file found, treating as fresh install"
+        return 0
+    fi
+
+    log_info "Installed commit: ${local_sha:0:12}"
+
+    remote_sha=$(get_remote_sha "$target_branch")
+    if [[ -z "$remote_sha" ]]; then
+        log_error "Could not fetch remote version"
+        return 2
+    fi
+
+    log_info "Remote commit:    ${remote_sha:0:12}"
+
+    if [[ "$local_sha" == "$remote_sha" ]]; then
+        log_info "Already at latest version"
+        return 1
+    fi
+
+    log_info "Update available: ${local_sha:0:12} -> ${remote_sha:0:12}"
+    return 0
+}
+
+write_version_file() {
+    local staging_dir="$1"
+
+    local commit_sha=""
+    local branch=""
+
+    if [[ -f "$staging_dir/.commit_sha" ]]; then
+        commit_sha=$(cat "$staging_dir/.commit_sha")
+    fi
+
+    if [[ -f "$staging_dir/.branch" ]]; then
+        branch=$(cat "$staging_dir/.branch")
+    fi
+
+    local previous_version=""
+    local previous_sha=""
+    if [[ -f "$VERSION_FILE" ]]; then
+        previous_version=$(get_installed_version)
+        previous_sha=$(get_installed_sha)
+    fi
+
+    local version_content
+    version_content=$(cat <<EOF
+{
+  "schema_version": 1,
+  "package": "water-treat",
+  "version": "1.0.0",
+  "commit_sha": "$commit_sha",
+  "commit_short": "${commit_sha:0:7}",
+  "branch": "$branch",
+  "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "installed_by": "bootstrap.sh",
+  "bootstrap_version": "$BOOTSTRAP_VERSION",
+  "previous_version": "$previous_version",
+  "previous_sha": "$previous_sha"
+}
+EOF
+)
+
+    echo "$version_content" | run_privileged tee "$VERSION_FILE" > /dev/null
+    log_info "Version file written: $VERSION_FILE"
+}
+
+# =============================================================================
+# Staging Functions
+# =============================================================================
+
+create_staging_dir() {
+    local action="${1:-install}"
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+
+    local tmp_space var_tmp_space tmp_base
+    tmp_space=$(df -m /tmp 2>/dev/null | awk 'NR==2 {print $4}') || tmp_space=0
+    var_tmp_space=$(df -m /var/tmp 2>/dev/null | awk 'NR==2 {print $4}') || var_tmp_space=0
+
+    if [[ "${var_tmp_space:-0}" -gt "${tmp_space:-0}" ]] || [[ "${tmp_space:-0}" -lt 256 ]]; then
+        tmp_base="/var/tmp"
+    else
+        tmp_base="/tmp"
+    fi
+
+    local staging_dir="${tmp_base}/water-treat-${action}-${timestamp}-$$"
+    mkdir -p "$staging_dir"
+    echo "$staging_dir"
+}
+
+clone_to_staging() {
+    local staging_dir="$1"
+    local branch="${2:-main}"
+
+    log_step "Cloning repository..."
+
+    local clone_output
+    if ! clone_output=$(git clone --depth 1 --branch "$branch" "$REPO_URL" "$staging_dir/repo" 2>&1); then
+        log_error "Failed to clone repository"
+        log_error "Git output: $clone_output"
+        return 1
+    fi
+
+    if [[ ! -d "$staging_dir/repo/.git" ]]; then
+        log_error "Clone verification failed"
+        return 1
+    fi
+
+    local commit_sha
+    commit_sha=$(cd "$staging_dir/repo" && git rev-parse HEAD)
+
+    log_info "Cloned: ${commit_sha:0:7}"
+
+    echo "$commit_sha" > "$staging_dir/.commit_sha"
+    echo "$branch" > "$staging_dir/.branch"
+
+    return 0
+}
+
+# =============================================================================
+# Build Functions
+# =============================================================================
+
+build_from_source() {
+    local source_dir="$1"
+
+    log_step "Building from source..."
+
+    if [[ ! -f "$source_dir/CMakeLists.txt" ]]; then
+        log_error "CMakeLists.txt not found in $source_dir"
+        return 1
+    fi
+
+    local build_dir="$source_dir/build"
+    mkdir -p "$build_dir"
+
+    log_info "Running cmake..."
+    (cd "$build_dir" && cmake ..) || {
+        log_error "CMake configuration failed"
+        return 1
+    }
+
+    log_info "Compiling (this may take a few minutes)..."
+    local nproc_count
+    nproc_count=$(nproc 2>/dev/null || echo 2)
+    (cd "$build_dir" && make -j"$nproc_count") || {
+        log_error "Compilation failed"
+        return 1
+    }
+
+    if [[ ! -f "$build_dir/water-treat" ]]; then
+        log_error "Binary not found after build"
+        return 1
+    fi
+
+    log_info "Build successful"
+    return 0
+}
+
+install_files() {
+    local source_dir="$1"
+
+    log_step "Installing files..."
+
+    # Create directories
+    run_privileged mkdir -p "$INSTALL_DIR"
+    run_privileged mkdir -p "$CONFIG_DIR"
+    run_privileged mkdir -p "$DATA_DIR"
+    run_privileged mkdir -p "$LOG_DIR"
+
+    # Copy source to install location
+    run_privileged cp -a "$source_dir/." "$INSTALL_DIR/"
+
+    # Install binary to /usr/local/bin
+    if [[ -f "$INSTALL_DIR/build/water-treat" ]]; then
+        run_privileged cp "$INSTALL_DIR/build/water-treat" /usr/local/bin/water-treat
+        run_privileged chmod +x /usr/local/bin/water-treat
+        log_info "Binary installed: /usr/local/bin/water-treat"
+    fi
+
+    # Create default config if not exists
+    if [[ ! -f "$CONFIG_DIR/water-treat.conf" ]]; then
+        run_privileged tee "$CONFIG_DIR/water-treat.conf" > /dev/null <<EOF
+# Water-Treat RTU Configuration
+# Generated by bootstrap.sh on $(date)
+
+# HTTP server port
+WT_HTTP_PORT=9081
+
+# Database path
+WT_DB_PATH=$DATA_DIR/water-treat.db
+
+# Log level (DEBUG, INFO, WARN, ERROR)
+WT_LOG_LEVEL=INFO
+EOF
+        log_info "Default config created: $CONFIG_DIR/water-treat.conf"
+    fi
+
+    # Create environment file for systemd
+    if [[ ! -f "$CONFIG_DIR/water-treat.env" ]]; then
+        run_privileged tee "$CONFIG_DIR/water-treat.env" > /dev/null <<EOF
+# Water-Treat RTU Environment Variables
+# Loaded by systemd service
+WT_HTTP_PORT=9081
+EOF
+    fi
+
+    return 0
+}
+
+create_systemd_service() {
+    log_step "Creating systemd service..."
+
+    local service_file="/etc/systemd/system/${SERVICE_NAME}.service"
+
+    run_privileged tee "$service_file" > /dev/null <<EOF
+[Unit]
+Description=Water Treatment RTU - PROFINET I/O Device
+Documentation=https://github.com/mwilco03/Water-Treat
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=-$CONFIG_DIR/water-treat.env
+ExecStart=/usr/local/bin/water-treat
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:$LOG_DIR/water-treat.log
+StandardError=append:$LOG_DIR/water-treat.log
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$DATA_DIR $LOG_DIR $CONFIG_DIR
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    run_privileged systemctl daemon-reload
+    run_privileged systemctl enable "${SERVICE_NAME}.service"
+
+    log_info "Systemd service created and enabled"
+}
+
+# =============================================================================
+# Backup Functions
+# =============================================================================
+
+create_backup() {
+    local backup_reason="${1:-backup}"
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+
+    local backup_path="${BACKUP_DIR}/${backup_reason}-${timestamp}"
+
+    log_step "Creating backup..."
+
+    run_privileged mkdir -p "$BACKUP_DIR" || {
+        log_error "Failed to create backup directory"
+        return 1
+    }
+
+    if [[ -d "$INSTALL_DIR" ]]; then
+        run_privileged cp -a "$INSTALL_DIR" "$backup_path" || {
+            log_error "Failed to backup installation"
+            return 1
+        }
+        log_info "Backup created: $backup_path"
+        echo "$backup_path"
+        return 0
+    else
+        log_warn "No installation to backup"
+        return 1
+    fi
+}
+
+cleanup_old_backups() {
+    local keep_count="${1:-3}"
+
+    if [[ ! -d "$BACKUP_DIR" ]]; then
+        return 0
+    fi
+
+    find "$BACKUP_DIR" -maxdepth 1 -mindepth 1 -type d -printf '%T@ %p\n' 2>/dev/null | \
+        sort -n | \
+        head -n -"$keep_count" | \
+        cut -d' ' -f2- | \
+        while read -r old_backup; do
+            log_debug "Removing old backup: $old_backup"
+            run_privileged rm -rf "$old_backup"
+        done
+}
+
+# =============================================================================
+# Action Handlers
+# =============================================================================
+
+do_install() {
+    local branch="${1:-main}"
+    local force="${2:-false}"
+
+    local state
+    state=$(detect_system_state)
+
+    case "$state" in
+        fresh)
+            log_info "Fresh system detected"
+            ;;
+        installed)
+            if [[ "$force" == "true" ]]; then
+                log_warn "Existing installation found, --force specified"
+            else
+                log_error "Water-Treat is already installed"
+                log_info "Use 'upgrade' to update, or 'install --force' to reinstall"
+                log_info "Current version: $(get_installed_version)"
+                return 1
+            fi
+            ;;
+        corrupted)
+            log_warn "Corrupted installation detected, will attempt to fix"
+            ;;
+    esac
+
+    # Check build dependencies
+    check_build_deps || return 1
+
+    # Create staging
+    local staging_dir
+    staging_dir=$(create_staging_dir "install")
+    register_cleanup "$staging_dir"
+
+    # Clone
+    clone_to_staging "$staging_dir" "$branch" || return 1
+
+    # Build
+    build_from_source "$staging_dir/repo" || return 1
+
+    # Install
+    install_files "$staging_dir/repo" || return 1
+
+    # Create service
+    create_systemd_service || return 1
+
+    # Write version file
+    write_version_file "$staging_dir"
+
+    # Start service
+    log_step "Starting service..."
+    run_privileged systemctl start "${SERVICE_NAME}.service" || {
+        log_warn "Service failed to start (may require GPIO access)"
+    }
+
+    # Summary
+    log_info ""
+    log_info "========================================"
+    log_info "  WATER-TREAT RTU INSTALLATION COMPLETE"
+    log_info "========================================"
+    log_info ""
+    log_info "Binary:      /usr/local/bin/water-treat"
+    log_info "Config:      $CONFIG_DIR/water-treat.conf"
+    log_info "Data:        $DATA_DIR"
+    log_info "Logs:        $LOG_DIR"
+    log_info ""
+    log_info "Service commands:"
+    log_info "  sudo systemctl status $SERVICE_NAME"
+    log_info "  sudo systemctl start $SERVICE_NAME"
+    log_info "  sudo systemctl stop $SERVICE_NAME"
+    log_info "  sudo systemctl restart $SERVICE_NAME"
+    log_info ""
+    log_info "Default login: admin / H2OhYeah!"
+    log_info ""
+
+    return 0
+}
+
+do_upgrade() {
+    local branch="${1:-main}"
+    local force="${2:-false}"
+
+    local state
+    state=$(detect_system_state)
+
+    case "$state" in
+        fresh)
+            log_error "No installation found. Use 'install' instead."
+            return 1
+            ;;
+        installed)
+            log_info "Existing installation: $(get_installed_version)"
+            ;;
+        corrupted)
+            log_warn "Corrupted installation. Consider 'fresh' instead."
+            if [[ "$force" != "true" ]]; then
+                return 1
+            fi
+            ;;
+    esac
+
+    # Pre-flight check
+    if [[ "$force" != "true" ]]; then
+        preflight_version_check "$branch"
+        local result=$?
+        if [[ $result -eq 1 ]]; then
+            return 0
+        elif [[ $result -eq 2 ]]; then
+            log_error "Pre-flight check failed. Use --force to skip."
+            return 1
+        fi
+    fi
+
+    # Create backup
+    local backup_dir=""
+    backup_dir=$(create_backup "pre-upgrade") || true
+
+    # Stop service
+    log_info "Stopping service..."
+    run_privileged systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+
+    # Check build dependencies
+    check_build_deps || return 1
+
+    # Create staging
+    local staging_dir
+    staging_dir=$(create_staging_dir "upgrade")
+    register_cleanup "$staging_dir"
+
+    # Clone
+    clone_to_staging "$staging_dir" "$branch" || return 1
+
+    # Build
+    build_from_source "$staging_dir/repo" || {
+        log_error "Build failed"
+        if [[ -n "$backup_dir" ]]; then
+            log_info "Backup available: $backup_dir"
+        fi
+        return 1
+    }
+
+    # Install (preserving config)
+    install_files "$staging_dir/repo" || return 1
+
+    # Write version file
+    write_version_file "$staging_dir"
+
+    # Start service
+    log_step "Starting service..."
+    run_privileged systemctl start "${SERVICE_NAME}.service" || {
+        log_warn "Service failed to start"
+    }
+
+    cleanup_old_backups 2
+
+    log_info "Upgrade completed successfully!"
+    return 0
+}
+
+do_wipe() {
+    log_step "Starting complete system wipe..."
+
+    # Stop service
+    run_privileged systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+    run_privileged systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
+    run_privileged rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+    run_privileged systemctl daemon-reload
+
+    # Remove binary
+    run_privileged rm -f /usr/local/bin/water-treat
+
+    # Remove all directories
+    log_info "Removing all Water-Treat files..."
+    run_privileged rm -rf "$INSTALL_DIR"
+    run_privileged rm -rf "$CONFIG_DIR"
+    run_privileged rm -rf "$DATA_DIR"
+    run_privileged rm -rf "$LOG_DIR"
+    run_privileged rm -rf "$BACKUP_DIR"
+
+    # Clean temp files
+    run_privileged rm -rf /tmp/water-treat-* 2>/dev/null || true
+    run_privileged rm -rf /var/tmp/water-treat-* 2>/dev/null || true
+
+    log_info "System wipe completed"
+    return 0
+}
+
+do_fresh() {
+    local branch="${1:-main}"
+
+    log_step "Starting fresh install (wipe + install)..."
+
+    # Wipe first
+    do_wipe || {
+        log_error "Wipe failed"
+        return 1
+    }
+
+    # Validate environment
+    validate_environment || return 1
+
+    # Install
+    do_install "$branch" "true"
+    return $?
+}
+
+# =============================================================================
+# Help and Usage
+# =============================================================================
+
+show_help() {
+    cat <<EOF
+Water-Treat RTU Bootstrap Script v$BOOTSTRAP_VERSION
+
+USAGE:
+    bootstrap.sh [ACTION] [OPTIONS]
+
+ACTIONS:
+    install     First-time setup (default for fresh systems)
+    upgrade     Update or fix existing installation (preserves config)
+    wipe        Complete removal: binary, configs, data, logs
+    fresh       Wipe + install from scratch
+
+OPTIONS:
+    --branch <name>     Use specific git branch (default: main)
+    --force             Force action even if checks fail
+    --quiet, -q         Suppress non-essential output
+    --verbose, -v       Show detailed output
+    --help, -h          Show this help message
+    --version           Show version information
+
+EXAMPLES:
+    # First-time install
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash
+
+    # Update existing installation
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- upgrade
+
+    # Complete removal
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- wipe
+
+    # Start over from scratch
+    curl -fsSL $REPO_RAW_URL/main/bootstrap.sh | sudo bash -s -- fresh
+
+    # Install from specific branch
+    curl -fsSL .../bootstrap.sh | sudo bash -s -- install --branch develop
+
+DIRECTORIES:
+    Installation:   $INSTALL_DIR
+    Configuration:  $CONFIG_DIR
+    Data:           $DATA_DIR
+    Logs:           $LOG_DIR
+
+For more information: https://github.com/mwilco03/Water-Treat
+EOF
+}
+
+show_version() {
+    echo "Water-Treat RTU Bootstrap v$BOOTSTRAP_VERSION"
+
+    local state
+    state=$(detect_system_state)
+
+    if [[ "$state" == "installed" ]]; then
+        echo "Installed version: $(get_installed_version)"
+        echo "Installed commit:  $(get_installed_sha | cut -c1-12)"
+    else
+        echo "Installation status: $state"
+    fi
+}
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+main() {
+    local action=""
+    local branch="main"
+    local force="false"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            install|upgrade|wipe|fresh)
+                action="$1"
+                shift
+                ;;
+            --branch)
+                branch="$2"
+                shift 2
+                ;;
+            --force)
+                force="true"
+                shift
+                ;;
+            --quiet|-q)
+                QUIET_MODE="true"
+                shift
+                ;;
+            --verbose|-v)
+                VERBOSE_MODE="true"
+                shift
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            --version)
+                show_version
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Initialize logging
+    init_logging
+    log_debug "Bootstrap started: action=$action branch=$branch force=$force"
+
+    # Auto-detect action if not specified
+    if [[ -z "$action" ]]; then
+        local state
+        state=$(detect_system_state)
+
+        case "$state" in
+            fresh)
+                action="install"
+                log_info "Fresh system detected, will install"
+                ;;
+            installed)
+                action="upgrade"
+                log_info "Existing installation detected, will upgrade"
+                ;;
+            corrupted)
+                log_warn "Corrupted installation detected"
+                action="fresh"
+                ;;
+        esac
+    fi
+
+    # Validate environment (except for wipe)
+    if [[ "$action" != "wipe" ]]; then
+        validate_environment || exit 1
+    else
+        check_root || exit 1
+    fi
+
+    # Execute action
+    case "$action" in
+        install)
+            do_install "$branch" "$force"
+            ;;
+        upgrade)
+            do_upgrade "$branch" "$force"
+            ;;
+        wipe)
+            do_wipe
+            ;;
+        fresh)
+            do_fresh "$branch"
+            ;;
+        *)
+            log_error "Unknown action: $action"
+            show_help
+            exit 1
+            ;;
+    esac
+
+    exit $?
+}
+
+# Run main
+main "$@"

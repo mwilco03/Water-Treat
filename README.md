@@ -2,6 +2,55 @@
 
 A PROFINET I/O Device implementation for industrial water treatment monitoring and control. This codebase provides the firmware for a Remote Terminal Unit (RTU) that interfaces physical sensors and actuators with industrial control systems via the PROFINET protocol.
 
+## Quick Start
+
+### One-Liner Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mwilco03/Water-Treat/main/bootstrap.sh | sudo bash
+```
+
+This will clone, build, install, and start the Water-Treat RTU service.
+
+**Default login:** `admin` / `H2OhYeah!`
+
+### Bootstrap Actions
+
+| Action | Description |
+|--------|-------------|
+| `install` | First-time setup (auto-detected on fresh systems) |
+| `upgrade` | Update or fix existing installation (preserves config) |
+| `wipe` | Complete removal |
+| `fresh` | Wipe + install from scratch |
+
+```bash
+curl -fsSL .../bootstrap.sh | sudo bash -s -- upgrade  # Update existing
+curl -fsSL .../bootstrap.sh | sudo bash -s -- wipe     # Remove everything
+curl -fsSL .../bootstrap.sh | sudo bash -s -- fresh    # Start over
+```
+
+### Manual Build
+
+```bash
+# Install dependencies
+sudo apt install -y build-essential cmake libncurses5-dev libsqlite3-dev \
+    libcurl4-openssl-dev libcjson-dev libgpiod-dev
+
+# Build
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+
+# Run (requires root for GPIO access)
+sudo ./water-treat
+```
+
+For production deployment:
+```bash
+sudo make install
+sudo systemctl enable --now water-treat
+```
+
 ## System Architecture
 
 This RTU operates as **SBC #2** in a two-tier SCADA architecture:
