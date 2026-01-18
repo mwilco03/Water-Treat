@@ -90,7 +90,7 @@ static result_t resolve_controller_ip_from_network(char *ip_buf, size_t ip_buf_s
      */
     while (fgets(line, sizeof(line), f)) {
         char ip[16], hw[20], dev[16];
-        int hw_type, flags;
+        unsigned int hw_type, flags;
 
         if (sscanf(line, "%15s 0x%x 0x%x %19s %*s %15s",
                    ip, &hw_type, &flags, hw, dev) >= 5) {
