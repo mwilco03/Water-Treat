@@ -2,6 +2,30 @@
 
 A PROFINET I/O Device implementation for industrial water treatment monitoring and control. This codebase provides the firmware for a Remote Terminal Unit (RTU) that interfaces physical sensors and actuators with industrial control systems via the PROFINET protocol.
 
+## Quick Start
+
+```bash
+# Install dependencies
+sudo apt install -y build-essential cmake libncurses5-dev libsqlite3-dev \
+    libcurl4-openssl-dev libcjson-dev libgpiod-dev
+
+# Build
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+
+# Run (requires root for GPIO access)
+sudo ./water-treat
+```
+
+**Default login:** `admin` / `H2OhYeah!`
+
+For production deployment, install the systemd service:
+```bash
+sudo make install
+sudo systemctl enable --now water-treat
+```
+
 ## System Architecture
 
 This RTU operates as **SBC #2** in a two-tier SCADA architecture:
