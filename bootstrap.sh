@@ -930,9 +930,30 @@ do_wipe() {
     run_privileged rm -rf "$LOG_DIR"
     run_privileged rm -rf "$BACKUP_DIR"
 
-    # Clean temp files
+    # Remove bootstrap log file
+    run_privileged rm -f "$BOOTSTRAP_LOG"
+
+    # Clean temp files from both /tmp and /var/tmp
     run_privileged rm -rf /tmp/water-treat-* 2>/dev/null || true
     run_privileged rm -rf /var/tmp/water-treat-* 2>/dev/null || true
+
+    # Remove any stale PID files or lock files
+    run_privileged rm -f /var/run/water-treat.pid 2>/dev/null || true
+    run_privileged rm -f /run/water-treat.pid 2>/dev/null || true
+
+    # Verify removal
+    local remaining=()
+    [[ -d "$INSTALL_DIR" ]] && remaining+=("$INSTALL_DIR")
+    [[ -d "$CONFIG_DIR" ]] && remaining+=("$CONFIG_DIR")
+    [[ -d "$DATA_DIR" ]] && remaining+=("$DATA_DIR")
+    [[ -d "$LOG_DIR" ]] && remaining+=("$LOG_DIR")
+    [[ -f "$BOOTSTRAP_LOG" ]] && remaining+=("$BOOTSTRAP_LOG")
+
+    if [[ ${#remaining[@]} -gt 0 ]]; then
+        log_warn "Some files could not be removed: ${remaining[*]}"
+    else
+        log_info "All Water-Treat traces removed"
+    fi
 
     log_info "System wipe completed"
     return 0
