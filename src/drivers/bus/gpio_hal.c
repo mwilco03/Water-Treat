@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <dirent.h>
 
 #ifdef HAVE_GPIOD
 #include <gpiod.h>
@@ -93,37 +94,107 @@ bool gpio_chip_exists(const char *chip_name) {
 
 #ifdef HAVE_GPIOD
 
+/**
+ * Score a GPIO chip for selection.
+ * Higher score = better candidate for main user GPIO.
+ *
+ * Scoring criteria:
+ * - More GPIO lines = likely the main controller
+ * - Lower chip number = primary controller (tie-breaker)
+ * - Chips with "pinctrl" in label are usually the main ones
+ */
+static int score_gpiochip(const char *chip_name) {
+    struct gpiod_chip *chip = gpiod_chip_open_by_name(chip_name);
+    if (!chip) return -1;
+
+    int score = 0;
+    unsigned int num_lines = gpiod_chip_num_lines(chip);
+    const char *label = gpiod_chip_label(chip);
+
+    /* Base score on line count - more lines = more likely main controller */
+    score = (int)num_lines;
+
+    /* Bonus for chips with pinctrl in label (usually main GPIO controller) */
+    if (label && strstr(label, "pinctrl")) {
+        score += 50;
+    }
+
+    /* Small bonus for lower chip numbers (tie-breaker) */
+    int chip_num = -1;
+    if (sscanf(chip_name, "gpiochip%d", &chip_num) == 1 && chip_num >= 0) {
+        score += (100 - chip_num);  /* Lower number = higher bonus */
+    }
+
+    LOG_DEBUG("GPIO: chip %s: lines=%u, label='%s', score=%d",
+              chip_name, num_lines, label ? label : "", score);
+
+    gpiod_chip_close(chip);
+    return score;
+}
+
+/**
+ * Discover the best GPIO chip using /dev/gpiochip* enumeration.
+ * Returns the chip name in buf, or false if none found.
+ */
+static bool discover_best_gpiochip(char *buf, size_t buf_size) {
+    DIR *dir = opendir("/dev");
+    if (!dir) {
+        LOG_ERROR("GPIO: Cannot open /dev for chip discovery");
+        return false;
+    }
+
+    char best_chip[64] = {0};
+    int best_score = -1;
+    int chip_count = 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        /* Look for gpiochip* entries */
+        if (strncmp(entry->d_name, "gpiochip", 8) != 0) continue;
+
+        chip_count++;
+        int score = score_gpiochip(entry->d_name);
+
+        if (score > best_score) {
+            best_score = score;
+            strncpy(best_chip, entry->d_name, sizeof(best_chip) - 1);
+        }
+    }
+
+    closedir(dir);
+
+    LOG_INFO("GPIO: Discovered %d chip(s), best candidate: %s (score=%d)",
+             chip_count, best_chip[0] ? best_chip : "none", best_score);
+
+    if (best_chip[0] != '\0' && best_score >= 0) {
+        strncpy(buf, best_chip, buf_size - 1);
+        buf[buf_size - 1] = '\0';
+        return true;
+    }
+
+    return false;
+}
+
 result_t gpio_init(void) {
     if (g_gpio.initialized) return RESULT_OK;
 
     pthread_mutex_init(&g_gpio.mutex, NULL);
 
-    /* Try common GPIO chip names */
-    const char *chip_names[] = {
-        "gpiochip0",    /* Most common on RPi, Orange Pi, etc. */
-        "gpiochip1",
-        "gpiochip4",    /* RPi 5 uses gpiochip4 */
-        NULL
-    };
-
-    for (int i = 0; chip_names[i] != NULL; i++) {
-        g_gpio.chip = gpiod_chip_open_by_name(chip_names[i]);
+    /* Discovery-first: scan /dev for gpiochip devices and score them */
+    char best_chip[64];
+    if (discover_best_gpiochip(best_chip, sizeof(best_chip))) {
+        g_gpio.chip = gpiod_chip_open_by_name(best_chip);
         if (g_gpio.chip) {
-            SAFE_STRNCPY(g_gpio.chip_name, chip_names[i], sizeof(g_gpio.chip_name));
-            LOG_INFO("GPIO: Opened chip %s (%s)",
-                     chip_names[i], gpiod_chip_label(g_gpio.chip));
-            break;
+            SAFE_STRNCPY(g_gpio.chip_name, best_chip, sizeof(g_gpio.chip_name));
+            LOG_INFO("GPIO: Opened chip %s (%s, %u lines)",
+                     best_chip, gpiod_chip_label(g_gpio.chip),
+                     gpiod_chip_num_lines(g_gpio.chip));
         }
     }
 
     if (!g_gpio.chip) {
-        /* Try by path */
-        g_gpio.chip = gpiod_chip_open("/dev/gpiochip0");
-        if (!g_gpio.chip) {
-            LOG_ERROR("GPIO: Failed to open any GPIO chip");
-            return RESULT_ERROR;
-        }
-        SAFE_STRNCPY(g_gpio.chip_name, "/dev/gpiochip0", sizeof(g_gpio.chip_name));
+        LOG_ERROR("GPIO: No GPIO chips discovered");
+        return RESULT_ERROR;
     }
 
     g_gpio.initialized = true;
