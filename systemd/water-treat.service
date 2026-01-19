@@ -15,6 +15,13 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
 
+# Restart rate limiting to prevent crash loops from wearing SD card
+# Allow 5 restarts within 5 minutes, then stop trying
+# After 5 minutes, systemd will allow restarts again
+# Use 'systemctl reset-failed water-treat' to clear failure counter
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
 # User/Group - root needed for GPIO/I2C/SPI hardware access
 User=root
 Group=root

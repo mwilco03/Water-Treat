@@ -255,11 +255,16 @@ static void collect_health_snapshot(health_snapshot_t *snapshot) {
     snapshot->cpu_usage_percent = get_cpu_usage();
     snapshot->memory_usage_percent = get_memory_usage();
 
-    /* Calculate overall status */
+    /*
+     * Calculate overall status
+     * CRITICAL takes precedence, then DEGRADED, then OK
+     * PROFINET failures are critical for an RTU - it cannot communicate without it
+     */
     snapshot->overall_status = HEALTH_STATUS_OK;
 
     if (snapshot->database.status == HEALTH_STATUS_CRITICAL ||
-        snapshot->sensors.status == HEALTH_STATUS_CRITICAL) {
+        snapshot->sensors.status == HEALTH_STATUS_CRITICAL ||
+        snapshot->profinet.status == HEALTH_STATUS_CRITICAL) {
         snapshot->overall_status = HEALTH_STATUS_CRITICAL;
     } else if (snapshot->profinet.status == HEALTH_STATUS_DEGRADED ||
                snapshot->sensors.status == HEALTH_STATUS_DEGRADED ||
