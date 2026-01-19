@@ -20,6 +20,8 @@
 #include <ncurses.h>
 #include <signal.h>
 #include <string.h>
+#include <termios.h>
+#include <unistd.h>
 
 /* External actuator manager for global E-STOP */
 extern actuator_manager_t g_actuator_mgr;
@@ -325,13 +327,20 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
     
     // Initialize ncurses
     initscr();
+
+    // Disable terminal flow control (Ctrl+S/Ctrl+Q) to prevent terminal freeze
+    // Without this, Ctrl+S sends XOFF which stops terminal output indefinitely
+    struct termios term;
+    if (tcgetattr(STDIN_FILENO, &term) == 0) {
+        term.c_iflag &= ~(IXON | IXOFF | IXANY);
+        tcsetattr(STDIN_FILENO, TCSANOW, &term);
+    }
+
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
     timeout(TUI_REFRESH_MS);
-    keypad(g_tui.main_win, TRUE); // Enable keypad input for main window
-    wtimeout(g_tui.main_win, TUI_REFRESH_MS); // Set timeout for main window
 
     // Initialize colors
     if (has_colors()) {
@@ -355,8 +364,10 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
     g_tui.status_bar = newwin(STATUS_BAR_HEIGHT, max_x, 0, 0);
     g_tui.main_win = newwin(max_y - STATUS_BAR_HEIGHT - FOOTER_HEIGHT, max_x, STATUS_BAR_HEIGHT, 0);
     g_tui.footer = newwin(FOOTER_HEIGHT, max_x, max_y - FOOTER_HEIGHT, 0);
-    
+
+    // Enable keypad input and timeout for main window (must be after window creation)
     keypad(g_tui.main_win, TRUE);
+    wtimeout(g_tui.main_win, TUI_REFRESH_MS);
     
     // Set shared context for pages
     tui_set_context(db, config, app_config);
@@ -500,12 +511,15 @@ void tui_run(void) {
                 /*
                  * ESC always goes back one level. At root, show quit confirmation.
                  * This is consistent with IO_CONFIGURATION_UI_SPEC.md requirements.
+                 *
+                 * Check if this is a genuine ESC press (not an escape sequence).
+                 * Use wtimeout instead of nodelay to avoid race conditions with signals.
                  */
                 {
-                    /* Check if this is a genuine ESC press (not an escape sequence) */
-                    nodelay(g_tui.main_win, TRUE);
+                    int old_timeout = TUI_REFRESH_MS;
+                    wtimeout(g_tui.main_win, 50);  /* Brief wait for escape sequence */
                     int next_ch = wgetch(g_tui.main_win);
-                    nodelay(g_tui.main_win, FALSE);
+                    wtimeout(g_tui.main_win, old_timeout);  /* Restore original timeout */
 
                     if (next_ch == ERR) {
                         /* Pure ESC key press - navigate back */
@@ -547,7 +561,18 @@ void tui_shutdown(void) {
     if (g_tui.main_win) delwin(g_tui.main_win);
     if (g_tui.footer) delwin(g_tui.footer);
 
+    /* Restore cursor visibility before ending ncurses */
+    curs_set(1);
+
     endwin();
+
+    /* Restore terminal flow control for normal shell operation */
+    struct termios term;
+    if (tcgetattr(STDIN_FILENO, &term) == 0) {
+        term.c_iflag |= (IXON | IXOFF);
+        tcsetattr(STDIN_FILENO, TCSANOW, &term);
+    }
+
     LOG_INFO("TUI shutdown");
 }
 

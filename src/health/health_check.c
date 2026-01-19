@@ -149,17 +149,20 @@ static void collect_health_snapshot(health_snapshot_t *snapshot) {
                                HEALTH_STATUS_UNKNOWN, "PROFINET not enabled");
     }
 
-    /* Sensor status */
+    /* Sensor status - must hold mutex to safely iterate instances */
     extern sensor_manager_t g_sensor_mgr;  /* From main.c */
     if (g_sensor_mgr.running) {
         int total = 0, failed = 0;
-        for (int i = 0; i < g_sensor_mgr.instance_count; i++) {
+        pthread_mutex_lock(&g_sensor_mgr.mutex);
+        int count = g_sensor_mgr.instance_count;  /* Snapshot under lock */
+        for (int i = 0; i < count; i++) {
             if (!g_sensor_mgr.instances[i]) continue;
             total++;
             if (!g_sensor_mgr.instances[i]->connected) {
                 failed++;
             }
         }
+        pthread_mutex_unlock(&g_sensor_mgr.mutex);
         snapshot->active_sensors = total - failed;
         snapshot->failed_sensors = failed;
 

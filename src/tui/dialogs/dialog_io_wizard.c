@@ -219,6 +219,15 @@ typedef struct {
     /* Result */
     io_wizard_result_t result;
 
+    /* Screen selection state (reset each wizard run via memset in wizard_init) */
+    int screen_io_type_sel;
+    int screen_connection_sel;
+    int screen_gpio_type_sel;
+    int screen_adc_type_sel;
+    int screen_actuator_type_sel;
+    int screen_actuator_device_sel;
+    int screen_confirm_btn;
+
 } wizard_context_t;
 
 static wizard_context_t g_wiz = {0};
@@ -239,13 +248,15 @@ static void push_state(wizard_state_t new_state) {
 
 /**
  * Pop state from history stack (ESC pressed)
+ * If no history, sets state to CANCELLED to exit the wizard.
  */
-static bool pop_state(void) {
+static void pop_state(void) {
     if (g_wiz.state_depth > 0) {
         g_wiz.state = g_wiz.prev_states[--g_wiz.state_depth];
-        return true;
+    } else {
+        /* No more history - exit wizard */
+        g_wiz.state = WIZ_STATE_CANCELLED;
     }
-    return false;  /* No more history - exit wizard */
 }
 
 /**
@@ -548,7 +559,7 @@ static void screen_io_type(void) {
  * ========================================================================== */
 
 static void screen_sensor_connection(void) {
-    static int selected = 0;
+    int *sel = &g_wiz.screen_connection_sel;
 
     draw_header("INPUT: Connection Type",
                 "How is your sensor connected?");
@@ -571,9 +582,9 @@ static void screen_sensor_connection(void) {
     };
 
     for (int i = 0; i < 3; i++) {
-        if (selected == i) wattron(g_wiz.win, A_REVERSE);
+        if (*sel == i) wattron(g_wiz.win, A_REVERSE);
         mvwprintw(g_wiz.win, row, 5, " [%c] %s ", options[i].key, options[i].label);
-        if (selected == i) wattroff(g_wiz.win, A_REVERSE);
+        if (*sel == i) wattroff(g_wiz.win, A_REVERSE);
 
         wattron(g_wiz.win, A_DIM);
         mvwprintw(g_wiz.win, row + 1, 10, "%s", options[i].desc1);
@@ -593,27 +604,27 @@ static void screen_sensor_connection(void) {
     int ch = wgetch(g_wiz.win);
     switch (ch) {
         case 's': case 'S':
-            selected = 0;
+            *sel = 0;
             push_state(WIZ_STATE_SENSOR_SCAN);
             break;
         case 'g': case 'G':
-            selected = 1;
+            *sel = 1;
             push_state(WIZ_STATE_SENSOR_GPIO_PIN);
             break;
         case 'a': case 'A':
-            selected = 2;
+            *sel = 2;
             push_state(WIZ_STATE_SENSOR_ADC_SCAN);
             break;
         case KEY_UP:
-            if (selected > 0) selected--;
+            if (*sel > 0) (*sel)--;
             break;
         case KEY_DOWN:
-            if (selected < 2) selected++;
+            if (*sel < 2) (*sel)++;
             break;
         case '\n':
         case KEY_ENTER:
-            if (selected == 0) push_state(WIZ_STATE_SENSOR_SCAN);
-            else if (selected == 1) push_state(WIZ_STATE_SENSOR_GPIO_PIN);
+            if (*sel == 0) push_state(WIZ_STATE_SENSOR_SCAN);
+            else if (*sel == 1) push_state(WIZ_STATE_SENSOR_GPIO_PIN);
             else push_state(WIZ_STATE_SENSOR_ADC_SCAN);
             break;
         case 27:
@@ -1607,16 +1618,16 @@ static void screen_confirm(void) {
     row++;
     mvwhline(g_wiz.win, row++, 3, ACS_HLINE, WIZARD_WIDTH - 6);
 
-    /* Buttons */
-    static int button = 0;
+    /* Buttons - use g_wiz field so it resets each wizard run */
+    int *btn = &g_wiz.screen_confirm_btn;
     const char *buttons[] = {"Save", "Edit Advanced", "Cancel"};
 
     row++;
     for (int i = 0; i < 3; i++) {
         int col = 8 + i * 20;
-        if (i == button) wattron(g_wiz.win, A_REVERSE);
+        if (i == *btn) wattron(g_wiz.win, A_REVERSE);
         mvwprintw(g_wiz.win, row, col, "[ %s ]", buttons[i]);
-        if (i == button) wattroff(g_wiz.win, A_REVERSE);
+        if (i == *btn) wattroff(g_wiz.win, A_REVERSE);
     }
 
     draw_nav_hints("[Left/Right] Select  |  [Enter] Confirm  |  [ESC] Back");
@@ -1625,20 +1636,20 @@ static void screen_confirm(void) {
     int ch = wgetch(g_wiz.win);
     switch (ch) {
         case KEY_LEFT:
-            if (button > 0) button--;
+            if (*btn > 0) (*btn)--;
             break;
         case KEY_RIGHT:
-            if (button < 2) button++;
+            if (*btn < 2) (*btn)++;
             break;
         case '\n':
         case KEY_ENTER:
-            if (button == 0) {
+            if (*btn == 0) {
                 /* Save - implement database write */
                 g_wiz.state = WIZ_STATE_DONE;
-            } else if (button == 1) {
-                /* Edit Advanced - show old form for power users */
-                dialog_message("Advanced", "Use the old form for advanced settings.");
-                g_wiz.state = WIZ_STATE_CANCELLED;  /* Exit and let user use old dialog */
+            } else if (*btn == 1) {
+                /* Edit Advanced - advanced settings not yet implemented */
+                dialog_message("Advanced", "Advanced settings not yet available.");
+                /* Stay in wizard - don't exit */
             } else {
                 g_wiz.state = WIZ_STATE_CANCELLED;
             }
