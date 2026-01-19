@@ -1636,9 +1636,9 @@ static void screen_confirm(void) {
                 /* Save - implement database write */
                 g_wiz.state = WIZ_STATE_DONE;
             } else if (button == 1) {
-                /* Edit Advanced - show old form for power users */
-                dialog_message("Advanced", "Use the old form for advanced settings.");
-                g_wiz.state = WIZ_STATE_CANCELLED;  /* Exit and let user use old dialog */
+                /* Edit Advanced - advanced settings not yet implemented */
+                dialog_message("Advanced", "Advanced settings not yet available.");
+                /* Stay in wizard - don't exit */
             } else {
                 g_wiz.state = WIZ_STATE_CANCELLED;
             }
