@@ -17,6 +17,9 @@
 #include "utils/logger.h"
 #include <ncurses.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 #define MAX_IO_SLOTS 16
 
@@ -322,7 +325,53 @@ static void draw_protocol_info(WINDOW *win, int start_row) {
 }
 
 /**
+ * Resolve hostname to name via reverse DNS lookup
+ * Returns true if successful, false otherwise
+ */
+static bool resolve_controller_name(const char *ip_or_host, char *name_buf, size_t name_buf_size) {
+    struct addrinfo hints = {0}, *res = NULL;
+    struct sockaddr_in sa;
+    char resolved_name[NI_MAXHOST] = {0};
+
+    /* First, resolve hostname to IP if needed */
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(ip_or_host, NULL, &hints, &res) == 0 && res) {
+        /* Try reverse lookup on the resolved address */
+        struct sockaddr_in *addr = (struct sockaddr_in *)res->ai_addr;
+        if (getnameinfo((struct sockaddr *)addr, sizeof(*addr),
+                        resolved_name, sizeof(resolved_name),
+                        NULL, 0, NI_NAMEREQD) == 0) {
+            /* Got a name - strip domain if present */
+            char *dot = strchr(resolved_name, '.');
+            if (dot) *dot = '\0';
+            SAFE_STRNCPY(name_buf, resolved_name, name_buf_size);
+            freeaddrinfo(res);
+            return true;
+        }
+        freeaddrinfo(res);
+    }
+
+    /* Direct reverse lookup on IP */
+    if (inet_pton(AF_INET, ip_or_host, &sa.sin_addr) == 1) {
+        sa.sin_family = AF_INET;
+        if (getnameinfo((struct sockaddr *)&sa, sizeof(sa),
+                        resolved_name, sizeof(resolved_name),
+                        NULL, 0, NI_NAMEREQD) == 0) {
+            char *dot = strchr(resolved_name, '.');
+            if (dot) *dot = '\0';
+            SAFE_STRNCPY(name_buf, resolved_name, name_buf_size);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
  * Edit controller configuration via dialog
+ * Simplified: just enter IP or hostname, name is auto-resolved
  */
 static void edit_controller_config(void) {
     app_config_t *cfg = tui_get_app_config();
@@ -333,45 +382,69 @@ static void edit_controller_config(void) {
         return;
     }
 
-    /* Get current values from discovery or config */
+    /* Get current IP from discovery or config */
     discovered_controller_t controller;
-    char ip_buf[16] = {0};
-    char name_buf[MAX_NAME_LEN] = {0};
+    char ip_buf[64] = {0};  /* Larger to allow hostname entry */
 
-    if (controller_discovery_get(&controller) == RESULT_OK) {
+    if (controller_discovery_get(&controller) == RESULT_OK && controller.ip[0]) {
         SAFE_STRNCPY(ip_buf, controller.ip, sizeof(ip_buf));
-        SAFE_STRNCPY(name_buf, controller.name, sizeof(name_buf));
-    } else {
+    } else if (cfg->profinet.controller_ip[0]) {
         SAFE_STRNCPY(ip_buf, cfg->profinet.controller_ip, sizeof(ip_buf));
-        SAFE_STRNCPY(name_buf, cfg->profinet.controller_name, sizeof(name_buf));
     }
 
-    /* Edit IP address */
-    if (!dialog_input_string("Controller Configuration", "Controller IP Address", ip_buf, sizeof(ip_buf))) {
+    /* Single input: IP address or hostname */
+    if (!dialog_input_string("Controller", "IP Address or Hostname", ip_buf, sizeof(ip_buf))) {
         return;  /* Cancelled */
     }
 
-    /* Edit name */
-    if (!dialog_input_string("Controller Configuration", "Controller Name", name_buf, sizeof(name_buf))) {
-        return;  /* Cancelled */
+    /* Validate input is not empty */
+    if (strlen(ip_buf) == 0) {
+        dialog_error("IP address or hostname required");
+        return;
     }
+
+    /* Try to resolve hostname to IP and get name */
+    char resolved_ip[16] = {0};
+    char resolved_name[MAX_NAME_LEN] = {0};
+    struct addrinfo hints = {0}, *res = NULL;
+
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(ip_buf, NULL, &hints, &res) == 0 && res) {
+        struct sockaddr_in *addr = (struct sockaddr_in *)res->ai_addr;
+        inet_ntop(AF_INET, &addr->sin_addr, resolved_ip, sizeof(resolved_ip));
+        freeaddrinfo(res);
+    } else {
+        /* Assume it's already an IP or let it fail later */
+        SAFE_STRNCPY(resolved_ip, ip_buf, sizeof(resolved_ip));
+    }
+
+    /* Try reverse DNS for name (non-blocking, best effort) */
+    resolve_controller_name(resolved_ip, resolved_name, sizeof(resolved_name));
 
     /* Update app config */
-    SAFE_STRNCPY(cfg->profinet.controller_ip, ip_buf, sizeof(cfg->profinet.controller_ip));
-    SAFE_STRNCPY(cfg->profinet.controller_name, name_buf, sizeof(cfg->profinet.controller_name));
+    SAFE_STRNCPY(cfg->profinet.controller_ip, resolved_ip, sizeof(cfg->profinet.controller_ip));
+    SAFE_STRNCPY(cfg->profinet.controller_name, resolved_name, sizeof(cfg->profinet.controller_name));
 
     /* Update discovery module */
-    controller_discovery_set(ip_buf, name_buf);
+    controller_discovery_set(resolved_ip, resolved_name[0] ? resolved_name : NULL);
 
     /* Save to config file */
-    config_set_string(mgr, "profinet", "controller_ip", ip_buf);
-    config_set_string(mgr, "profinet", "controller_name", name_buf);
+    config_set_string(mgr, "profinet", "controller_ip", resolved_ip);
+    if (resolved_name[0]) {
+        config_set_string(mgr, "profinet", "controller_name", resolved_name);
+    }
 
     if (config_save_file(mgr, NULL) == RESULT_OK) {
-        tui_set_status("Controller configuration saved");
+        if (resolved_name[0]) {
+            tui_set_status("Controller set: %s (%s)", resolved_ip, resolved_name);
+        } else {
+            tui_set_status("Controller set: %s (name will auto-discover)", resolved_ip);
+        }
     } else {
         dialog_warning("Failed to save config file - changes may be lost on restart");
-        tui_set_status("Config changed (save failed)");
+        tui_set_status("Controller set (save failed)");
     }
 }
 
