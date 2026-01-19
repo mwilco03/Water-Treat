@@ -31,6 +31,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <pwd.h>
+#include <termios.h>
 #include "auth/auth.h"
 
 #ifdef HAVE_SYSTEMD
@@ -289,7 +290,10 @@ static result_t init_database(void) {
 
 static result_t init_profinet(void) {
     if (!g_app_config.profinet.enabled) {
-        LOG_INFO("PROFINET is disabled in configuration");
+        LOG_WARNING("PROFINET is disabled in configuration! "
+                    "This RTU will be unable to communicate with controllers. "
+                    "Set [profinet] enabled=true in config file.");
+        profinet_manager_mark_disabled();
         return RESULT_OK;
     }
 
@@ -602,6 +606,46 @@ static void print_version(void) {
 }
 
 /* ============================================================================
+ * Headless Mode Detection
+ * ========================================================================== */
+
+/**
+ * detect_headless_mode - Check if running in headless environment
+ *
+ * What: Detects whether the application should run without TUI
+ * Why: Prevents crash when ncurses cannot initialize (no terminal)
+ *
+ * Detection order:
+ * 1. WT_HEADLESS=1 environment variable (explicit override)
+ * 2. TERM=dumb or TERM unset (no capable terminal)
+ * 3. stdin is not a tty (running under systemd, cron, etc.)
+ *
+ * Returns: true if should run in headless/daemon mode
+ */
+static bool detect_headless_mode(void) {
+    /* Check WT_HEADLESS environment variable first (explicit override) */
+    const char *headless_env = getenv("WT_HEADLESS");
+    if (headless_env && (strcmp(headless_env, "1") == 0 ||
+                          strcasecmp(headless_env, "true") == 0 ||
+                          strcasecmp(headless_env, "yes") == 0)) {
+        return true;
+    }
+
+    /* Check TERM environment variable */
+    const char *term = getenv("TERM");
+    if (!term || term[0] == '\0' || strcmp(term, "dumb") == 0) {
+        return true;
+    }
+
+    /* Check if stdin is a terminal */
+    if (!isatty(STDIN_FILENO)) {
+        return true;
+    }
+
+    return false;
+}
+
+/* ============================================================================
  * Main Entry Point
  * ========================================================================== */
 
@@ -725,6 +769,20 @@ int main(int argc, char *argv[]) {
 
     // Override daemon mode from config if specified on command line
     if (daemon_mode) {
+        g_app_config.system.daemon_mode = true;
+    }
+
+    /*
+     * Auto-detect headless environment to prevent TUI crash
+     * This handles the case where config has daemon_mode=false but
+     * we're running under systemd without a terminal (no TTY).
+     *
+     * Without this check, ncurses initscr() would fail with:
+     * "Error opening terminal: unknown"
+     */
+    if (!g_app_config.system.daemon_mode && detect_headless_mode()) {
+        LOG_WARNING("No terminal available (WT_HEADLESS, TERM=dumb, or no TTY) - "
+                    "forcing daemon mode to prevent TUI crash");
         g_app_config.system.daemon_mode = true;
     }
 

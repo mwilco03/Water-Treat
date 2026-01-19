@@ -14,6 +14,10 @@
 #include <unistd.h>
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
+#include <ifaddrs.h>    /* getifaddrs for IP configuration discovery */
+#include <net/if.h>     /* IFF_UP, IFF_RUNNING */
+#include <sys/ioctl.h>  /* ioctl for gateway discovery */
+#include <netinet/in.h> /* sockaddr_in */
 
 #define PROFINET_TICK_INTERVAL_US   1000
 #define MAX_PROFINET_SLOTS          64
@@ -66,6 +70,11 @@ typedef struct {
 } profinet_manager_t;
 
 static profinet_manager_t g_pn = {0};
+
+/* Track initialization failure for health reporting */
+static char g_pn_init_error[256] = {0};
+static bool g_pn_init_attempted = false;
+static bool g_pn_disabled_by_config = false;
 
 /* ============================================================================
  * Internal Functions
@@ -371,9 +380,119 @@ static bool detect_network_interface(char *buf, size_t buf_size) {
 }
 #endif
 
+/**
+ * Get the default gateway from /proc/net/route
+ * Returns: gateway IP in network byte order, or 0 on failure
+ */
+static uint32_t get_default_gateway(const char *iface) {
+    FILE *fp = fopen("/proc/net/route", "r");
+    if (!fp) {
+        LOG_DEBUG("Cannot open /proc/net/route for gateway discovery");
+        return 0;
+    }
+
+    char line[256];
+    char route_iface[64];
+    uint32_t dest, gateway;
+
+    /* Skip header line */
+    if (!fgets(line, sizeof(line), fp)) {
+        fclose(fp);
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        if (sscanf(line, "%63s %x %x", route_iface, &dest, &gateway) == 3) {
+            /* Default route has destination 0.0.0.0 */
+            if (dest == 0 && (!iface || strcmp(route_iface, iface) == 0)) {
+                fclose(fp);
+                LOG_DEBUG("Found default gateway: %u.%u.%u.%u",
+                         gateway & 0xFF, (gateway >> 8) & 0xFF,
+                         (gateway >> 16) & 0xFF, (gateway >> 24) & 0xFF);
+                return gateway;  /* Already in network byte order from /proc */
+            }
+        }
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+#ifdef HAVE_PNET
+/**
+ * Configure p-net IP settings from the network interface
+ *
+ * What: Reads IP address, netmask, and gateway from the interface
+ * Why: p-net requires complete IP configuration for DCP responses
+ *      Without this, pnet_init() may fail or DCP won't work
+ *
+ * Returns: true if configuration was successful, false otherwise
+ */
+static bool configure_pnet_ip(const char *iface, pnet_cfg_t *cfg) {
+    struct ifaddrs *ifaddr, *ifa;
+    bool found = false;
+
+    if (getifaddrs(&ifaddr) != 0) {
+        LOG_ERROR("getifaddrs() failed: %s", strerror(errno));
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Cannot enumerate network interfaces: %s", strerror(errno));
+        return false;
+    }
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr) continue;
+        if (strcmp(ifa->ifa_name, iface) != 0) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+        struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+        struct sockaddr_in *mask = (struct sockaddr_in *)ifa->ifa_netmask;
+
+        /* Set IP address */
+        cfg->ip_cfg.ip_addr = addr->sin_addr;
+        LOG_INFO("PROFINET IP address: %s", inet_ntoa(addr->sin_addr));
+
+        /* Set netmask */
+        if (mask) {
+            cfg->ip_cfg.ip_mask = mask->sin_addr;
+            LOG_INFO("PROFINET netmask: %s", inet_ntoa(mask->sin_addr));
+        }
+
+        /* Get gateway from routing table */
+        uint32_t gw = get_default_gateway(iface);
+        if (gw != 0) {
+            cfg->ip_cfg.ip_gateway.s_addr = gw;
+            struct in_addr gw_addr;
+            gw_addr.s_addr = gw;
+            LOG_INFO("PROFINET gateway: %s", inet_ntoa(gw_addr));
+        } else {
+            /* No default gateway - use zeros (common for direct-connect networks) */
+            cfg->ip_cfg.ip_gateway.s_addr = 0;
+            LOG_DEBUG("No default gateway found for %s", iface);
+        }
+
+        found = true;
+        break;
+    }
+
+    freeifaddrs(ifaddr);
+
+    if (!found) {
+        LOG_ERROR("Interface '%s' has no IPv4 address configured", iface);
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Interface '%s' has no IPv4 address. Check 'ip addr show %s'",
+                 iface, iface);
+        return false;
+    }
+
+    return true;
+}
+#endif
+
 result_t profinet_manager_start(const char *interface) {
     if (!g_pn.initialized) return RESULT_NOT_INITIALIZED;
     if (g_pn.running) return RESULT_OK;
+
+    g_pn_init_attempted = true;
 
 #ifdef HAVE_PNET
     // Set network interface (use static buffer since if_cfg expects const char *)
@@ -394,12 +513,26 @@ result_t profinet_manager_start(const char *interface) {
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
 
+    /*
+     * Configure IP settings from the interface
+     * p-net requires: ip_addr, ip_mask, ip_gateway for DCP responses
+     * Without these, DCP Identify won't return proper device information
+     */
+    if (!configure_pnet_ip(g_netif_name, &g_pn.pnet_cfg)) {
+        LOG_ERROR("Failed to configure IP settings for PROFINET. %s", g_pn_init_error);
+        return RESULT_ERROR;
+    }
+
     // Initialize p-net
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
     if (!g_pn.pnet) {
-        LOG_ERROR("Failed to initialize p-net stack on interface '%s'. "
-                  "Check that interface exists (ip link show) and is configured. "
-                  "Common interfaces: eth0, eno1, enp0s3, end0", g_netif_name);
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "pnet_init() failed on interface '%s'. "
+                 "Verify: 1) Interface exists (ip link show), "
+                 "2) IP is configured (ip addr show %s), "
+                 "3) User has CAP_NET_RAW capability",
+                 g_netif_name, g_netif_name);
+        LOG_ERROR("%s", g_pn_init_error);
         return RESULT_ERROR;
     }
     
@@ -734,6 +867,22 @@ const char* profinet_state_to_string(profinet_state_t state) {
         case PROFINET_STATE_ERROR: return "Error";
         default: return "Unknown";
     }
+}
+
+const char* profinet_manager_get_init_error(void) {
+    return g_pn_init_error[0] ? g_pn_init_error : NULL;
+}
+
+bool profinet_manager_is_disabled_by_config(void) {
+    return g_pn_disabled_by_config;
+}
+
+bool profinet_manager_init_attempted(void) {
+    return g_pn_init_attempted;
+}
+
+void profinet_manager_mark_disabled(void) {
+    g_pn_disabled_by_config = true;
 }
 
 /* Wrapper functions for sensor_manager integration */

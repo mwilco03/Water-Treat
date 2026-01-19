@@ -135,18 +135,42 @@ static void collect_health_snapshot(health_snapshot_t *snapshot) {
     snapshot->timestamp = (uint64_t)time(NULL);
     snapshot->uptime_seconds = (get_time_ms() - g_health.start_time_ms) / 1000;
 
-    /* PROFINET status */
+    /*
+     * PROFINET status with actionable diagnostics
+     * Distinguishes between: disabled by config, init failure, not compiled, running
+     */
     if (profinet_manager_is_running()) {
         if (profinet_manager_is_connected()) {
             update_subsystem_health(&snapshot->profinet, "profinet",
                                    HEALTH_STATUS_OK, "Connected to controller");
         } else {
             update_subsystem_health(&snapshot->profinet, "profinet",
-                                   HEALTH_STATUS_DEGRADED, "Disconnected from controller");
+                                   HEALTH_STATUS_DEGRADED, "Waiting for controller connection");
+        }
+    } else if (profinet_manager_is_disabled_by_config()) {
+        /* PROFINET disabled = RTU cannot communicate = misconfiguration */
+        update_subsystem_health(&snapshot->profinet, "profinet",
+                               HEALTH_STATUS_DEGRADED, "DISABLED in config! Set [profinet] enabled=true");
+    } else if (profinet_manager_init_attempted()) {
+        /* PROFINET was enabled but failed to initialize - this is an error */
+        const char *init_error = profinet_manager_get_init_error();
+        if (init_error) {
+            update_subsystem_health(&snapshot->profinet, "profinet",
+                                   HEALTH_STATUS_CRITICAL, init_error);
+        } else {
+            update_subsystem_health(&snapshot->profinet, "profinet",
+                                   HEALTH_STATUS_CRITICAL, "Initialization failed (check logs)");
         }
     } else {
+#ifdef HAVE_PNET
+        /* PROFINET compiled in but not yet started */
         update_subsystem_health(&snapshot->profinet, "profinet",
-                               HEALTH_STATUS_UNKNOWN, "PROFINET not enabled");
+                               HEALTH_STATUS_UNKNOWN, "Not started");
+#else
+        /* p-net library not compiled in - expected for dev builds */
+        update_subsystem_health(&snapshot->profinet, "profinet",
+                               HEALTH_STATUS_UNKNOWN, "Not compiled (HAVE_PNET undefined)");
+#endif
     }
 
     /* Sensor status - must hold mutex to safely iterate instances */
@@ -231,11 +255,16 @@ static void collect_health_snapshot(health_snapshot_t *snapshot) {
     snapshot->cpu_usage_percent = get_cpu_usage();
     snapshot->memory_usage_percent = get_memory_usage();
 
-    /* Calculate overall status */
+    /*
+     * Calculate overall status
+     * CRITICAL takes precedence, then DEGRADED, then OK
+     * PROFINET failures are critical for an RTU - it cannot communicate without it
+     */
     snapshot->overall_status = HEALTH_STATUS_OK;
 
     if (snapshot->database.status == HEALTH_STATUS_CRITICAL ||
-        snapshot->sensors.status == HEALTH_STATUS_CRITICAL) {
+        snapshot->sensors.status == HEALTH_STATUS_CRITICAL ||
+        snapshot->profinet.status == HEALTH_STATUS_CRITICAL) {
         snapshot->overall_status = HEALTH_STATUS_CRITICAL;
     } else if (snapshot->profinet.status == HEALTH_STATUS_DEGRADED ||
                snapshot->sensors.status == HEALTH_STATUS_DEGRADED ||

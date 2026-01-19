@@ -15,6 +15,13 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
 
+# Restart rate limiting to prevent crash loops from wearing SD card
+# Allow 5 restarts within 5 minutes, then stop trying
+# After 5 minutes, systemd will allow restarts again
+# Use 'systemctl reset-failed water-treat' to clear failure counter
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
 # User/Group - root needed for GPIO/I2C/SPI hardware access
 User=root
 Group=root
@@ -57,6 +64,11 @@ DeviceAllow=/dev/mem rw
 # The '-' prefix makes the file optional - service starts even if file is missing
 # See: docs/decisions/DR-001-port-allocation.md for port configuration rationale
 EnvironmentFile=-/etc/water-treat/water-treat.env
+
+# Force TERM=dumb to ensure headless mode detection works
+# This prevents ncurses TUI crash when running under systemd (no TTY)
+# The application auto-detects this and runs in daemon mode
+Environment=TERM=dumb
 
 [Install]
 WantedBy=multi-user.target
