@@ -317,6 +317,8 @@ bool dialog_input_string(const char *title, const char *prompt, char *buffer, in
         int ch = wgetch(dialog);
         
         if (editing) {
+            size_t len = strlen(buffer);
+
             switch (ch) {
                 case '\n':
                 case KEY_ENTER:
@@ -333,20 +335,32 @@ bool dialog_input_string(const char *title, const char *prompt, char *buffer, in
                     break;
                 case KEY_BACKSPACE:
                 case 127:
+                case '\b':
                     if (pos > 0) {
-                        memmove(&buffer[pos - 1], &buffer[pos], strlen(buffer) - pos + 1);
+                        memmove(&buffer[pos - 1], &buffer[pos], len - pos + 1);
                         pos--;
+                    }
+                    break;
+                case KEY_DC:  // Delete key
+                    if (pos < (int)len) {
+                        memmove(&buffer[pos], &buffer[pos + 1], len - pos);
                     }
                     break;
                 case KEY_LEFT:
                     if (pos > 0) pos--;
                     break;
                 case KEY_RIGHT:
-                    if (pos < (int)strlen(buffer)) pos++;
+                    if (pos < (int)len) pos++;
+                    break;
+                case KEY_HOME:
+                    pos = 0;
+                    break;
+                case KEY_END:
+                    pos = len;
                     break;
                 default:
-                    if (ch >= 32 && ch < 127 && (int)strlen(buffer) < max_len - 1) {
-                        memmove(&buffer[pos + 1], &buffer[pos], strlen(buffer) - pos + 1);
+                    if (ch >= 32 && ch < 127 && (int)len < max_len - 1) {
+                        memmove(&buffer[pos + 1], &buffer[pos], len - pos + 1);
                         buffer[pos++] = ch;
                     }
                     break;
