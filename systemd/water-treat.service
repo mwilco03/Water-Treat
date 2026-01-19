@@ -37,7 +37,11 @@ CPUQuota=80%
 
 # Security hardening (optional - comment out if causing issues)
 ProtectSystem=strict
-ReadWritePaths=/var/lib/water-treat /var/log/water-treat
+ReadWritePaths=/var/lib/water-treat
+
+# Runtime directory for volatile logs (tmpfs - avoids SD card wear)
+RuntimeDirectory=water-treat
+RuntimeDirectoryMode=0755
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes
