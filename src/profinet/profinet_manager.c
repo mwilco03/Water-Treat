@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>      /* errno for error reporting */
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
 #include <ifaddrs.h>    /* getifaddrs for IP configuration discovery */
