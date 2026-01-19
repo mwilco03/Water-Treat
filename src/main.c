@@ -670,10 +670,42 @@ int main(int argc, char *argv[]) {
 
     logger_config_t log_cfg = {
         .level = log_level,
-        .destinations = daemon_mode ? LOG_DEST_FILE : (LOG_DEST_CONSOLE | LOG_DEST_FILE),
         .include_timestamp = true,
         .include_source = true
     };
+    SAFE_STRNCPY(log_cfg.syslog_ident, "water-treat", sizeof(log_cfg.syslog_ident));
+
+    // Daemon mode: syslog primary (always available), file secondary if writable
+    // Interactive mode: console primary, file secondary if writable
+    if (daemon_mode) {
+        log_cfg.destinations = LOG_DEST_SYSLOG;
+    } else {
+        log_cfg.destinations = LOG_DEST_CONSOLE;
+    }
+
+    // Additionally enable file logging if a writable directory exists
+    // Use tmpfs (/run) to avoid SD card wear - logs are volatile (lost on reboot)
+    const char *log_dir_primary = "/run/water-treat";
+    bool log_file_ok = false;
+
+    if (mkdir_p(log_dir_primary, 0755) == 0 && access(log_dir_primary, W_OK) == 0) {
+        snprintf(log_cfg.log_file_path, sizeof(log_cfg.log_file_path),
+                 "%s/water-treat.log", log_dir_primary);
+        log_file_ok = true;
+    } else {
+        // Fall back to user data directory
+        const char *user_dir = get_user_data_dir();
+        if (mkdir_p(user_dir, 0755) == 0 && access(user_dir, W_OK) == 0) {
+            snprintf(log_cfg.log_file_path, sizeof(log_cfg.log_file_path),
+                     "%s/water-treat.log", user_dir);
+            log_file_ok = true;
+        }
+    }
+
+    if (log_file_ok) {
+        log_cfg.destinations |= LOG_DEST_FILE;
+    }
+
     logger_init(&log_cfg);
 
     LOG_INFO("Starting Water-Treat RTU v%s", VERSION_STRING);
