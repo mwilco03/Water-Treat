@@ -341,8 +341,6 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
     keypad(stdscr, TRUE);
     curs_set(0);
     timeout(TUI_REFRESH_MS);
-    keypad(g_tui.main_win, TRUE); // Enable keypad input for main window
-    wtimeout(g_tui.main_win, TUI_REFRESH_MS); // Set timeout for main window
 
     // Initialize colors
     if (has_colors()) {
@@ -366,8 +364,10 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
     g_tui.status_bar = newwin(STATUS_BAR_HEIGHT, max_x, 0, 0);
     g_tui.main_win = newwin(max_y - STATUS_BAR_HEIGHT - FOOTER_HEIGHT, max_x, STATUS_BAR_HEIGHT, 0);
     g_tui.footer = newwin(FOOTER_HEIGHT, max_x, max_y - FOOTER_HEIGHT, 0);
-    
+
+    // Enable keypad input and timeout for main window (must be after window creation)
     keypad(g_tui.main_win, TRUE);
+    wtimeout(g_tui.main_win, TUI_REFRESH_MS);
     
     // Set shared context for pages
     tui_set_context(db, config, app_config);

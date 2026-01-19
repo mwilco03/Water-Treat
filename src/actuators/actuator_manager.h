@@ -123,6 +123,7 @@ typedef struct {
     bool profinet_connected;
     bool degraded_mode;
     uint64_t disconnect_time_ms;
+    uint64_t no_command_start_ms;  // Watchdog: tracks when commands stopped arriving
 
     // Threading
     pthread_mutex_t mutex;

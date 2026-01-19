@@ -239,24 +239,22 @@ static void* watchdog_thread(void *arg) {
 
             // If PROFINET says connected but no commands received, enter degraded
             // This catches the case where connection is stale
-            // Note: no_command_start must be static to persist across loop iterations
-            static uint64_t no_command_start = 0;
-
+            // Use manager field (not static) so state resets properly on service restart
             if (!any_recent_command && mgr->actuator_count > 0) {
                 // Only enter degraded mode after delay
-                if (no_command_start == 0) {
-                    no_command_start = now;
+                if (mgr->no_command_start_ms == 0) {
+                    mgr->no_command_start_ms = now;
                     LOG_DEBUG("WATCHDOG: No recent commands detected, starting %d ms delay before degraded mode",
                               g_degraded_alarm_delay_ms);
-                } else if ((now - no_command_start) > (uint64_t)g_degraded_alarm_delay_ms) {
+                } else if ((now - mgr->no_command_start_ms) > (uint64_t)g_degraded_alarm_delay_ms) {
                     LOG_WARNING("WATCHDOG: Command timeout exceeded %d ms - no commands for %lu ms, entering degraded mode",
-                                g_command_timeout_ms, (unsigned long)(now - no_command_start));
+                                g_command_timeout_ms, (unsigned long)(now - mgr->no_command_start_ms));
                     enter_degraded_mode(mgr);
-                    no_command_start = 0;  // Reset for next disconnect cycle
+                    mgr->no_command_start_ms = 0;  // Reset for next disconnect cycle
                 }
             } else {
                 // Reset no_command_start when commands are being received
-                no_command_start = 0;
+                mgr->no_command_start_ms = 0;
             }
         }
 

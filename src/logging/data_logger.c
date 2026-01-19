@@ -360,8 +360,22 @@ result_t data_logger_init(database_t *db, const data_logger_config_t *config) {
     // Set up remote logging
     if (config->remote_enabled && strlen(config->remote_url) > 0) {
         g_logger.remote_url = strdup(config->remote_url);
+        if (!g_logger.remote_url) {
+            LOG_ERROR("Failed to allocate remote_url");
+            pthread_mutex_destroy(&g_logger.mutex);
+            pthread_cond_destroy(&g_logger.cond);
+            return RESULT_NO_MEMORY;
+        }
         if (strlen(config->api_key) > 0) {
             g_logger.api_key = strdup(config->api_key);
+            if (!g_logger.api_key) {
+                LOG_ERROR("Failed to allocate api_key");
+                free(g_logger.remote_url);
+                g_logger.remote_url = NULL;
+                pthread_mutex_destroy(&g_logger.mutex);
+                pthread_cond_destroy(&g_logger.cond);
+                return RESULT_NO_MEMORY;
+            }
         }
         g_logger.remote_available = true;
         curl_global_init(CURL_GLOBAL_DEFAULT);
