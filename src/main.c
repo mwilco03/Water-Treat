@@ -663,7 +663,7 @@ int main(int argc, char *argv[]) {
     print_version();
     printf("\n");
 
-    // Initialize logger
+    // Initialize logger with discovery-first log file path
     log_level_t log_level = LOG_LEVEL_INFO;
     if (verbose_level >= 2) log_level = LOG_LEVEL_TRACE;
     else if (verbose_level >= 1) log_level = LOG_LEVEL_DEBUG;
@@ -674,6 +674,37 @@ int main(int argc, char *argv[]) {
         .include_timestamp = true,
         .include_source = true
     };
+
+    // Discovery-first: try primary log path, fall back to user directory
+    const char *log_dir_primary = "/var/log/water-treat";
+    bool log_path_ok = false;
+
+    // Try primary log directory
+    if (mkdir_p(log_dir_primary, 0755) == 0 && access(log_dir_primary, W_OK) == 0) {
+        snprintf(log_cfg.log_file_path, sizeof(log_cfg.log_file_path),
+                 "%s/water-treat.log", log_dir_primary);
+        log_path_ok = true;
+    }
+
+    // Fall back to user data directory if primary not writable
+    if (!log_path_ok) {
+        const char *user_dir = get_user_data_dir();
+        if (mkdir_p(user_dir, 0755) == 0 && access(user_dir, W_OK) == 0) {
+            snprintf(log_cfg.log_file_path, sizeof(log_cfg.log_file_path),
+                     "%s/water-treat.log", user_dir);
+            log_path_ok = true;
+        }
+    }
+
+    // If still no writable path, disable file logging in daemon mode
+    if (!log_path_ok && daemon_mode) {
+        fprintf(stderr, "WARNING: No writable log directory found. "
+                        "Run: sudo mkdir -p /var/log/water-treat && sudo chmod 755 /var/log/water-treat\n");
+        // Fall back to syslog in daemon mode when no file path available
+        log_cfg.destinations = LOG_DEST_SYSLOG;
+        SAFE_STRNCPY(log_cfg.syslog_ident, "water-treat", sizeof(log_cfg.syslog_ident));
+    }
+
     logger_init(&log_cfg);
 
     LOG_INFO("Starting Water-Treat RTU v%s", VERSION_STRING);
