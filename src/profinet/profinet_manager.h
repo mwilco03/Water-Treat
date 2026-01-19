@@ -38,6 +38,14 @@ typedef void (*profinet_data_cb_t)(int slot, int subslot, const uint8_t *data, s
 
 result_t profinet_manager_init(database_t *db, const profinet_config_t *config);
 result_t profinet_manager_start(const char *interface);
+
+/**
+ * @brief Mark PROFINET as disabled by configuration
+ *
+ * Called by main.c when profinet.enabled=false in config.
+ * Distinguishes "disabled by config" from "failed to initialize".
+ */
+void profinet_manager_mark_disabled(void);
 result_t profinet_manager_stop(void);
 void profinet_manager_shutdown(void);
 
@@ -79,6 +87,35 @@ result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
                                      const uint8_t *data, size_t data_len);
 
 const char* profinet_state_to_string(profinet_state_t state);
+
+/**
+ * @brief Get PROFINET initialization error message
+ *
+ * Returns a detailed error message if PROFINET failed to initialize.
+ * Used by health check module to provide actionable diagnostics.
+ *
+ * @return Error message string, or NULL if no error
+ */
+const char* profinet_manager_get_init_error(void);
+
+/**
+ * @brief Check if PROFINET was disabled by configuration
+ *
+ * @return true if PROFINET was disabled in config file
+ */
+bool profinet_manager_is_disabled_by_config(void);
+
+/**
+ * @brief Check if PROFINET initialization was attempted
+ *
+ * Distinguishes between:
+ * - PROFINET disabled by config (init not attempted)
+ * - PROFINET enabled but init failed (init attempted)
+ * - PROFINET library not compiled in (HAVE_PNET not defined)
+ *
+ * @return true if pnet_init() was called (regardless of success/failure)
+ */
+bool profinet_manager_init_attempted(void);
 
 // Internal callbacks used by profinet_callbacks.c
 void profinet_manager_set_connected(bool connected, uint32_t arep);
