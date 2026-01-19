@@ -239,13 +239,15 @@ static void push_state(wizard_state_t new_state) {
 
 /**
  * Pop state from history stack (ESC pressed)
+ * If no history, sets state to CANCELLED to exit the wizard.
  */
-static bool pop_state(void) {
+static void pop_state(void) {
     if (g_wiz.state_depth > 0) {
         g_wiz.state = g_wiz.prev_states[--g_wiz.state_depth];
-        return true;
+    } else {
+        /* No more history - exit wizard */
+        g_wiz.state = WIZ_STATE_CANCELLED;
     }
-    return false;  /* No more history - exit wizard */
 }
 
 /**
