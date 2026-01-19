@@ -420,6 +420,17 @@ static uint32_t get_default_gateway(const char *iface) {
 
 #ifdef HAVE_PNET
 /**
+ * Helper to convert in_addr to p-net's ip_addr format (a.b.c.d octets)
+ */
+static void in_addr_to_pnet_ip(struct in_addr addr, pnet_cfg_ip_addr_t *pnet_ip) {
+    uint32_t ip = ntohl(addr.s_addr);
+    pnet_ip->a = (ip >> 24) & 0xFF;
+    pnet_ip->b = (ip >> 16) & 0xFF;
+    pnet_ip->c = (ip >> 8) & 0xFF;
+    pnet_ip->d = ip & 0xFF;
+}
+
+/**
  * Configure p-net IP settings from the network interface
  *
  * What: Reads IP address, netmask, and gateway from the interface
@@ -447,26 +458,26 @@ static bool configure_pnet_ip(const char *iface, pnet_cfg_t *cfg) {
         struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
         struct sockaddr_in *mask = (struct sockaddr_in *)ifa->ifa_netmask;
 
-        /* Set IP address */
-        cfg->ip_cfg.ip_addr = addr->sin_addr;
+        /* Set IP address using p-net's octet format */
+        in_addr_to_pnet_ip(addr->sin_addr, &cfg->if_cfg.ip_cfg.ip_addr);
         LOG_INFO("PROFINET IP address: %s", inet_ntoa(addr->sin_addr));
 
         /* Set netmask */
         if (mask) {
-            cfg->ip_cfg.ip_mask = mask->sin_addr;
+            in_addr_to_pnet_ip(mask->sin_addr, &cfg->if_cfg.ip_cfg.ip_mask);
             LOG_INFO("PROFINET netmask: %s", inet_ntoa(mask->sin_addr));
         }
 
         /* Get gateway from routing table */
         uint32_t gw = get_default_gateway(iface);
         if (gw != 0) {
-            cfg->ip_cfg.ip_gateway.s_addr = gw;
             struct in_addr gw_addr;
             gw_addr.s_addr = gw;
+            in_addr_to_pnet_ip(gw_addr, &cfg->if_cfg.ip_cfg.ip_gateway);
             LOG_INFO("PROFINET gateway: %s", inet_ntoa(gw_addr));
         } else {
             /* No default gateway - use zeros (common for direct-connect networks) */
-            cfg->ip_cfg.ip_gateway.s_addr = 0;
+            memset(&cfg->if_cfg.ip_cfg.ip_gateway, 0, sizeof(cfg->if_cfg.ip_cfg.ip_gateway));
             LOG_DEBUG("No default gateway found for %s", iface);
         }
 
