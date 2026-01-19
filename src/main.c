@@ -684,7 +684,8 @@ int main(int argc, char *argv[]) {
     }
 
     // Additionally enable file logging if a writable directory exists
-    const char *log_dir_primary = "/var/log/water-treat";
+    // Use tmpfs (/run) to avoid SD card wear - logs are volatile (lost on reboot)
+    const char *log_dir_primary = "/run/water-treat";
     bool log_file_ok = false;
 
     if (mkdir_p(log_dir_primary, 0755) == 0 && access(log_dir_primary, W_OK) == 0) {
