@@ -100,13 +100,14 @@ typedef struct __attribute__((packed)) {
 
 /**
  * Single actuator configuration entry
- * Size: 1+1+16+1+2 = 21 bytes
+ * Size: 1+1+16+1+1+2 = 22 bytes (per controller spec)
  */
 typedef struct __attribute__((packed)) {
     uint8_t  slot;                             /**< PROFINET slot (9-15) */
     uint8_t  type;                             /**< Actuator type enum */
     char     name[CONFIG_SYNC_NAME_LEN];       /**< Display name */
     uint8_t  default_state;                    /**< Default state on startup */
+    uint8_t  reserved;                         /**< Reserved for alignment */
     uint16_t interlock_mask;                   /**< Interlock bitmask */
 } config_sync_actuator_entry_t;
 

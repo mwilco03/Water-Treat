@@ -137,17 +137,25 @@ static result_t get_mac_address(char *mac_buf, size_t buf_size) {
  * Validate enrollment token format
  */
 static bool validate_token(const char *token) {
-    if (!token || strlen(token) != RTU_ENROLL_TOKEN_LEN - 1) {
+    if (!token) {
+        return false;
+    }
+
+    size_t prefix_len = strlen(RTU_ENROLL_TOKEN_PREFIX);
+    size_t token_len = strnlen(token, RTU_ENROLL_TOKEN_WIRE_LEN);
+
+    /* Token must be at least prefix + 32 hex chars */
+    if (token_len < prefix_len + 32) {
         return false;
     }
 
     /* Check prefix */
-    if (strncmp(token, RTU_ENROLL_TOKEN_PREFIX, strlen(RTU_ENROLL_TOKEN_PREFIX)) != 0) {
+    if (strncmp(token, RTU_ENROLL_TOKEN_PREFIX, prefix_len) != 0) {
         return false;
     }
 
-    /* Check hex chars after prefix */
-    const char *hex = token + strlen(RTU_ENROLL_TOKEN_PREFIX);
+    /* Check exactly 32 hex chars after prefix */
+    const char *hex = token + prefix_len;
     for (int i = 0; i < 32; i++) {
         char c = hex[i];
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
@@ -593,17 +601,22 @@ result_t rtu_registration_process_enrollment(const uint8_t *data, uint16_t lengt
         return RESULT_INVALID_PARAM;
     }
 
-    /* Verify checksum (over packet minus checksum field itself) */
-    size_t check_len = offsetof(rtu_enroll_packet_t, checksum);
-    uint16_t expected_crc = crc16_ccitt(data, check_len);
-    uint16_t received_crc = ntohs(packet->checksum);
+    /*
+     * Verify CRC16 (per controller spec: CRC over token + controller_id + reserved)
+     * CRC is at offset 6, payload starts at offset 8 (after crc16 field)
+     */
+    size_t crc_payload_offset = offsetof(rtu_enroll_packet_t, enrollment_token);
+    size_t crc_payload_len = sizeof(rtu_enroll_packet_t) - crc_payload_offset;
+    uint16_t expected_crc = crc16_ccitt(data + crc_payload_offset, crc_payload_len);
+    uint16_t received_crc = ntohs(packet->crc16);
     if (expected_crc != received_crc) {
         LOG_ERROR("Enrollment checksum mismatch: 0x%04X != 0x%04X", expected_crc, received_crc);
         return RESULT_INVALID_PARAM;
     }
 
     rtu_enroll_operation_t op = (rtu_enroll_operation_t)packet->operation;
-    LOG_INFO("Processing enrollment operation: %s", rtu_enroll_op_to_string(op));
+    LOG_INFO("Processing enrollment operation: %s (controller_id=%u)",
+             rtu_enroll_op_to_string(op), ntohl(packet->controller_id));
 
     pthread_mutex_lock(&g_reg.mutex);
 

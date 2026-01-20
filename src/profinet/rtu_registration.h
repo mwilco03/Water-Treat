@@ -48,7 +48,10 @@
 /** Enrollment token prefix */
 #define RTU_ENROLL_TOKEN_PREFIX         "wtc-enroll-"
 
-/** Enrollment token length (prefix + 32 hex chars + null) */
+/** Enrollment token wire length (per controller spec: char[64]) */
+#define RTU_ENROLL_TOKEN_WIRE_LEN       64
+
+/** Enrollment token string length (prefix + 32 hex chars + null) */
 #define RTU_ENROLL_TOKEN_LEN            44
 
 /** Maximum serial number length */
@@ -114,17 +117,17 @@ typedef struct {
 } rtu_device_info_t;
 
 /**
- * Enrollment packet header (from controller via PROFINET 0xF845)
+ * Enrollment packet (from controller via PROFINET 0xF845)
+ * Size: 4+1+1+2+64+4+4 = 80 bytes (per controller spec)
  */
 typedef struct __attribute__((packed)) {
-    uint32_t magic;                         /**< RTU_ENROLL_MAGIC */
-    uint8_t  version;                       /**< Protocol version */
+    uint32_t magic;                         /**< RTU_ENROLL_MAGIC (0x454E524C) */
+    uint8_t  version;                       /**< Protocol version (1) */
     uint8_t  operation;                     /**< rtu_enroll_operation_t */
-    uint16_t reserved;                      /**< Reserved for alignment */
-    uint32_t timestamp;                     /**< Enrollment timestamp */
-    char     enrollment_token[RTU_ENROLL_TOKEN_LEN]; /**< Token from controller */
-    uint16_t checksum;                      /**< CRC16-CCITT of packet */
-    uint16_t padding;                       /**< Padding to 4-byte align */
+    uint16_t crc16;                         /**< CRC16-CCITT checksum */
+    char     enrollment_token[RTU_ENROLL_TOKEN_WIRE_LEN]; /**< Token (padded to 64) */
+    uint32_t controller_id;                 /**< Controller identifier */
+    uint32_t reserved;                      /**< Reserved for future use */
 } rtu_enroll_packet_t;
 
 /**
