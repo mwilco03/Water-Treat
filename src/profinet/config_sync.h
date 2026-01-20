@@ -33,7 +33,12 @@
 
 /**
  * Device configuration packet from controller
- * Total size: 1+1+2+4+32+2+2+1+4 = 49 bytes
+ * Total size: 1+1+2+4+32+2+2+1+3+4 = 52 bytes (per controller spec)
+ *
+ * Layout with offsets:
+ *   0: version, 1: flags, 2-3: crc16, 4-7: timestamp,
+ *   8-39: station_name, 40-41: sensor_count, 42-43: actuator_count,
+ *   44: authority_mode, 45-47: reserved[3], 48-51: watchdog_ms
  */
 typedef struct __attribute__((packed)) {
     uint8_t  version;                           /**< Protocol version (1) */
@@ -44,6 +49,7 @@ typedef struct __attribute__((packed)) {
     uint16_t sensor_count;                      /**< Expected sensor count */
     uint16_t actuator_count;                    /**< Expected actuator count */
     uint8_t  authority_mode;                    /**< Authority: 0=autonomous, 1=supervised */
+    uint8_t  reserved[3];                       /**< Reserved for 4-byte alignment */
     uint32_t watchdog_ms;                       /**< Watchdog timeout in ms */
 } config_sync_device_packet_t;
 
