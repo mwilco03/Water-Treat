@@ -12,13 +12,9 @@
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
-#include <errno.h>      /* errno for error reporting */
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
-#include <ifaddrs.h>    /* getifaddrs for IP configuration discovery */
-#include <net/if.h>     /* IFF_UP, IFF_RUNNING */
-#include <sys/ioctl.h>  /* ioctl for gateway discovery */
-#include <netinet/in.h> /* sockaddr_in */
+#include <net/if.h>     /* IFF_UP, IFF_RUNNING for interface detection */
 
 #define PROFINET_TICK_INTERVAL_US   1000
 #define MAX_PROFINET_SLOTS          64
@@ -536,26 +532,14 @@ result_t profinet_manager_start(const char *interface) {
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
 
-    /*
-     * Configure IP settings from the interface
-     * p-net requires: ip_addr, ip_mask, ip_gateway for DCP responses
-     * Without these, DCP Identify won't return proper device information
-     */
-    if (!configure_pnet_ip(g_netif_name, &g_pn.pnet_cfg)) {
-        LOG_ERROR("Failed to configure IP settings for PROFINET. %s", g_pn_init_error);
-        return RESULT_ERROR;
-    }
-
     // Initialize p-net
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
     if (!g_pn.pnet) {
         snprintf(g_pn_init_error, sizeof(g_pn_init_error),
-                 "pnet_init() failed on interface '%s'. "
-                 "Verify: 1) Interface exists (ip link show), "
-                 "2) IP is configured (ip addr show %s), "
-                 "3) User has CAP_NET_RAW capability",
-                 g_netif_name, g_netif_name);
-        LOG_ERROR("%s", g_pn_init_error);
+                 "pnet_init() failed on '%s'", g_netif_name);
+        LOG_ERROR("Failed to initialize p-net stack on interface '%s'. "
+                  "Check that interface exists (ip link show) and is configured. "
+                  "Common interfaces: eth0, eno1, enp0s3, end0", g_netif_name);
         return RESULT_ERROR;
     }
     
