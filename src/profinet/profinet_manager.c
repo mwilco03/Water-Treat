@@ -528,14 +528,31 @@ result_t profinet_manager_start(const char *interface) {
         return RESULT_ERROR;
     }
 
+    // Log configuration before pnet_init() for debugging
+    LOG_DEBUG("pnet_init() config: interface=%s, station=%s, vendor=0x%02X%02X, device=0x%02X%02X",
+              g_pn.pnet_cfg.if_cfg.main_netif_name,
+              g_pn.pnet_cfg.station_name,
+              g_pn.pnet_cfg.device_id.vendor_id_hi, g_pn.pnet_cfg.device_id.vendor_id_lo,
+              g_pn.pnet_cfg.device_id.device_id_hi, g_pn.pnet_cfg.device_id.device_id_lo);
+    LOG_DEBUG("pnet_init() IP config: %d.%d.%d.%d / %d.%d.%d.%d gw %d.%d.%d.%d",
+              g_pn.pnet_cfg.if_cfg.ip_cfg.ip_addr.a, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_addr.b,
+              g_pn.pnet_cfg.if_cfg.ip_cfg.ip_addr.c, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_addr.d,
+              g_pn.pnet_cfg.if_cfg.ip_cfg.ip_mask.a, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_mask.b,
+              g_pn.pnet_cfg.if_cfg.ip_cfg.ip_mask.c, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_mask.d,
+              g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.a, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.b,
+              g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.c, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.d);
+
     // Initialize p-net
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
     if (!g_pn.pnet) {
         snprintf(g_pn_init_error, sizeof(g_pn_init_error),
-                 "pnet_init() failed on '%s'", g_netif_name);
-        LOG_ERROR("Failed to initialize p-net stack on interface '%s'. "
-                  "Check that interface exists (ip link show) and is configured. "
-                  "Common interfaces: eth0, eno1, enp0s3, end0", g_netif_name);
+                 "pnet_init() failed on '%s' (check permissions: needs CAP_NET_RAW or root)", g_netif_name);
+        LOG_ERROR("pnet_init() failed on interface '%s'", g_netif_name);
+        LOG_ERROR("Possible causes:");
+        LOG_ERROR("  1. Interface '%s' does not exist (run: ip link show)", g_netif_name);
+        LOG_ERROR("  2. Insufficient permissions (run as root or: sudo setcap cap_net_raw+ep ./water-treat)");
+        LOG_ERROR("  3. Interface has no MAC address (run: ip link show %s)", g_netif_name);
+        LOG_ERROR("  4. p-net internal error (check p-net library logs if enabled)");
         return RESULT_ERROR;
     }
     
