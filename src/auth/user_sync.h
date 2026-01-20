@@ -273,4 +273,106 @@ bool user_sync_constant_time_compare(const char *a, const char *b, size_t len);
  */
 const char* user_sync_role_to_string(user_sync_role_t role);
 
+/* ============================================================================
+ * Non-Volatile Storage Backend Interface
+ * ============================================================================ */
+
+/**
+ * NV storage operations for persistent user credential storage
+ *
+ * Implement these for your hardware (EEPROM, Flash, FRAM, etc.)
+ * If not set, users are stored in RAM only (lost on reboot).
+ */
+typedef struct {
+    /**
+     * Read data from NV storage
+     * @param offset  Byte offset from user storage base
+     * @param data    Buffer to read into
+     * @param len     Number of bytes to read
+     * @return 0 on success, -1 on error
+     */
+    int (*read)(uint32_t offset, void *data, size_t len);
+
+    /**
+     * Write data to NV storage
+     * @param offset  Byte offset from user storage base
+     * @param data    Data to write
+     * @param len     Number of bytes to write
+     * @return 0 on success, -1 on error
+     */
+    int (*write)(uint32_t offset, const void *data, size_t len);
+
+    /**
+     * Flush/sync writes to physical storage (optional)
+     * @return 0 on success, -1 on error
+     */
+    int (*flush)(void);
+} user_sync_nv_ops_t;
+
+/**
+ * Register NV storage backend
+ *
+ * Call during init to enable persistent storage.
+ * If not called, users are RAM-only.
+ *
+ * @param ops  NV operations structure (must remain valid)
+ * @return RESULT_OK on success
+ */
+result_t user_sync_set_nv_backend(const user_sync_nv_ops_t *ops);
+
+/**
+ * Load users from NV storage
+ *
+ * Call after init and setting NV backend to restore persisted users.
+ *
+ * @return RESULT_OK on success, RESULT_NOT_FOUND if no stored users
+ */
+result_t user_sync_load_from_nv(void);
+
+/**
+ * Save users to NV storage
+ *
+ * Called automatically after processing sync packets if NV backend is set.
+ *
+ * @return RESULT_OK on success
+ */
+result_t user_sync_save_to_nv(void);
+
+/* ============================================================================
+ * Hash Verification / Test Functions
+ * ============================================================================ */
+
+/**
+ * Compute DJB2 hashes for password with salt (for verification)
+ *
+ * Use this to verify RTU hash computation matches controller.
+ *
+ * @param password      Password to hash
+ * @param[out] salt_hash    DJB2 hash of salt alone
+ * @param[out] pass_hash    DJB2 hash of salt+password
+ */
+void user_sync_hash_with_salt(const char *password,
+                               uint32_t *salt_hash,
+                               uint32_t *pass_hash);
+
+/**
+ * Verify hash implementation against known test vectors
+ *
+ * @return true if implementation matches expected values
+ */
+bool user_sync_verify_hash_implementation(void);
+
+/**
+ * Check if user sync is awaiting initial controller sync
+ *
+ * Returns true if:
+ * - No users are currently stored
+ * - No sync has been received from controller
+ *
+ * TUI should display "Awaiting controller sync" in this state.
+ *
+ * @return true if awaiting sync, false if users available
+ */
+bool user_sync_awaiting_initial_sync(void);
+
 #endif /* USER_SYNC_H */

@@ -98,6 +98,18 @@ void auth_touch_session(void);
  */
 bool auth_check_timeout(void);
 
+/**
+ * Check if awaiting initial controller sync
+ *
+ * Returns true if no users are available (synced or local).
+ * TUI should display "Awaiting controller sync" message in this state.
+ * All authentication attempts will be denied until sync received.
+ *
+ * @param db Database handle to check local users
+ * @return true if awaiting sync, false if authentication possible
+ */
+bool auth_awaiting_controller_sync(database_t *db);
+
 /* ============================================================================
  * User Management API
  * ========================================================================== */

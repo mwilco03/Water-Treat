@@ -20,8 +20,10 @@
 auth_session_t g_auth_session = {0};
 
 /* Default credentials - Water treatment puns! */
-#define DEFAULT_USERNAME    "admin"
-#define DEFAULT_PASSWORD    "H2OhYeah!"  /* H2O + Oh Yeah! */
+/*
+ * SECURITY: Default credentials removed - see auth_init() comment.
+ * Default user is synced from Controller, not hardcoded locally.
+ */
 #define DEFAULT_SALT        "NaCl4Life"  /* Salt for hashing, also a chemistry pun */
 
 /* Alternative fun passwords for reference:
@@ -137,37 +139,16 @@ static int count_users(database_t *db) {
     return count;
 }
 
-static result_t create_default_admin(database_t *db) {
-    char hash[AUTH_MAX_HASH];
-    auth_hash_password(DEFAULT_PASSWORD, DEFAULT_SALT, hash);
-
-    const char *sql =
-        "INSERT INTO users (username, password_hash, role, enabled, created_at) "
-        "VALUES (?, ?, ?, 1, ?);";
-
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        LOG_ERROR("Failed to prepare default admin insert");
-        return RESULT_ERROR;
-    }
-
-    sqlite3_bind_text(stmt, 1, DEFAULT_USERNAME, -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, hash, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 3, AUTH_ROLE_ADMIN);
-    sqlite3_bind_int64(stmt, 4, time(NULL));
-
-    result_t result = RESULT_OK;
-    if (sqlite3_step(stmt) != SQLITE_DONE) {
-        LOG_ERROR("Failed to create default admin user");
-        result = RESULT_ERROR;
-    } else {
-        LOG_INFO("Created default admin user: %s / %s", DEFAULT_USERNAME, DEFAULT_PASSWORD);
-        LOG_INFO("  (Hint: H2O + Oh Yeah! = %s)", DEFAULT_PASSWORD);
-    }
-
-    sqlite3_finalize(stmt);
-    return result;
-}
+/*
+ * SECURITY NOTE: Default admin creation has been removed.
+ *
+ * The default user ("admin") exists in the Controller's database
+ * and is synced to RTUs via PROFINET. The RTU no longer creates
+ * a hardcoded local admin account.
+ *
+ * This eliminates the backdoor password vulnerability and ensures
+ * the Controller is the single source of truth for credentials.
+ */
 
 /* ============================================================================
  * Authentication API Implementation
@@ -176,33 +157,54 @@ static result_t create_default_admin(database_t *db) {
 result_t auth_init(database_t *db) {
     CHECK_NULL(db);
 
-    /* Ensure users table exists */
+    /* Ensure users table exists (for local user management via TUI) */
     if (ensure_users_table(db) != RESULT_OK) {
         return RESULT_ERROR;
     }
 
-    /* Create default admin if no users exist */
-    int user_count = count_users(db);
-    if (user_count == 0) {
-        LOG_INFO("No users found, creating default admin account...");
-        if (create_default_admin(db) != RESULT_OK) {
-            return RESULT_ERROR;
-        }
-    }
+    /*
+     * SECURITY: Do NOT create default admin locally.
+     *
+     * The default user ("admin") exists in the Controller's database
+     * and is synced to RTUs like any other user. The RTU should:
+     *
+     * 1. Start with empty user store on fresh install
+     * 2. Receive default user via first Controller sync
+     * 3. Persist synced users to NV memory
+     * 4. If no users available: DENY all authentication (fail-safe)
+     *
+     * This ensures the Controller remains the single source of truth
+     * for credentials and prevents hardcoded backdoor passwords.
+     */
+    int local_user_count = count_users(db);
 
     /* Initialize user sync for PROFINET-synced credentials */
     result_t r = user_sync_init();
     if (r != RESULT_OK) {
         LOG_WARNING("User sync initialization failed - synced users will not work");
         /* Non-fatal - continue with local auth only */
+    } else {
+        /* Try to load persisted users from NV storage */
+        result_t nv_result = user_sync_load_from_nv();
+        if (nv_result == RESULT_OK) {
+            LOG_INFO("User sync: Restored users from NV storage");
+        } else if (nv_result == RESULT_NOT_FOUND) {
+            LOG_INFO("User sync: No persisted users, awaiting controller sync");
+        }
     }
 
     /* Clear any existing session */
     memset(&g_auth_session, 0, sizeof(g_auth_session));
 
-    LOG_INFO("Authentication system initialized (%d local user(s), user_sync %s)",
-             user_count > 0 ? user_count : 1,
-             r == RESULT_OK ? "enabled" : "disabled");
+    /* Check if we have any authentication source available */
+    int synced_user_count = user_sync_get_user_count();
+    if (synced_user_count == 0 && local_user_count == 0) {
+        LOG_WARNING("No users available - awaiting controller sync. "
+                    "All authentication will be denied until sync received.");
+    }
+
+    LOG_INFO("Authentication system initialized (%d synced, %d local users)",
+             synced_user_count, local_user_count);
     return RESULT_OK;
 }
 
@@ -223,6 +225,19 @@ result_t auth_login(database_t *db, const char *username, const char *password) 
     CHECK_NULL(db);
     CHECK_NULL(username);
     CHECK_NULL(password);
+
+    /*
+     * SECURITY: Check if we're awaiting initial controller sync.
+     *
+     * If no users are available (synced or local), deny all authentication.
+     * This is fail-safe behavior - no hardcoded backdoor.
+     * TUI should display "Awaiting controller sync" message.
+     */
+    if (user_sync_awaiting_initial_sync() && count_users(db) == 0) {
+        LOG_WARNING("Auth denied for '%s': awaiting controller sync (no users available)",
+                    username);
+        return RESULT_NOT_FOUND;
+    }
 
     /*
      * Priority 1: Check synced users from PROFINET
@@ -370,6 +385,20 @@ bool auth_check_timeout(void) {
         return true;
     }
     return false;
+}
+
+bool auth_awaiting_controller_sync(database_t *db) {
+    /* Check if user sync is awaiting initial sync */
+    if (!user_sync_awaiting_initial_sync()) {
+        return false;  /* Have synced users */
+    }
+
+    /* Check if we have any local users */
+    if (db && count_users(db) > 0) {
+        return false;  /* Have local users */
+    }
+
+    return true;  /* No users at all - awaiting sync */
 }
 
 /* ============================================================================
