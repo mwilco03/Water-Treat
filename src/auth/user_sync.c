@@ -766,13 +766,17 @@ void user_sync_hash_with_salt(const char *password,
 
 bool user_sync_verify_hash_implementation(void) {
     /*
-     * Standard DJB2 test vectors:
-     * DJB2("") = 5381
-     * DJB2("a") = 177670 (0x2B606)
-     * DJB2("NaCl4Life") = 0x1A3C1FD7
+     * Verified DJB2 test vectors (confirmed with Controller team 2026-01-20):
      *
-     * Note: Some implementations may produce different values.
-     * The RTU and Controller MUST use the same algorithm.
+     * DJB2("")              = 0x00001505 (5381 decimal)
+     * DJB2("a")             = 0x0002B606 (177670 decimal)
+     * DJB2("NaCl4Life")     = 0x1A3C1FD7 (salt)
+     * DJB2("NaCl4Lifetest123") = 0xF82B0BED (salt+password)
+     *
+     * Test credential:
+     *   Username: test_user
+     *   Password: test123
+     *   Wire format: "DJB2:1A3C1FD7:F82B0BED"
      */
     bool pass = true;
 
@@ -788,25 +792,37 @@ bool user_sync_verify_hash_implementation(void) {
         pass = false;
     }
 
-    /* Test salt */
+    /* Test salt hash - must match controller exactly */
     uint32_t salt_hash = user_sync_djb2_hash(USER_SYNC_SALT);
+    if (salt_hash != 0x1A3C1FD7) {
+        LOG_ERROR("Hash verify: salt hash failed (got 0x%08X, expected 0x1A3C1FD7)", salt_hash);
+        pass = false;
+    }
     LOG_INFO("Hash verify: DJB2(\"%s\") = 0x%08X", USER_SYNC_SALT, salt_hash);
 
-    /* Verify full hash format */
+    /* Test password hash - verified with controller team */
+    uint32_t pass_hash;
+    user_sync_hash_with_salt("test123", NULL, &pass_hash);
+    if (pass_hash != 0xF82B0BED) {
+        LOG_ERROR("Hash verify: password hash failed (got 0x%08X, expected 0xF82B0BED)", pass_hash);
+        pass = false;
+    }
+
+    /* Verify full wire format */
     char hash_str[USER_SYNC_MAX_HASH];
     user_sync_hash_password("test123", hash_str);
     LOG_INFO("Hash verify: test password hash = %s", hash_str);
 
-    /* Check format is correct */
-    if (strncmp(hash_str, "DJB2:", 5) != 0) {
-        LOG_ERROR("Hash verify: wrong format prefix");
+    /* Check format matches expected wire format exactly */
+    if (strcmp(hash_str, "DJB2:1A3C1FD7:F82B0BED") != 0) {
+        LOG_ERROR("Hash verify: wire format mismatch (got %s)", hash_str);
         pass = false;
     }
 
     if (pass) {
-        LOG_INFO("Hash verify: PASSED - implementation is correct");
+        LOG_INFO("Hash verify: PASSED - RTU/Controller hash algorithms match");
     } else {
-        LOG_ERROR("Hash verify: FAILED - check DJB2 implementation");
+        LOG_ERROR("Hash verify: FAILED - hash mismatch with controller");
     }
 
     return pass;
