@@ -215,11 +215,14 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     // Product name
     strncpy(g_pn.pnet_cfg.product_name, config->product_name, sizeof(g_pn.pnet_cfg.product_name) - 1);
 
-    // Timing
+    // Timing - tick_us MUST match our tick thread interval
+    g_pn.pnet_cfg.tick_us = PROFINET_TICK_INTERVAL_US;
     g_pn.pnet_cfg.min_device_interval = config->min_device_interval;
 
     // Physical ports - REQUIRED by p-net
     g_pn.pnet_cfg.num_physical_ports = 1;
+    // Note: physical_ports[0].netif_name is set in profinet_manager_start()
+    // after we know the interface name
 
     // Callbacks
     g_pn.pnet_cfg.state_cb = profinet_state_callback;
@@ -524,6 +527,10 @@ result_t profinet_manager_start(const char *interface) {
         }
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
+
+    // Configure physical port (single port device - same as main interface)
+    g_pn.pnet_cfg.if_cfg.physical_ports[0].netif_name = g_netif_name;
+    g_pn.pnet_cfg.if_cfg.physical_ports[0].default_mau_type = 0x0010; // 100Mbit copper full-duplex
 
     // Configure IP settings from interface
     if (!configure_pnet_ip(g_netif_name, &g_pn.pnet_cfg)) {
