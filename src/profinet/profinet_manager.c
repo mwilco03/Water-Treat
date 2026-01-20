@@ -489,11 +489,15 @@ static bool configure_pnet_ip(const char *iface, pnet_cfg_t *cfg) {
     freeifaddrs(ifaddr);
 
     if (!found) {
-        LOG_ERROR("Interface '%s' has no IPv4 address configured", iface);
-        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
-                 "Interface '%s' has no IPv4 address. Check 'ip addr show %s'",
-                 iface, iface);
-        return false;
+        /*
+         * No IP configured - this is OK for PROFINET DCP discover-first pattern.
+         * The RTU will start with 0.0.0.0 and receive its IP from the Controller
+         * via DCP Set IP Request. This is the normal commissioning flow.
+         */
+        LOG_INFO("Interface '%s' has no IPv4 address - waiting for DCP assignment", iface);
+        memset(&cfg->if_cfg.ip_cfg.ip_addr, 0, sizeof(cfg->if_cfg.ip_cfg.ip_addr));
+        memset(&cfg->if_cfg.ip_cfg.ip_mask, 0, sizeof(cfg->if_cfg.ip_cfg.ip_mask));
+        memset(&cfg->if_cfg.ip_cfg.ip_gateway, 0, sizeof(cfg->if_cfg.ip_cfg.ip_gateway));
     }
 
     return true;
