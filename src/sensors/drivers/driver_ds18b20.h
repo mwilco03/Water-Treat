@@ -13,7 +13,6 @@ typedef struct {
 
 result_t ds18b20_init(ds18b20_t *dev, const char *device_id);
 result_t ds18b20_read(ds18b20_t *dev, float *temperature);
-result_t ds18b20_list_devices(char ***device_ids, int *count);
 void ds18b20_close(ds18b20_t *dev);
 
 /* Driver interface wrapper */

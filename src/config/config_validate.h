@@ -16,10 +16,12 @@ typedef enum {
     CONFIG_WARN_PROFINET_DISABLED    = (1 << 2),
     CONFIG_WARN_NO_SENSORS           = (1 << 3),
     CONFIG_WARN_HEALTH_DISABLED      = (1 << 4),
+    CONFIG_WARN_WATCHDOG_TIMING      = (1 << 5),
     CONFIG_ERROR_INVALID_PORT        = (1 << 8),
     CONFIG_ERROR_INVALID_INTERVAL    = (1 << 9),
     CONFIG_ERROR_MISSING_INTERFACE   = (1 << 10),
     CONFIG_ERROR_INVALID_DB_PATH     = (1 << 11),
+    CONFIG_ERROR_INVALID_WATCHDOG    = (1 << 12),
 } config_validation_flags_t;
 
 /* Validation result structure */

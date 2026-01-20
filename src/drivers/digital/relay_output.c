@@ -81,17 +81,18 @@ static result_t gpio_set_output(int pin, bool value) {
 }
 
 static result_t gpio_set_pwm(int pin, float duty_cycle, int frequency_hz) {
-    // PWM is platform-specific
-    // On Raspberry Pi, use hardware PWM or pigpio
-    // This is a placeholder that falls back to on/off
-
+    /*
+     * PWM is platform-specific (hardware PWM or pigpio required).
+     * This fallback converts PWM to simple on/off based on 50% threshold.
+     * Log the conversion so operators know their PWM request was degraded.
+     */
     UNUSED(frequency_hz);
 
-    if (duty_cycle > 0.5f) {
-        return gpio_set_output(pin, true);
-    } else {
-        return gpio_set_output(pin, false);
-    }
+    bool output_state = (duty_cycle > 0.5f);
+    LOG_WARNING("PWM not supported on GPIO %d - requested %.1f%% duty cycle, output set to %s",
+                pin, duty_cycle * 100.0f, output_state ? "ON" : "OFF");
+
+    return gpio_set_output(pin, output_state);
 }
 
 /* ============================================================================

@@ -504,16 +504,27 @@ result_t profinet_manager_start(const char *interface) {
 
 #ifdef HAVE_PNET
     // Set network interface (use static buffer since if_cfg expects const char *)
+    bool use_configured = false;
     if (interface && interface[0] != '\0') {
-        strncpy(g_netif_name, interface, sizeof(g_netif_name) - 1);
-        g_netif_name[sizeof(g_netif_name) - 1] = '\0';
-        LOG_INFO("PROFINET using configured interface: %s", g_netif_name);
-    } else {
+        // Check if configured interface exists before using it
+        char sysfs_path[128];
+        snprintf(sysfs_path, sizeof(sysfs_path), "/sys/class/net/%s", interface);
+        if (access(sysfs_path, F_OK) == 0) {
+            strncpy(g_netif_name, interface, sizeof(g_netif_name) - 1);
+            g_netif_name[sizeof(g_netif_name) - 1] = '\0';
+            LOG_INFO("PROFINET using configured interface: %s", g_netif_name);
+            use_configured = true;
+        } else {
+            LOG_WARNING("Configured interface '%s' does not exist, trying auto-detection", interface);
+        }
+    }
+
+    if (!use_configured) {
         // Auto-detect network interface
         if (detect_network_interface(g_netif_name, sizeof(g_netif_name))) {
             LOG_INFO("PROFINET auto-detected interface: %s", g_netif_name);
         } else {
-            // Last resort fallback
+            // Last resort fallback - only if nothing else works
             strncpy(g_netif_name, "eth0", sizeof(g_netif_name) - 1);
             LOG_WARNING("Could not auto-detect network interface, falling back to 'eth0'. "
                         "Set [network] interface in config file if this is incorrect.");
@@ -753,15 +764,24 @@ result_t profinet_manager_set_callbacks(profinet_connect_cb_t on_connect,
 }
 
 profinet_state_t profinet_manager_get_state(void) {
-    return g_pn.state;
+    pthread_mutex_lock(&g_pn.mutex);
+    profinet_state_t state = g_pn.state;
+    pthread_mutex_unlock(&g_pn.mutex);
+    return state;
 }
 
 bool profinet_manager_is_connected(void) {
-    return g_pn.connected;
+    pthread_mutex_lock(&g_pn.mutex);
+    bool connected = g_pn.connected;
+    pthread_mutex_unlock(&g_pn.mutex);
+    return connected;
 }
 
 bool profinet_manager_is_running(void) {
-    return g_pn.running;
+    pthread_mutex_lock(&g_pn.mutex);
+    bool running = g_pn.running;
+    pthread_mutex_unlock(&g_pn.mutex);
+    return running;
 }
 
 result_t profinet_manager_get_stats(profinet_stats_t *stats) {
