@@ -108,6 +108,7 @@ set(SOURCES_SUBSYSTEMS
     src/profinet/profinet_callbacks.c
     src/profinet/controller_discovery.c
     src/profinet/rtu_registration.c
+    src/profinet/config_sync.c
     src/health/health_check.c
 )
 

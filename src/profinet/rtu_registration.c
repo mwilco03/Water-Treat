@@ -266,9 +266,9 @@ static result_t do_http_registration(const char *controller_ip) {
         return RESULT_ERROR;
     }
 
-    /* Build URL */
+    /* Build URL - Controller REST API on port 8000 */
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:8080/api/v1/rtu/register", controller_ip);
+    snprintf(url, sizeof(url), "http://%s:8000/api/v1/rtu/register", controller_ip);
 
     /* Build JSON payload */
     char *json = build_registration_json();

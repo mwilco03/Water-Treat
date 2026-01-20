@@ -13,6 +13,7 @@
 #include "profinet_callbacks.h"
 #include "profinet_manager.h"
 #include "rtu_registration.h"
+#include "config_sync.h"
 #include "auth/user_sync.h"
 #include "utils/logger.h"
 #include <string.h>
@@ -263,21 +264,48 @@ int profinet_write_callback(pnet_t *net, void *arg,
             return 0;
 
         case RTU_CONFIG_PROFINET_INDEX: /* 0xF841 */
-            LOG_INFO("Received device config packet: %u bytes (not yet implemented)",
-                     write_length);
-            /* TODO: Implement device configuration sync */
+            LOG_INFO("Received device config packet: %u bytes", write_length);
+            {
+                result_t r = config_sync_process_device(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("Device config processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+            }
             return 0;
 
         case RTU_SENSOR_CONFIG_PROFINET_INDEX: /* 0xF842 */
-            LOG_INFO("Received sensor config packet: %u bytes (not yet implemented)",
-                     write_length);
-            /* TODO: Implement sensor configuration sync */
+            LOG_INFO("Received sensor config packet: %u bytes", write_length);
+            {
+                result_t r = config_sync_process_sensors(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("Sensor config processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+            }
             return 0;
 
         case RTU_ACTUATOR_CONFIG_PROFINET_INDEX: /* 0xF843 */
-            LOG_INFO("Received actuator config packet: %u bytes (not yet implemented)",
-                     write_length);
-            /* TODO: Implement actuator configuration sync */
+            LOG_INFO("Received actuator config packet: %u bytes", write_length);
+            {
+                result_t r = config_sync_process_actuators(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("Actuator config processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+            }
             return 0;
 
         default:
