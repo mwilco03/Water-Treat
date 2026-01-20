@@ -377,6 +377,125 @@ static bool detect_network_interface(char *buf, size_t buf_size) {
 }
 #endif
 
+#ifdef HAVE_PNET
+/**
+ * Get the default gateway from /proc/net/route
+ * Returns: gateway IP in network byte order, or 0 on failure
+ */
+static uint32_t get_default_gateway(const char *iface) {
+    FILE *fp = fopen("/proc/net/route", "r");
+    if (!fp) {
+        LOG_DEBUG("Cannot open /proc/net/route for gateway discovery");
+        return 0;
+    }
+
+    char line[256];
+    char route_iface[64];
+    uint32_t dest, gateway;
+
+    /* Skip header line */
+    if (!fgets(line, sizeof(line), fp)) {
+        fclose(fp);
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        if (sscanf(line, "%63s %x %x", route_iface, &dest, &gateway) == 3) {
+            /* Default route has destination 0.0.0.0 */
+            if (dest == 0 && (!iface || strcmp(route_iface, iface) == 0)) {
+                fclose(fp);
+                LOG_DEBUG("Found default gateway: %u.%u.%u.%u",
+                         gateway & 0xFF, (gateway >> 8) & 0xFF,
+                         (gateway >> 16) & 0xFF, (gateway >> 24) & 0xFF);
+                return gateway;  /* Already in network byte order from /proc */
+            }
+        }
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+/**
+ * Helper to convert in_addr to p-net's ip_addr format (a.b.c.d octets)
+ */
+static void in_addr_to_pnet_ip(struct in_addr addr, pnet_cfg_ip_addr_t *pnet_ip) {
+    uint32_t ip = ntohl(addr.s_addr);
+    pnet_ip->a = (ip >> 24) & 0xFF;
+    pnet_ip->b = (ip >> 16) & 0xFF;
+    pnet_ip->c = (ip >> 8) & 0xFF;
+    pnet_ip->d = ip & 0xFF;
+}
+
+/**
+ * Configure p-net IP settings from the network interface
+ *
+ * What: Reads IP address, netmask, and gateway from the interface
+ * Why: p-net requires complete IP configuration for DCP responses
+ *      Without this, pnet_init() may fail or DCP won't work
+ *
+ * Returns: true if configuration was successful, false otherwise
+ */
+static bool configure_pnet_ip(const char *iface, pnet_cfg_t *cfg) {
+    struct ifaddrs *ifaddr, *ifa;
+    bool found = false;
+
+    if (getifaddrs(&ifaddr) != 0) {
+        LOG_ERROR("getifaddrs() failed: %s", strerror(errno));
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Cannot enumerate network interfaces: %s", strerror(errno));
+        return false;
+    }
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr) continue;
+        if (strcmp(ifa->ifa_name, iface) != 0) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+        struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+        struct sockaddr_in *mask = (struct sockaddr_in *)ifa->ifa_netmask;
+
+        /* Set IP address using p-net's octet format */
+        in_addr_to_pnet_ip(addr->sin_addr, &cfg->if_cfg.ip_cfg.ip_addr);
+        LOG_INFO("PROFINET IP address: %s", inet_ntoa(addr->sin_addr));
+
+        /* Set netmask */
+        if (mask) {
+            in_addr_to_pnet_ip(mask->sin_addr, &cfg->if_cfg.ip_cfg.ip_mask);
+            LOG_INFO("PROFINET netmask: %s", inet_ntoa(mask->sin_addr));
+        }
+
+        /* Get gateway from routing table */
+        uint32_t gw = get_default_gateway(iface);
+        if (gw != 0) {
+            struct in_addr gw_addr;
+            gw_addr.s_addr = gw;
+            in_addr_to_pnet_ip(gw_addr, &cfg->if_cfg.ip_cfg.ip_gateway);
+            LOG_INFO("PROFINET gateway: %s", inet_ntoa(gw_addr));
+        } else {
+            /* No default gateway - use zeros (common for direct-connect networks) */
+            memset(&cfg->if_cfg.ip_cfg.ip_gateway, 0, sizeof(cfg->if_cfg.ip_cfg.ip_gateway));
+            LOG_DEBUG("No default gateway found for %s", iface);
+        }
+
+        found = true;
+        break;
+    }
+
+    freeifaddrs(ifaddr);
+
+    if (!found) {
+        LOG_ERROR("Interface '%s' has no IPv4 address configured", iface);
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Interface '%s' has no IPv4 address. Check 'ip addr show %s'",
+                 iface, iface);
+        return false;
+    }
+
+    return true;
+}
+#endif
+
 result_t profinet_manager_start(const char *interface) {
     if (!g_pn.initialized) return RESULT_NOT_INITIALIZED;
     if (g_pn.running) return RESULT_OK;
