@@ -206,7 +206,8 @@ static void raise_alarm(db_alarm_rule_t *rule, alarm_rule_state_t *state, float 
                     break;
                 case INTERLOCK_ACTION_PWM:
                     act_state = ACTUATOR_STATE_ON;
-                    /* pwm_duty already set from rule */
+                    /* Bounds check PWM duty from rule (database value) */
+                    if (pwm_duty > 100) pwm_duty = 100;
                     break;
                 default:
                     act_state = ACTUATOR_STATE_OFF;
@@ -310,6 +311,17 @@ static void check_rule(db_alarm_rule_t *rule, float current_value) {
     
     float range = fabsf(rule->threshold_high - rule->threshold_low);
     float hysteresis = range * rule->hysteresis_percent / 100.0f;
+
+    /*
+     * Enforce minimum hysteresis to prevent alarm hunting at threshold.
+     * Without this, a 0% hysteresis or very narrow range could cause
+     * rapid alarm on/off cycling due to sensor noise.
+     * Minimum is 1% of range or 0.1 absolute, whichever is greater.
+     */
+    float min_hysteresis = (range > 10.0f) ? (range * 0.01f) : 0.1f;
+    if (hysteresis < min_hysteresis) {
+        hysteresis = min_hysteresis;
+    }
     
     if (state->in_alarm) {
         if (rule->auto_clear && check_clear_condition(rule, current_value, hysteresis)) {

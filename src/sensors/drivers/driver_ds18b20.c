@@ -155,10 +155,20 @@ result_t ds18b20_list_devices(char ***device_ids, int *count) {
     while ((entry = readdir(dir)) != NULL && idx < num_devices) {
         if (strncmp(entry->d_name, DS18B20_FAMILY_CODE, 2) == 0) {
             (*device_ids)[idx] = strdup(entry->d_name);
+            if (!(*device_ids)[idx]) {
+                /* Clean up already allocated IDs on failure */
+                for (int i = 0; i < idx; i++) {
+                    free((*device_ids)[i]);
+                }
+                free(*device_ids);
+                *device_ids = NULL;
+                closedir(dir);
+                return RESULT_NO_MEMORY;
+            }
             idx++;
         }
     }
-    
+
     closedir(dir);
     *count = idx;
     return RESULT_OK;

@@ -780,15 +780,24 @@ result_t profinet_manager_set_callbacks(profinet_connect_cb_t on_connect,
 }
 
 profinet_state_t profinet_manager_get_state(void) {
-    return g_pn.state;
+    pthread_mutex_lock(&g_pn.mutex);
+    profinet_state_t state = g_pn.state;
+    pthread_mutex_unlock(&g_pn.mutex);
+    return state;
 }
 
 bool profinet_manager_is_connected(void) {
-    return g_pn.connected;
+    pthread_mutex_lock(&g_pn.mutex);
+    bool connected = g_pn.connected;
+    pthread_mutex_unlock(&g_pn.mutex);
+    return connected;
 }
 
 bool profinet_manager_is_running(void) {
-    return g_pn.running;
+    pthread_mutex_lock(&g_pn.mutex);
+    bool running = g_pn.running;
+    pthread_mutex_unlock(&g_pn.mutex);
+    return running;
 }
 
 result_t profinet_manager_get_stats(profinet_stats_t *stats) {
