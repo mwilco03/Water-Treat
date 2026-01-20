@@ -33,7 +33,7 @@
 
 /**
  * Device configuration packet from controller
- * Total size: 1+1+2+4+32+2+2+1+4 = 49 bytes
+ * Total size: 1+1+2+4+32+2+2+1+1+4 = 50 bytes (per controller spec)
  */
 typedef struct __attribute__((packed)) {
     uint8_t  version;                           /**< Protocol version (1) */
@@ -44,6 +44,7 @@ typedef struct __attribute__((packed)) {
     uint16_t sensor_count;                      /**< Expected sensor count */
     uint16_t actuator_count;                    /**< Expected actuator count */
     uint8_t  authority_mode;                    /**< Authority: 0=autonomous, 1=supervised */
+    uint8_t  reserved;                          /**< Reserved for alignment */
     uint32_t watchdog_ms;                       /**< Watchdog timeout in ms */
 } config_sync_device_packet_t;
 
