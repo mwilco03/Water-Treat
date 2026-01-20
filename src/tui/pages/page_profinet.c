@@ -11,6 +11,7 @@
 #include "../dialogs/dialog_helpers.h"
 #include "profinet/profinet_manager.h"
 #include "profinet/controller_discovery.h"
+#include "profinet/rtu_registration.h"
 #include "sensors/sensor_manager.h"
 #include "actuators/actuator_manager.h"
 #include "db/db_modules.h"
@@ -438,13 +439,20 @@ static void edit_controller_config(void) {
 
     if (config_save_file(mgr, NULL) == RESULT_OK) {
         if (resolved_name[0]) {
-            tui_set_status("Controller set: %s (%s)", resolved_ip, resolved_name);
+            tui_set_status("Controller set: %s (%s) - registering...", resolved_ip, resolved_name);
         } else {
-            tui_set_status("Controller set: %s (name will auto-discover)", resolved_ip);
+            tui_set_status("Controller set: %s - registering...", resolved_ip);
         }
     } else {
         dialog_warning("Failed to save config file - changes may be lost on restart");
         tui_set_status("Controller set (save failed)");
+    }
+
+    /* Trigger registration with the new controller */
+    if (rtu_registration_trigger(resolved_ip) == RESULT_OK) {
+        LOG_INFO("Registration triggered for controller %s", resolved_ip);
+    } else {
+        LOG_WARNING("Failed to trigger registration for %s", resolved_ip);
     }
 }
 
