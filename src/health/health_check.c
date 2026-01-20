@@ -207,11 +207,12 @@ static void collect_health_snapshot(health_snapshot_t *snapshot) {
                                HEALTH_STATUS_UNKNOWN, "Sensor manager not running");
     }
 
-    /* Actuator status */
+    /* Actuator status - use thread-safe accessors */
     extern actuator_manager_t g_actuator_mgr;  /* From main.c */
-    if (g_actuator_mgr.initialized) {
-        snapshot->active_actuators = g_actuator_mgr.actuator_count;
-        if (g_actuator_mgr.degraded_mode) {
+    int actuator_count = actuator_manager_get_count(&g_actuator_mgr);
+    if (actuator_count >= 0) {  /* get_count returns 0 if not initialized */
+        snapshot->active_actuators = actuator_count;
+        if (actuator_manager_is_degraded(&g_actuator_mgr)) {
             update_subsystem_health(&snapshot->actuators, "actuators",
                                    HEALTH_STATUS_DEGRADED, "Operating in degraded mode");
         } else {

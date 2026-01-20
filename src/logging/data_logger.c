@@ -541,21 +541,34 @@ result_t data_logger_get_stats(data_logger_stats_t *stats) {
 
 result_t data_logger_set_remote(const char *url, const char *api_key) {
     pthread_mutex_lock(&g_logger.mutex);
-    
+
     if (g_logger.remote_url) free(g_logger.remote_url);
     if (g_logger.api_key) free(g_logger.api_key);
-    
+
     g_logger.remote_url = url ? strdup(url) : NULL;
     g_logger.api_key = api_key ? strdup(api_key) : NULL;
+
+    /* Check for allocation failure */
+    if ((url && !g_logger.remote_url) || (api_key && !g_logger.api_key)) {
+        LOG_ERROR("Failed to allocate remote URL or API key");
+        free(g_logger.remote_url);
+        free(g_logger.api_key);
+        g_logger.remote_url = NULL;
+        g_logger.api_key = NULL;
+        g_logger.remote_available = false;
+        pthread_mutex_unlock(&g_logger.mutex);
+        return RESULT_NO_MEMORY;
+    }
+
     g_logger.remote_available = (url && strlen(url) > 0);
     g_logger.remote_failures = 0;
-    
+
     pthread_mutex_unlock(&g_logger.mutex);
-    
-    LOG_INFO("Remote logging %s: %s", 
+
+    LOG_INFO("Remote logging %s: %s",
              g_logger.remote_available ? "enabled" : "disabled",
              url ? url : "(none)");
-    
+
     return RESULT_OK;
 }
 

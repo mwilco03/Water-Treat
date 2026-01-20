@@ -329,11 +329,13 @@ int table_add_row(table_t *table) {
 
 void table_set_cell(table_t *table, int row, int col, const char *value) {
     if (!table || row < 0 || row >= table->row_count || col < 0 || col >= table->columns) return;
-    
+
     if (table->rows[row].cells[col]) {
         free(table->rows[row].cells[col]);
     }
     table->rows[row].cells[col] = strdup(value ? value : "");
+    /* Note: strdup may return NULL on allocation failure.
+     * The table rendering handles NULL cells gracefully. */
 }
 
 void table_set_row_color(table_t *table, int row, int color) {

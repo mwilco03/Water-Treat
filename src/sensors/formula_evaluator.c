@@ -43,6 +43,11 @@ result_t formula_evaluator_init(formula_evaluator_t *eval,
     // Copy variable names
     for (int i = 0; i < variable_count; i++) {
         eval->variable_names[i] = strdup(variable_names[i]);
+        if (!eval->variable_names[i]) {
+            LOG_ERROR("Failed to allocate variable name");
+            formula_evaluator_destroy(eval);
+            return RESULT_NO_MEMORY;
+        }
     }
 
     // Build te_variable array for TinyExpr
@@ -142,6 +147,11 @@ result_t formula_evaluator_init(formula_evaluator_t *eval,
 
     for (int i = 0; i < variable_count; i++) {
         eval->variable_names[i] = strdup(variable_names[i]);
+        if (!eval->variable_names[i]) {
+            LOG_ERROR("Failed to allocate variable name");
+            formula_evaluator_destroy(eval);
+            return RESULT_NO_MEMORY;
+        }
     }
 
     LOG_INFO("Formula evaluator initialized (simple mode): %s", formula);

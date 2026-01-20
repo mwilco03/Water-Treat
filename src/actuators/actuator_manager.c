@@ -567,13 +567,15 @@ result_t actuator_manager_handle_output(actuator_manager_t *mgr,
             return RESULT_INVALID_PARAM;
     }
 
-    // Check for minimum cycle time
+    // Check for minimum cycle time (debounce/anti-chatter)
     if (act->config.min_cycle_time_ms > 0) {
         uint64_t elapsed = get_time_ms() - act->last_state_change_ms;
         if (elapsed < (uint64_t)act->config.min_cycle_time_ms) {
+            uint64_t remaining = act->config.min_cycle_time_ms - elapsed;
             pthread_mutex_unlock(&mgr->mutex);
-            LOG_DEBUG("Actuator %s cycle too fast, ignoring", act->config.name);
-            return RESULT_OK;
+            LOG_INFO("Actuator %s: command rejected (cycle time %lums, need %lums more)",
+                     act->config.name, (unsigned long)elapsed, (unsigned long)remaining);
+            return RESULT_BUSY;  /* Explicit rejection, not silent success */
         }
     }
 

@@ -86,6 +86,34 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
         add_message(result, "ERROR: Health update interval must be 1-3600 seconds");
     }
 
+    /* Validate watchdog timing parameters */
+    if (config->watchdog.command_timeout_ms < 1000) {
+        result->flags |= CONFIG_ERROR_INVALID_WATCHDOG;
+        result->error_count++;
+        add_message(result, "ERROR: command_timeout_ms too small (min 1000ms)");
+    } else if (config->watchdog.command_timeout_ms > 60000) {
+        result->flags |= CONFIG_ERROR_INVALID_WATCHDOG;
+        result->error_count++;
+        add_message(result, "ERROR: command_timeout_ms too large (max 60000ms)");
+    }
+
+    if (config->watchdog.watchdog_interval_ms < 100) {
+        result->flags |= CONFIG_ERROR_INVALID_WATCHDOG;
+        result->error_count++;
+        add_message(result, "ERROR: watchdog_interval_ms too small (min 100ms)");
+    } else if (config->watchdog.watchdog_interval_ms > config->watchdog.command_timeout_ms / 2) {
+        /* Watchdog should run at least twice before timeout to catch issues */
+        result->flags |= CONFIG_WARN_WATCHDOG_TIMING;
+        result->warning_count++;
+        add_message(result, "WARNING: watchdog_interval_ms should be <= command_timeout_ms/2");
+    }
+
+    if (config->watchdog.degraded_alarm_delay_ms > config->watchdog.command_timeout_ms) {
+        result->flags |= CONFIG_WARN_WATCHDOG_TIMING;
+        result->warning_count++;
+        add_message(result, "WARNING: degraded_alarm_delay_ms > command_timeout_ms may delay alerts");
+    }
+
     /* Validate network interface */
     if (strlen(config->network.interface) == 0) {
         result->flags |= CONFIG_ERROR_MISSING_INTERFACE;
