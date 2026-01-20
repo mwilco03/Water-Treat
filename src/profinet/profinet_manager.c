@@ -12,10 +12,13 @@
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>      /* errno, strerror for error reporting */
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
 #include <net/if.h>     /* IFF_UP, IFF_RUNNING for interface detection */
 #include <ifaddrs.h>    /* getifaddrs, freeifaddrs for IP configuration */
+#include <sys/socket.h> /* socket, AF_PACKET for raw socket test */
+#include <linux/if_packet.h> /* SOCK_RAW for PROFINET */
 
 #define PROFINET_TICK_INTERVAL_US   1000
 #define MAX_PROFINET_SLOTS          64
@@ -540,7 +543,89 @@ result_t profinet_manager_start(const char *interface) {
         return RESULT_ERROR;
     }
 
-    // Log configuration before pnet_init() for debugging
+    // =========================================================================
+    // PRE-VALIDATION: Check all conditions BEFORE calling pnet_init()
+    // This avoids guessing why pnet_init() failed - we know the exact cause.
+    // =========================================================================
+
+    // 1. Verify interface exists
+    char sysfs_path[128];
+    snprintf(sysfs_path, sizeof(sysfs_path), "/sys/class/net/%s", g_netif_name);
+    if (access(sysfs_path, F_OK) != 0) {
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Interface '%s' does not exist", g_netif_name);
+        LOG_ERROR("PROFINET: Interface '%s' not found in /sys/class/net/", g_netif_name);
+        LOG_ERROR("Available interfaces: run 'ls /sys/class/net/'");
+        return RESULT_ERROR;
+    }
+
+    // 2. Verify interface is UP
+    char operstate_path[160];
+    snprintf(operstate_path, sizeof(operstate_path), "/sys/class/net/%s/operstate", g_netif_name);
+    FILE *opf = fopen(operstate_path, "r");
+    if (opf) {
+        char state[32] = {0};
+        if (fgets(state, sizeof(state), opf)) {
+            state[strcspn(state, "\n")] = '\0';
+            if (strcmp(state, "up") != 0 && strcmp(state, "unknown") != 0) {
+                LOG_WARNING("PROFINET: Interface '%s' operstate is '%s' (expected 'up')",
+                            g_netif_name, state);
+            }
+        }
+        fclose(opf);
+    }
+
+    // 3. Verify interface has valid MAC address
+    char mac_path[160];
+    snprintf(mac_path, sizeof(mac_path), "/sys/class/net/%s/address", g_netif_name);
+    FILE *macf = fopen(mac_path, "r");
+    if (macf) {
+        char mac[32] = {0};
+        if (fgets(mac, sizeof(mac), macf)) {
+            mac[strcspn(mac, "\n")] = '\0';
+            if (strcmp(mac, "00:00:00:00:00:00") == 0) {
+                snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                         "Interface '%s' has null MAC address", g_netif_name);
+                LOG_ERROR("PROFINET: Interface '%s' has all-zero MAC address", g_netif_name);
+                fclose(macf);
+                return RESULT_ERROR;
+            }
+            LOG_DEBUG("PROFINET: Interface '%s' MAC: %s", g_netif_name, mac);
+        }
+        fclose(macf);
+    }
+
+    // 4. Verify raw socket can be created (tests permissions)
+    int test_sock = socket(AF_PACKET, SOCK_RAW, htons(0x8892));
+    if (test_sock < 0) {
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Cannot create raw socket: %s (need root or CAP_NET_RAW)", strerror(errno));
+        LOG_ERROR("PROFINET: Cannot create raw socket: %s", strerror(errno));
+        LOG_ERROR("Fix: run as root OR: sudo setcap cap_net_raw+ep ./water-treat");
+        return RESULT_ERROR;
+    }
+    close(test_sock);
+    LOG_DEBUG("PROFINET: Raw socket test passed");
+
+    // 5. Verify p-net config fields are set
+    if (g_pn.pnet_cfg.tick_us == 0) {
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error), "pnet_cfg.tick_us is 0 (internal error)");
+        LOG_ERROR("PROFINET: tick_us not configured (internal error)");
+        return RESULT_ERROR;
+    }
+    if (g_pn.pnet_cfg.num_physical_ports == 0) {
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error), "pnet_cfg.num_physical_ports is 0 (internal error)");
+        LOG_ERROR("PROFINET: num_physical_ports not configured (internal error)");
+        return RESULT_ERROR;
+    }
+    if (!g_pn.pnet_cfg.if_cfg.physical_ports[0].netif_name ||
+        g_pn.pnet_cfg.if_cfg.physical_ports[0].netif_name[0] == '\0') {
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error), "physical_ports[0].netif_name not set (internal error)");
+        LOG_ERROR("PROFINET: physical_ports[0].netif_name not configured (internal error)");
+        return RESULT_ERROR;
+    }
+
+    // Log validated configuration
     LOG_DEBUG("pnet_init() config: interface=%s, station=%s, vendor=0x%02X%02X, device=0x%02X%02X",
               g_pn.pnet_cfg.if_cfg.main_netif_name,
               g_pn.pnet_cfg.station_name,
@@ -553,18 +638,22 @@ result_t profinet_manager_start(const char *interface) {
               g_pn.pnet_cfg.if_cfg.ip_cfg.ip_mask.c, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_mask.d,
               g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.a, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.b,
               g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.c, g_pn.pnet_cfg.if_cfg.ip_cfg.ip_gateway.d);
+    LOG_DEBUG("pnet_init() timing: tick_us=%u, num_ports=%u, port[0]=%s",
+              g_pn.pnet_cfg.tick_us, g_pn.pnet_cfg.num_physical_ports,
+              g_pn.pnet_cfg.if_cfg.physical_ports[0].netif_name);
 
-    // Initialize p-net
+    // Initialize p-net (all pre-conditions verified)
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
     if (!g_pn.pnet) {
+        // If we get here, all our pre-checks passed but p-net still failed.
+        // This indicates a p-net internal issue we couldn't pre-detect.
         snprintf(g_pn_init_error, sizeof(g_pn_init_error),
-                 "pnet_init() failed on '%s' (check permissions: needs CAP_NET_RAW or root)", g_netif_name);
+                 "pnet_init() failed after all pre-checks passed - check p-net library version/config");
         LOG_ERROR("pnet_init() failed on interface '%s'", g_netif_name);
-        LOG_ERROR("Possible causes:");
-        LOG_ERROR("  1. Interface '%s' does not exist (run: ip link show)", g_netif_name);
-        LOG_ERROR("  2. Insufficient permissions (run as root or: sudo setcap cap_net_raw+ep ./water-treat)");
-        LOG_ERROR("  3. Interface has no MAC address (run: ip link show %s)", g_netif_name);
-        LOG_ERROR("  4. p-net internal error (check p-net library logs if enabled)");
+        LOG_ERROR("All pre-validation checks passed. Possible causes:");
+        LOG_ERROR("  1. p-net library compiled with incompatible options");
+        LOG_ERROR("  2. Missing p-net configuration field not checked above");
+        LOG_ERROR("  3. Run 'strace water-treat' to see syscall failures");
         return RESULT_ERROR;
     }
     
