@@ -32,6 +32,7 @@
 #include <dirent.h>
 #include <pwd.h>
 #include <termios.h>
+#include <strings.h>    /* strcasecmp for headless detection */
 #include "auth/auth.h"
 
 #ifdef HAVE_SYSTEMD
