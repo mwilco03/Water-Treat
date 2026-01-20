@@ -198,26 +198,29 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     memcpy(&g_pn.config, config, sizeof(profinet_config_t));
     
     pthread_mutex_init(&g_pn.mutex, NULL);
-    
+
 #ifdef HAVE_PNET
     // Configure p-net
     memset(&g_pn.pnet_cfg, 0, sizeof(g_pn.pnet_cfg));
-    
+
     // Station name
     strncpy(g_pn.pnet_cfg.station_name, config->station_name, sizeof(g_pn.pnet_cfg.station_name) - 1);
-    
+
     // Device identity
     g_pn.pnet_cfg.device_id.vendor_id_hi = (config->vendor_id >> 8) & 0xFF;
     g_pn.pnet_cfg.device_id.vendor_id_lo = config->vendor_id & 0xFF;
     g_pn.pnet_cfg.device_id.device_id_hi = (config->device_id >> 8) & 0xFF;
     g_pn.pnet_cfg.device_id.device_id_lo = config->device_id & 0xFF;
-    
+
     // Product name
     strncpy(g_pn.pnet_cfg.product_name, config->product_name, sizeof(g_pn.pnet_cfg.product_name) - 1);
-    
+
     // Timing
     g_pn.pnet_cfg.min_device_interval = config->min_device_interval;
-    
+
+    // Physical ports - REQUIRED by p-net
+    g_pn.pnet_cfg.num_physical_ports = 1;
+
     // Callbacks
     g_pn.pnet_cfg.state_cb = profinet_state_callback;
     g_pn.pnet_cfg.connect_cb = profinet_connect_callback;
