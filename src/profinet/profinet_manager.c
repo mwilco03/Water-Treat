@@ -15,6 +15,7 @@
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
 #include <net/if.h>     /* IFF_UP, IFF_RUNNING for interface detection */
+#include <ifaddrs.h>    /* getifaddrs, freeifaddrs for IP configuration */
 
 #define PROFINET_TICK_INTERVAL_US   1000
 #define MAX_PROFINET_SLOTS          64
@@ -531,6 +532,12 @@ result_t profinet_manager_start(const char *interface) {
         }
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
+
+    // Configure IP settings from interface
+    if (!configure_pnet_ip(g_netif_name, &g_pn.pnet_cfg)) {
+        LOG_ERROR("Failed to configure IP settings for PROFINET");
+        return RESULT_ERROR;
+    }
 
     // Initialize p-net
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
