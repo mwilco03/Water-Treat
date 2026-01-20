@@ -121,59 +121,6 @@ result_t ds18b20_read(ds18b20_t *dev, float *temperature) {
     return RESULT_OK;
 }
 
-result_t ds18b20_list_devices(char ***device_ids, int *count) {
-    CHECK_NULL(device_ids);
-    CHECK_NULL(count);
-    
-    DIR *dir = opendir(W1_DEVICES_PATH);
-    if (!dir) return RESULT_IO_ERROR;
-    
-    // Count devices first
-    int num_devices = 0;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (strncmp(entry->d_name, DS18B20_FAMILY_CODE, 2) == 0) {
-            num_devices++;
-        }
-    }
-    
-    if (num_devices == 0) {
-        closedir(dir);
-        *device_ids = NULL;
-        *count = 0;
-        return RESULT_OK;
-    }
-    
-    *device_ids = calloc(num_devices, sizeof(char *));
-    if (!*device_ids) {
-        closedir(dir);
-        return RESULT_NO_MEMORY;
-    }
-    
-    rewinddir(dir);
-    int idx = 0;
-    while ((entry = readdir(dir)) != NULL && idx < num_devices) {
-        if (strncmp(entry->d_name, DS18B20_FAMILY_CODE, 2) == 0) {
-            (*device_ids)[idx] = strdup(entry->d_name);
-            if (!(*device_ids)[idx]) {
-                /* Clean up already allocated IDs on failure */
-                for (int i = 0; i < idx; i++) {
-                    free((*device_ids)[i]);
-                }
-                free(*device_ids);
-                *device_ids = NULL;
-                closedir(dir);
-                return RESULT_NO_MEMORY;
-            }
-            idx++;
-        }
-    }
-
-    closedir(dir);
-    *count = idx;
-    return RESULT_OK;
-}
-
 void ds18b20_close(ds18b20_t *dev) {
     if (dev) {
         dev->initialized = false;
