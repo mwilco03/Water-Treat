@@ -113,7 +113,7 @@ typedef struct __attribute__((packed)) {
 
 /**
  * Actuator configuration packet header
- * Size: 1+1+2 + entries * 21 bytes
+ * Size: 1+1+2 + entries * 22 bytes (per controller spec)
  */
 typedef struct __attribute__((packed)) {
     uint8_t version;                           /**< Protocol version (1) */
