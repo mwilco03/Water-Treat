@@ -85,8 +85,9 @@ static result_t resolve_controller_ip_from_network(char *ip_buf, size_t ip_buf_s
      * IP address       HW type     Flags       HW address            Mask     Device
      * 192.168.1.1      0x1         0x2         aa:bb:cc:dd:ee:ff     *        eth0
      *
-     * We look for entries on eth0/end0 that are not the gateway.
-     * In a PROFINET setup, the controller should be in the ARP cache.
+     * We look for entries on ethernet interfaces (eth*, end*, enp*) that are
+     * not the gateway. In a PROFINET setup, the controller should be in the
+     * ARP cache. Interface names are matched by prefix for board-agnosticism.
      */
     while (fgets(line, sizeof(line), f)) {
         char ip[16], hw[20], dev[16];

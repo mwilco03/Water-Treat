@@ -342,8 +342,8 @@ void config_get_defaults(app_config_t *c) {
     SAFE_STRNCPY(c->system.log_file,"/var/log/water-treat/monitor.log",sizeof(c->system.log_file));
     c->system.daemon_mode=false;
 
-    /* Network defaults */
-    SAFE_STRNCPY(c->network.interface,"eth0",sizeof(c->network.interface));
+    /* Network defaults - empty triggers auto-detection */
+    c->network.interface[0] = '\0';
     c->network.dhcp_enabled=true;
     /* ip_address, netmask, gateway left empty (DHCP) */
 

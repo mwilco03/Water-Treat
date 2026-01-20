@@ -520,10 +520,12 @@ result_t profinet_manager_start(const char *interface) {
         if (detect_network_interface(g_netif_name, sizeof(g_netif_name))) {
             LOG_INFO("PROFINET auto-detected interface: %s", g_netif_name);
         } else {
-            // Last resort fallback
-            strncpy(g_netif_name, "eth0", sizeof(g_netif_name) - 1);
-            LOG_WARNING("Could not auto-detect network interface, falling back to 'eth0'. "
-                        "Set [network] interface in config file if this is incorrect.");
+            // No interface found - fail with clear error
+            snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                     "No network interface found. Set [network] interface in config file.");
+            LOG_ERROR("Could not auto-detect network interface and none configured. "
+                      "Set [network] interface in /etc/water-treat/water-treat.conf");
+            return RESULT_ERROR;
         }
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
