@@ -67,6 +67,7 @@ set(SOURCES_CORE
     src/platform/board_detect.c
     src/platform/hw_discover.c
     src/auth/auth.c
+    src/auth/user_sync.c
 )
 
 # New unified driver architecture (following Linux IIO / Zephyr patterns)

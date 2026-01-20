@@ -1,10 +1,18 @@
 /**
  * @file profinet_callbacks.c
  * @brief PROFINET p-net stack callback implementations
+ *
+ * Handles all PROFINET stack callbacks including:
+ * - Connection management
+ * - Module/submodule configuration
+ * - Cyclic data exchange
+ * - Acyclic record read/write (including user sync)
+ * - Alarms and diagnostics
  */
 
 #include "profinet_callbacks.h"
 #include "profinet_manager.h"
+#include "auth/user_sync.h"
 #include "utils/logger.h"
 #include <string.h>
 #include <signal.h>
@@ -185,17 +193,48 @@ int profinet_write_callback(pnet_t *net, void *arg,
                             pnet_result_t *result) {
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(api);
     UNUSED(sequence_number); UNUSED(result);
-    
-    LOG_DEBUG("PROFINET write: slot=%u.%u, idx=0x%04X, len=%u", 
+
+    LOG_DEBUG("PROFINET write: slot=%u.%u, idx=0x%04X, len=%u",
               slot, subslot, idx, write_length);
-    
-    // Handle parameterization data
+
+    /*
+     * Handle user sync packets from controller
+     *
+     * The controller sends user credentials via PROFINET acyclic write
+     * at index USER_SYNC_PROFINET_INDEX (0x8100). This allows centralized
+     * user management with credentials synced to RTU for local authentication
+     * at field panels when controller is offline.
+     *
+     * Security: User sync uses DJB2 hashed passwords, not plaintext.
+     * The hash format is "DJB2:<salt_hash>:<password_hash>".
+     */
+    if (idx == USER_SYNC_PROFINET_INDEX) {
+        LOG_INFO("Received user sync packet: %u bytes", write_length);
+
+        result_t r = user_sync_process_packet(data, write_length);
+        if (r != RESULT_OK) {
+            LOG_ERROR("User sync packet processing failed: %d", r);
+            /* Return PROFINET application error code */
+            if (result) {
+                result->pnio_status.error_code = 0xCF;  /* Application error */
+                result->pnio_status.error_code_1 = 0x81; /* App read/write error */
+            }
+            return -1;
+        }
+
+        user_sync_status_t status;
+        user_sync_get_status(&status);
+        LOG_INFO("User sync complete: %u users stored, %u total syncs",
+                 status.users_stored, status.sync_count);
+        return 0;
+    }
+
+    /* Handle standard parameterization data */
     if (idx <= 0x7FFF) {
-        // Record data write
-        LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes", 
+        LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
                  slot, subslot, idx, write_length);
     }
-    
+
     return 0;
 }
 
@@ -386,8 +425,14 @@ int profinet_write_callback(void *net, void *arg, uint32_t arep, uint32_t api,
                             uint16_t slot, uint16_t subslot, uint16_t idx,
                             uint16_t seq, uint16_t len, const uint8_t *data, void *result) {
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(api);
-    UNUSED(slot); UNUSED(subslot); UNUSED(idx); UNUSED(seq);
-    UNUSED(len); UNUSED(data); UNUSED(result);
+    UNUSED(slot); UNUSED(subslot); UNUSED(seq); UNUSED(result);
+
+    /* Handle user sync even in stub mode (for testing) */
+    if (idx == USER_SYNC_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("User sync packet received (stub mode): %u bytes", len);
+        user_sync_process_packet(data, len);
+    }
+
     return 0;
 }
 

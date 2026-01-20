@@ -381,6 +381,7 @@ static bool detect_network_interface(char *buf, size_t buf_size) {
 }
 #endif
 
+#ifdef HAVE_PNET
 /**
  * Get the default gateway from /proc/net/route
  * Returns: gateway IP in network byte order, or 0 on failure
@@ -418,8 +419,6 @@ static uint32_t get_default_gateway(const char *iface) {
     fclose(fp);
     return 0;
 }
-
-#ifdef HAVE_PNET
 /**
  * Helper to convert in_addr to p-net's ip_addr format (a.b.c.d octets)
  */

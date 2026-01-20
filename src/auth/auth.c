@@ -1,9 +1,15 @@
 /**
  * @file auth.c
  * @brief Authentication and session management implementation
+ *
+ * Security Notes:
+ * - Password comparison uses constant-time algorithm to prevent timing attacks
+ * - Supports both local users (SQLite) and synced users (PROFINET)
+ * - Synced users have priority if user_sync module has valid credentials
  */
 
 #include "auth.h"
+#include "user_sync.h"
 #include "utils/logger.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,10 +59,40 @@ void auth_hash_password(const char *password, const char *salt, char *hash_out) 
     snprintf(hash_out, AUTH_MAX_HASH, "%016lx%016lx", hash1, hash2);
 }
 
+/**
+ * Constant-time string comparison to prevent timing attacks
+ *
+ * Always compares all bytes regardless of where mismatch occurs.
+ * This prevents attackers from determining hash values via timing analysis.
+ */
+static bool constant_time_compare(const char *a, const char *b, size_t len) {
+    if (!a || !b) return false;
+
+    volatile uint8_t result = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        result |= ((uint8_t)a[i] ^ (uint8_t)b[i]);
+    }
+
+    return result == 0;
+}
+
 static bool verify_password(const char *password, const char *stored_hash) {
     char computed_hash[AUTH_MAX_HASH];
     auth_hash_password(password, DEFAULT_SALT, computed_hash);
-    return (strcmp(computed_hash, stored_hash) == 0);
+
+    /* Use constant-time comparison to prevent timing attacks */
+    size_t computed_len = strlen(computed_hash);
+    size_t stored_len = strlen(stored_hash);
+
+    /* Ensure we compare the full length to avoid early termination */
+    size_t max_len = (computed_len > stored_len) ? computed_len : stored_len;
+    if (max_len > AUTH_MAX_HASH) max_len = AUTH_MAX_HASH;
+
+    /* Length mismatch is a failure, but still do full comparison */
+    bool length_match = (computed_len == stored_len);
+
+    return length_match && constant_time_compare(computed_hash, stored_hash, max_len);
 }
 
 /* ============================================================================
@@ -154,12 +190,33 @@ result_t auth_init(database_t *db) {
         }
     }
 
+    /* Initialize user sync for PROFINET-synced credentials */
+    result_t r = user_sync_init();
+    if (r != RESULT_OK) {
+        LOG_WARNING("User sync initialization failed - synced users will not work");
+        /* Non-fatal - continue with local auth only */
+    }
+
     /* Clear any existing session */
     memset(&g_auth_session, 0, sizeof(g_auth_session));
 
-    LOG_INFO("Authentication system initialized (%d user(s))",
-             user_count > 0 ? user_count : 1);
+    LOG_INFO("Authentication system initialized (%d local user(s), user_sync %s)",
+             user_count > 0 ? user_count : 1,
+             r == RESULT_OK ? "enabled" : "disabled");
     return RESULT_OK;
+}
+
+/**
+ * Convert user_sync_role_t to auth_role_t
+ */
+static auth_role_t convert_sync_role(user_sync_role_t sync_role) {
+    switch (sync_role) {
+        case USER_SYNC_ROLE_NONE:     return AUTH_ROLE_NONE;
+        case USER_SYNC_ROLE_VIEWER:   return AUTH_ROLE_VIEWER;
+        case USER_SYNC_ROLE_OPERATOR: return AUTH_ROLE_OPERATOR;
+        case USER_SYNC_ROLE_ADMIN:    return AUTH_ROLE_ADMIN;
+        default:                      return AUTH_ROLE_NONE;
+    }
 }
 
 result_t auth_login(database_t *db, const char *username, const char *password) {
@@ -167,6 +224,36 @@ result_t auth_login(database_t *db, const char *username, const char *password) 
     CHECK_NULL(username);
     CHECK_NULL(password);
 
+    /*
+     * Priority 1: Check synced users from PROFINET
+     * These are credentials pushed from the central SCADA controller.
+     * If user_sync has users, we authenticate against those first.
+     */
+    if (user_sync_has_users()) {
+        user_sync_role_t sync_role;
+        if (user_sync_authenticate(username, password, &sync_role)) {
+            /* Synced user authenticated successfully */
+            g_auth_session.authenticated = true;
+            g_auth_session.user.id = -1;  /* Negative ID indicates synced user */
+            SAFE_STRNCPY(g_auth_session.user.username, username,
+                         sizeof(g_auth_session.user.username));
+            g_auth_session.user.role = convert_sync_role(sync_role);
+            g_auth_session.user.enabled = true;
+            g_auth_session.login_time = time(NULL);
+            g_auth_session.last_activity = g_auth_session.login_time;
+
+            LOG_INFO("User '%s' logged in via synced credentials (role: %s)",
+                     username, auth_role_to_string(g_auth_session.user.role));
+            return RESULT_OK;
+        }
+        /* Synced user auth failed - continue to local database check */
+        LOG_DEBUG("Synced user auth failed for '%s', checking local database", username);
+    }
+
+    /*
+     * Priority 2: Check local database users
+     * These are users created directly on the RTU via TUI.
+     */
     const char *sql =
         "SELECT id, username, password_hash, role, enabled, created_at, "
         "       last_login, login_failures "
