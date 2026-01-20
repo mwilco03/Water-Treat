@@ -381,6 +381,7 @@ static bool detect_network_interface(char *buf, size_t buf_size) {
 }
 #endif
 
+#ifdef HAVE_PNET
 /**
  * Get the default gateway from /proc/net/route
  * Returns: gateway IP in network byte order, or 0 on failure
@@ -419,7 +420,6 @@ static uint32_t get_default_gateway(const char *iface) {
     return 0;
 }
 
-#ifdef HAVE_PNET
 /**
  * Helper to convert in_addr to p-net's ip_addr format (a.b.c.d octets)
  */
@@ -508,16 +508,27 @@ result_t profinet_manager_start(const char *interface) {
 
 #ifdef HAVE_PNET
     // Set network interface (use static buffer since if_cfg expects const char *)
+    bool use_configured = false;
     if (interface && interface[0] != '\0') {
-        strncpy(g_netif_name, interface, sizeof(g_netif_name) - 1);
-        g_netif_name[sizeof(g_netif_name) - 1] = '\0';
-        LOG_INFO("PROFINET using configured interface: %s", g_netif_name);
-    } else {
+        // Check if configured interface exists before using it
+        char sysfs_path[128];
+        snprintf(sysfs_path, sizeof(sysfs_path), "/sys/class/net/%s", interface);
+        if (access(sysfs_path, F_OK) == 0) {
+            strncpy(g_netif_name, interface, sizeof(g_netif_name) - 1);
+            g_netif_name[sizeof(g_netif_name) - 1] = '\0';
+            LOG_INFO("PROFINET using configured interface: %s", g_netif_name);
+            use_configured = true;
+        } else {
+            LOG_WARNING("Configured interface '%s' does not exist, trying auto-detection", interface);
+        }
+    }
+
+    if (!use_configured) {
         // Auto-detect network interface
         if (detect_network_interface(g_netif_name, sizeof(g_netif_name))) {
             LOG_INFO("PROFINET auto-detected interface: %s", g_netif_name);
         } else {
-            // Last resort fallback
+            // Last resort fallback - only if nothing else works
             strncpy(g_netif_name, "eth0", sizeof(g_netif_name) - 1);
             LOG_WARNING("Could not auto-detect network interface, falling back to 'eth0'. "
                         "Set [network] interface in config file if this is incorrect.");
