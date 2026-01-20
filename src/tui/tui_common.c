@@ -5,9 +5,11 @@
 
 #include "tui_common.h"
 #include "utils/logger.h"
+#include "common.h"
 #include <ncurses.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
 
 /* Shared context for all TUI pages */
 static struct {
@@ -277,13 +279,16 @@ int tui_get_string(WINDOW *win, int y, int x, char *buffer, int max_len, const c
 int tui_get_int(WINDOW *win, int y, int x, int *value, int min_val, int max_val) {
     char buffer[16];
     snprintf(buffer, sizeof(buffer), "%d", *value);
-    
+
     if (tui_get_string(win, y, x, buffer, sizeof(buffer), buffer)) {
-        int new_val = atoi(buffer);
-        if (new_val >= min_val && new_val <= max_val) {
+        int new_val;
+        /* Use safe parsing to reject malformed input like "10abc" */
+        if (safe_parse_int(buffer, &new_val, min_val, max_val) == RESULT_OK) {
             *value = new_val;
             return 1;
         }
+        /* Invalid input - beep to indicate rejection */
+        beep();
     }
     return 0;
 }
@@ -291,13 +296,16 @@ int tui_get_int(WINDOW *win, int y, int x, int *value, int min_val, int max_val)
 int tui_get_float(WINDOW *win, int y, int x, float *value, float min_val, float max_val) {
     char buffer[32];
     snprintf(buffer, sizeof(buffer), "%.4f", *value);
-    
+
     if (tui_get_string(win, y, x, buffer, sizeof(buffer), buffer)) {
-        float new_val = atof(buffer);
-        if (new_val >= min_val && new_val <= max_val) {
+        float new_val;
+        /* Use safe parsing to reject malformed input like "1.5xyz" */
+        if (safe_parse_float(buffer, &new_val, min_val, max_val) == RESULT_OK) {
             *value = new_val;
             return 1;
         }
+        /* Invalid input - beep to indicate rejection */
+        beep();
     }
     return 0;
 }
