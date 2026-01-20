@@ -539,12 +539,11 @@ result_t profinet_manager_start(const char *interface) {
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
     if (!g_pn.pnet) {
         snprintf(g_pn_init_error, sizeof(g_pn_init_error),
-                 "pnet_init() failed on interface '%s'. "
-                 "Verify: 1) Interface exists (ip link show), "
-                 "2) IP is configured (ip addr show %s), "
-                 "3) User has CAP_NET_RAW capability",
+                 "pnet_init() failed on '%s'. Run: ip addr show %s",
                  g_netif_name, g_netif_name);
-        LOG_ERROR("%s", g_pn_init_error);
+        LOG_ERROR("pnet_init() failed on interface '%s'. "
+                  "Verify: 1) Interface exists, 2) IP configured, 3) CAP_NET_RAW",
+                  g_netif_name);
         return RESULT_ERROR;
     }
     
