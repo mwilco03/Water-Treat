@@ -21,9 +21,16 @@ auth_session_t g_auth_session = {0};
 
 /* Default credentials - Water treatment puns! */
 /*
- * SECURITY: Default credentials removed - see auth_init() comment.
- * Default user is synced from Controller, not hardcoded locally.
+ * SECURITY NOTE: Default admin is a LOCAL FALLBACK for:
+ * - Field service/commissioning when controller unavailable
+ * - First boot before controller sync received
+ * - Recovery scenarios
+ *
+ * Priority: Synced users (from controller) > Local users (including default)
+ * Controller can override by syncing a different "admin" user.
  */
+#define DEFAULT_USERNAME    "admin"
+#define DEFAULT_PASSWORD    "H2OhYeah!"  /* H2O + Oh Yeah! */
 #define DEFAULT_SALT        "NaCl4Life"  /* Salt for hashing, also a chemistry pun */
 
 /* Alternative fun passwords for reference:
@@ -139,16 +146,42 @@ static int count_users(database_t *db) {
     return count;
 }
 
-/*
- * SECURITY NOTE: Default admin creation has been removed.
+/**
+ * Create default admin user for fallback access
  *
- * The default user ("admin") exists in the Controller's database
- * and is synced to RTUs via PROFINET. The RTU no longer creates
- * a hardcoded local admin account.
- *
- * This eliminates the backdoor password vulnerability and ensures
- * the Controller is the single source of truth for credentials.
+ * This ensures field service personnel can always access the RTU
+ * even when controller is offline. Synced users take priority.
  */
+static result_t create_default_admin(database_t *db) {
+    char hash[AUTH_MAX_HASH];
+    auth_hash_password(DEFAULT_PASSWORD, DEFAULT_SALT, hash);
+
+    const char *sql =
+        "INSERT INTO users (username, password_hash, role, enabled, created_at) "
+        "VALUES (?, ?, ?, 1, ?);";
+
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare default admin insert");
+        return RESULT_ERROR;
+    }
+
+    sqlite3_bind_text(stmt, 1, DEFAULT_USERNAME, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, hash, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, AUTH_ROLE_ADMIN);
+    sqlite3_bind_int64(stmt, 4, time(NULL));
+
+    result_t result = RESULT_OK;
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        LOG_ERROR("Failed to create default admin user");
+        result = RESULT_ERROR;
+    } else {
+        LOG_INFO("Created default admin user '%s' (local fallback)", DEFAULT_USERNAME);
+    }
+
+    sqlite3_finalize(stmt);
+    return result;
+}
 
 /* ============================================================================
  * Authentication API Implementation
@@ -163,20 +196,23 @@ result_t auth_init(database_t *db) {
     }
 
     /*
-     * SECURITY: Do NOT create default admin locally.
+     * Create default admin if no local users exist.
      *
-     * The default user ("admin") exists in the Controller's database
-     * and is synced to RTUs like any other user. The RTU should:
+     * This is a FALLBACK for field service access when controller is offline.
+     * Authentication priority: Synced users > Local users (including default)
      *
-     * 1. Start with empty user store on fresh install
-     * 2. Receive default user via first Controller sync
-     * 3. Persist synced users to NV memory
-     * 4. If no users available: DENY all authentication (fail-safe)
-     *
-     * This ensures the Controller remains the single source of truth
-     * for credentials and prevents hardcoded backdoor passwords.
+     * The controller can override by syncing an "admin" user with different
+     * credentials - synced users are always checked first.
      */
     int local_user_count = count_users(db);
+    if (local_user_count == 0) {
+        LOG_INFO("No local users found, creating default admin for fallback access");
+        if (create_default_admin(db) != RESULT_OK) {
+            LOG_ERROR("Failed to create default admin - local auth may not work");
+            /* Continue anyway - synced users may still work */
+        }
+        local_user_count = count_users(db);
+    }
 
     /* Initialize user sync for PROFINET-synced credentials */
     result_t r = user_sync_init();
@@ -225,19 +261,6 @@ result_t auth_login(database_t *db, const char *username, const char *password) 
     CHECK_NULL(db);
     CHECK_NULL(username);
     CHECK_NULL(password);
-
-    /*
-     * SECURITY: Check if we're awaiting initial controller sync.
-     *
-     * If no users are available (synced or local), deny all authentication.
-     * This is fail-safe behavior - no hardcoded backdoor.
-     * TUI should display "Awaiting controller sync" message.
-     */
-    if (user_sync_awaiting_initial_sync() && count_users(db) == 0) {
-        LOG_WARNING("Auth denied for '%s': awaiting controller sync (no users available)",
-                    username);
-        return RESULT_NOT_FOUND;
-    }
 
     /*
      * Priority 1: Check synced users from PROFINET
