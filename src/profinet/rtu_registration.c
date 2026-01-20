@@ -18,6 +18,7 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <arpa/inet.h>
+#include <ifaddrs.h>
 
 #if defined(HAVE_CURL) && defined(HAVE_CJSON)
 #include <curl/curl.h>
@@ -104,6 +105,9 @@ static void set_error(const char *msg) {
 
 /**
  * Get MAC address of primary network interface
+ *
+ * Dynamically enumerates interfaces - NEVER uses hardcoded interface names
+ * per board-agnostic development rules.
  */
 static result_t get_mac_address(char *mac_buf, size_t buf_size) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -111,26 +115,55 @@ static result_t get_mac_address(char *mac_buf, size_t buf_size) {
         return RESULT_ERROR;
     }
 
-    /* Try common interface names */
-    const char *interfaces[] = {"eth0", "end0", "enp0s3", "ens33", NULL};
+    /* Dynamically enumerate network interfaces */
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == -1) {
+        close(fd);
+        SAFE_STRNCPY(mac_buf, "00:00:00:00:00:00", buf_size);
+        return RESULT_ERROR;
+    }
 
-    for (int i = 0; interfaces[i] != NULL; i++) {
+    result_t result = RESULT_NOT_FOUND;
+
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_name == NULL) {
+            continue;
+        }
+
+        /* Skip loopback and non-up interfaces */
+        if (!(ifa->ifa_flags & IFF_UP)) {
+            continue;
+        }
+        if (ifa->ifa_flags & IFF_LOOPBACK) {
+            continue;
+        }
+
         struct ifreq ifr;
         memset(&ifr, 0, sizeof(ifr));
-        SAFE_STRNCPY(ifr.ifr_name, interfaces[i], IFNAMSIZ);
+        SAFE_STRNCPY(ifr.ifr_name, ifa->ifa_name, IFNAMSIZ);
 
         if (ioctl(fd, SIOCGIFHWADDR, &ifr) == 0) {
             unsigned char *mac = (unsigned char *)ifr.ifr_hwaddr.sa_data;
+            /* Skip null/zero MAC addresses */
+            if (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 &&
+                mac[3] == 0 && mac[4] == 0 && mac[5] == 0) {
+                continue;
+            }
             snprintf(mac_buf, buf_size, "%02x:%02x:%02x:%02x:%02x:%02x",
                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-            close(fd);
-            return RESULT_OK;
+            result = RESULT_OK;
+            break;
         }
     }
 
+    freeifaddrs(ifaddr);
     close(fd);
-    SAFE_STRNCPY(mac_buf, "00:00:00:00:00:00", buf_size);
-    return RESULT_NOT_FOUND;
+
+    if (result != RESULT_OK) {
+        SAFE_STRNCPY(mac_buf, "00:00:00:00:00:00", buf_size);
+    }
+
+    return result;
 }
 
 /**

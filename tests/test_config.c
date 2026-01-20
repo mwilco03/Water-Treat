@@ -135,13 +135,14 @@ void test_config_kv_parse(void) {
 void test_config_defaults(void) {
     /* These should match config.c defaults
      * Note: device_name and station_name are now auto-detected from MAC (rtu-XXXX format)
-     * Fallback is rtu-0000 if MAC detection fails */
-    char default_interface[] = "eth0";
+     * Fallback is rtu-0000 if MAC detection fails
+     * Note: interface is empty by default to trigger auto-detection (board-agnostic) */
+    char default_interface[] = "";  /* Empty triggers auto-detection */
     int default_vendor_id = 0x0493;
     int default_device_id = 0x0001;
     int default_log_interval = 60;
 
-    TEST_ASSERT_STR_EQ("eth0", default_interface);
+    TEST_ASSERT_STR_EQ("", default_interface);
     TEST_ASSERT_EQ(0x0493, default_vendor_id);
     TEST_ASSERT_EQ(0x0001, default_device_id);
     TEST_ASSERT_EQ(60, default_log_interval);

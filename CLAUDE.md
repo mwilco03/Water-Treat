@@ -46,3 +46,41 @@ This ensures centrally-managed users take precedence while maintaining local fal
 - Compile with `-Wall -Wextra -Werror` (zero warnings)
 - No dynamic allocation after init (static arrays only)
 - Must support cross-compilation for embedded targets
+
+## Board-Agnostic Development
+
+**CRITICAL**: This codebase must run on ANY supported hardware platform. Never hardcode hardware-specific values.
+
+### Network Interfaces
+
+**NEVER hardcode interface names** like `eth0`, `eno1`, `enp0s3`, etc.
+
+**Correct approach:**
+1. Use configured value from config file (`[network] interface`)
+2. If not configured, auto-detect using `detect_network_interface()`
+3. Store in runtime variable (e.g., `g_netif_name`)
+4. Reference that variable everywhere
+
+```c
+// WRONG - hardcoded
+cfg.if_cfg.physical_ports[0].netif_name = "eth0";
+
+// CORRECT - discovered/configured
+cfg.if_cfg.physical_ports[0].netif_name = g_netif_name;
+```
+
+### Other Hardware Resources
+
+- GPIO pins: Discover via `/sys/class/gpio` or device tree
+- I2C buses: Detect available buses, don't assume `/dev/i2c-1`
+- Serial ports: Use configured path or discover
+- Storage paths: Use configured paths from config file
+
+### API Documentation
+
+When integrating external libraries:
+1. **Always** read the actual API header on the target system
+2. Check required vs optional fields in configuration structures
+3. Don't guess based on generic documentation - verify against actual installed version
+4. Test on actual target hardware, not just development environment
+
