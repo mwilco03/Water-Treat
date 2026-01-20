@@ -105,7 +105,7 @@ No mechanism existed to receive user credentials from the controller via PROFINE
 **Remediation:**
 Added user sync handling in `profinet_write_callback()`:
 ```c
-if (idx == USER_SYNC_PROFINET_INDEX) {  // 0x8100
+if (idx == USER_SYNC_PROFINET_INDEX) {  // 0xF840
     result_t r = user_sync_process_packet(data, write_length);
     // ... error handling
 }

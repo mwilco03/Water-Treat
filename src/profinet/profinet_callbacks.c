@@ -201,7 +201,7 @@ int profinet_write_callback(pnet_t *net, void *arg,
      * Handle user sync packets from controller
      *
      * The controller sends user credentials via PROFINET acyclic write
-     * at index USER_SYNC_PROFINET_INDEX (0x8100). This allows centralized
+     * at index USER_SYNC_PROFINET_INDEX (0xF840). This allows centralized
      * user management with credentials synced to RTU for local authentication
      * at field panels when controller is offline.
      *
