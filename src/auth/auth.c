@@ -20,6 +20,15 @@
 auth_session_t g_auth_session = {0};
 
 /* Default credentials - Water treatment puns! */
+/*
+ * SECURITY NOTE: Default admin is a LOCAL FALLBACK for:
+ * - Field service/commissioning when controller unavailable
+ * - First boot before controller sync received
+ * - Recovery scenarios
+ *
+ * Priority: Synced users (from controller) > Local users (including default)
+ * Controller can override by syncing a different "admin" user.
+ */
 #define DEFAULT_USERNAME    "admin"
 #define DEFAULT_PASSWORD    "H2OhYeah!"  /* H2O + Oh Yeah! */
 #define DEFAULT_SALT        "NaCl4Life"  /* Salt for hashing, also a chemistry pun */
@@ -137,6 +146,12 @@ static int count_users(database_t *db) {
     return count;
 }
 
+/**
+ * Create default admin user for fallback access
+ *
+ * This ensures field service personnel can always access the RTU
+ * even when controller is offline. Synced users take priority.
+ */
 static result_t create_default_admin(database_t *db) {
     char hash[AUTH_MAX_HASH];
     auth_hash_password(DEFAULT_PASSWORD, DEFAULT_SALT, hash);
@@ -161,8 +176,7 @@ static result_t create_default_admin(database_t *db) {
         LOG_ERROR("Failed to create default admin user");
         result = RESULT_ERROR;
     } else {
-        LOG_INFO("Created default admin user: %s / %s", DEFAULT_USERNAME, DEFAULT_PASSWORD);
-        LOG_INFO("  (Hint: H2O + Oh Yeah! = %s)", DEFAULT_PASSWORD);
+        LOG_INFO("Created default admin user '%s' (local fallback)", DEFAULT_USERNAME);
     }
 
     sqlite3_finalize(stmt);
@@ -176,18 +190,28 @@ static result_t create_default_admin(database_t *db) {
 result_t auth_init(database_t *db) {
     CHECK_NULL(db);
 
-    /* Ensure users table exists */
+    /* Ensure users table exists (for local user management via TUI) */
     if (ensure_users_table(db) != RESULT_OK) {
         return RESULT_ERROR;
     }
 
-    /* Create default admin if no users exist */
-    int user_count = count_users(db);
-    if (user_count == 0) {
-        LOG_INFO("No users found, creating default admin account...");
+    /*
+     * Create default admin if no local users exist.
+     *
+     * This is a FALLBACK for field service access when controller is offline.
+     * Authentication priority: Synced users > Local users (including default)
+     *
+     * The controller can override by syncing an "admin" user with different
+     * credentials - synced users are always checked first.
+     */
+    int local_user_count = count_users(db);
+    if (local_user_count == 0) {
+        LOG_INFO("No local users found, creating default admin for fallback access");
         if (create_default_admin(db) != RESULT_OK) {
-            return RESULT_ERROR;
+            LOG_ERROR("Failed to create default admin - local auth may not work");
+            /* Continue anyway - synced users may still work */
         }
+        local_user_count = count_users(db);
     }
 
     /* Initialize user sync for PROFINET-synced credentials */
@@ -195,14 +219,28 @@ result_t auth_init(database_t *db) {
     if (r != RESULT_OK) {
         LOG_WARNING("User sync initialization failed - synced users will not work");
         /* Non-fatal - continue with local auth only */
+    } else {
+        /* Try to load persisted users from NV storage */
+        result_t nv_result = user_sync_load_from_nv();
+        if (nv_result == RESULT_OK) {
+            LOG_INFO("User sync: Restored users from NV storage");
+        } else if (nv_result == RESULT_NOT_FOUND) {
+            LOG_INFO("User sync: No persisted users, awaiting controller sync");
+        }
     }
 
     /* Clear any existing session */
     memset(&g_auth_session, 0, sizeof(g_auth_session));
 
-    LOG_INFO("Authentication system initialized (%d local user(s), user_sync %s)",
-             user_count > 0 ? user_count : 1,
-             r == RESULT_OK ? "enabled" : "disabled");
+    /* Check if we have any authentication source available */
+    int synced_user_count = user_sync_get_user_count();
+    if (synced_user_count == 0 && local_user_count == 0) {
+        LOG_WARNING("No users available - awaiting controller sync. "
+                    "All authentication will be denied until sync received.");
+    }
+
+    LOG_INFO("Authentication system initialized (%d synced, %d local users)",
+             synced_user_count, local_user_count);
     return RESULT_OK;
 }
 
@@ -370,6 +408,20 @@ bool auth_check_timeout(void) {
         return true;
     }
     return false;
+}
+
+bool auth_awaiting_controller_sync(database_t *db) {
+    /* Check if user sync is awaiting initial sync */
+    if (!user_sync_awaiting_initial_sync()) {
+        return false;  /* Have synced users */
+    }
+
+    /* Check if we have any local users */
+    if (db && count_users(db) > 0) {
+        return false;  /* Have local users */
+    }
+
+    return true;  /* No users at all - awaiting sync */
 }
 
 /* ============================================================================

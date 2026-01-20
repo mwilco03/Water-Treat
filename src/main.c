@@ -20,6 +20,8 @@
 #include "alarms/alarm_manager.h"
 #include "logging/data_logger.h"
 #include "profinet/profinet_manager.h"
+#include "profinet/rtu_registration.h"
+#include "profinet/config_sync.h"
 #include "health/health_check.h"
 #include "hal/led_status.h"
 #include "tui/tui_main.h"
@@ -310,6 +312,26 @@ static result_t init_profinet(void) {
         // Non-fatal - continue without PROFINET
     }
 
+    /* Initialize RTU registration subsystem */
+    r = rtu_registration_init(&g_app_config);
+    if (r != RESULT_OK) {
+        LOG_WARNING("Failed to initialize RTU registration - device enrollment disabled");
+        /* Non-fatal - continue without registration */
+    } else {
+        /* Start background registration thread */
+        r = rtu_registration_start();
+        if (r != RESULT_OK) {
+            LOG_WARNING("Failed to start RTU registration thread");
+        }
+    }
+
+    /* Initialize config sync receiver */
+    r = config_sync_init();
+    if (r != RESULT_OK) {
+        LOG_WARNING("Failed to initialize config sync - remote configuration disabled");
+        /* Non-fatal - continue without config sync */
+    }
+
     return RESULT_OK;
 }
 
@@ -559,6 +581,10 @@ static void shutdown_subsystems(void) {
         actuator_manager_destroy(&g_actuator_mgr);
         LOG_INFO("Actuator manager stopped");
     }
+
+    /* Shutdown config sync and RTU registration before PROFINET */
+    config_sync_shutdown();
+    rtu_registration_shutdown();
 
     if (profinet_manager_is_running()) {
         profinet_manager_stop();

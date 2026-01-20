@@ -12,6 +12,8 @@
 
 #include "profinet_callbacks.h"
 #include "profinet_manager.h"
+#include "rtu_registration.h"
+#include "config_sync.h"
 #include "auth/user_sync.h"
 #include "utils/logger.h"
 #include <string.h>
@@ -198,35 +200,116 @@ int profinet_write_callback(pnet_t *net, void *arg,
               slot, subslot, idx, write_length);
 
     /*
-     * Handle user sync packets from controller
+     * Handle vendor-specific PROFINET record writes (0xF840-0xF845)
      *
-     * The controller sends user credentials via PROFINET acyclic write
-     * at index USER_SYNC_PROFINET_INDEX (0xF840). This allows centralized
-     * user management with credentials synced to RTU for local authentication
-     * at field panels when controller is offline.
-     *
-     * Security: User sync uses DJB2 hashed passwords, not plaintext.
-     * The hash format is "DJB2:<salt_hash>:<password_hash>".
+     * Index allocation:
+     * - 0xF840: User sync (credentials from controller)
+     * - 0xF841: Device configuration
+     * - 0xF842: Sensor configuration
+     * - 0xF843: Actuator configuration
+     * - 0xF845: Enrollment/binding
      */
-    if (idx == USER_SYNC_PROFINET_INDEX) {
-        LOG_INFO("Received user sync packet: %u bytes", write_length);
+    switch (idx) {
+        case USER_SYNC_PROFINET_INDEX: /* 0xF840 */
+            /*
+             * User sync packets from controller
+             *
+             * The controller sends user credentials via PROFINET acyclic write.
+             * This allows centralized user management with credentials synced to
+             * RTU for local authentication when controller is offline.
+             *
+             * Security: User sync uses DJB2 hashed passwords, not plaintext.
+             * The hash format is "DJB2:<salt_hash>:<password_hash>".
+             */
+            LOG_INFO("Received user sync packet: %u bytes", write_length);
 
-        result_t r = user_sync_process_packet(data, write_length);
-        if (r != RESULT_OK) {
-            LOG_ERROR("User sync packet processing failed: %d", r);
-            /* Return PROFINET application error code */
-            if (result) {
-                result->pnio_status.error_code = 0xCF;  /* Application error */
-                result->pnio_status.error_code_1 = 0x81; /* App read/write error */
+            {
+                result_t r = user_sync_process_packet(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("User sync packet processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+
+                user_sync_status_t status;
+                user_sync_get_status(&status);
+                LOG_INFO("User sync complete: %u users stored, %u total syncs",
+                         status.users_stored, status.sync_count);
             }
-            return -1;
-        }
+            return 0;
 
-        user_sync_status_t status;
-        user_sync_get_status(&status);
-        LOG_INFO("User sync complete: %u users stored, %u total syncs",
-                 status.users_stored, status.sync_count);
-        return 0;
+        case RTU_ENROLL_PROFINET_INDEX: /* 0xF845 */
+            /*
+             * Enrollment/binding packets from controller
+             *
+             * Used to confirm RTU registration and store enrollment token.
+             * Supports bind, unbind, rebind, and status query operations.
+             */
+            LOG_INFO("Received enrollment packet: %u bytes", write_length);
+
+            {
+                result_t r = rtu_registration_process_enrollment(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("Enrollment packet processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+            }
+            return 0;
+
+        case RTU_CONFIG_PROFINET_INDEX: /* 0xF841 */
+            LOG_INFO("Received device config packet: %u bytes", write_length);
+            {
+                result_t r = config_sync_process_device(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("Device config processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+            }
+            return 0;
+
+        case RTU_SENSOR_CONFIG_PROFINET_INDEX: /* 0xF842 */
+            LOG_INFO("Received sensor config packet: %u bytes", write_length);
+            {
+                result_t r = config_sync_process_sensors(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("Sensor config processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+            }
+            return 0;
+
+        case RTU_ACTUATOR_CONFIG_PROFINET_INDEX: /* 0xF843 */
+            LOG_INFO("Received actuator config packet: %u bytes", write_length);
+            {
+                result_t r = config_sync_process_actuators(data, write_length);
+                if (r != RESULT_OK) {
+                    LOG_ERROR("Actuator config processing failed: %d", r);
+                    if (result) {
+                        result->pnio_status.error_code = 0xCF;
+                        result->pnio_status.error_code_1 = 0x81;
+                    }
+                    return -1;
+                }
+            }
+            return 0;
+
+        default:
+            break;
     }
 
     /* Handle standard parameterization data */
@@ -431,6 +514,12 @@ int profinet_write_callback(void *net, void *arg, uint32_t arep, uint32_t api,
     if (idx == USER_SYNC_PROFINET_INDEX && data && len > 0) {
         LOG_INFO("User sync packet received (stub mode): %u bytes", len);
         user_sync_process_packet(data, len);
+    }
+
+    /* Handle enrollment in stub mode (for testing) */
+    if (idx == RTU_ENROLL_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("Enrollment packet received (stub mode): %u bytes", len);
+        rtu_registration_process_enrollment(data, len);
     }
 
     return 0;
