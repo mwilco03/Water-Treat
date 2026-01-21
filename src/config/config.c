@@ -1,5 +1,6 @@
 #include "config.h"
 #include "config_defaults.h"
+#include "platform/board_detect.h"
 #include "utils/logger.h"
 #include <stdio.h>
 #include <ctype.h>
@@ -377,15 +378,30 @@ void config_get_defaults(app_config_t *c) {
     SAFE_STRNCPY(c->health.file_path,"/var/lib/water-treat/health.prom",sizeof(c->health.file_path));
     c->health.update_interval_seconds=10;
 
-    /* LED indicator defaults (disabled by default) */
+    /* LED indicator defaults (disabled by default)
+     * Use board detection for SPI device and GPIO pin - board agnostic */
     c->led.enabled=false;
     c->led.led_count=8;
     c->led.brightness=64;  /* 25% - safe default */
     SAFE_STRNCPY(c->led.backend,"auto",sizeof(c->led.backend));
-    SAFE_STRNCPY(c->led.spi_device,"/dev/spidev0.0",sizeof(c->led.spi_device));
     c->led.spi_speed_hz=2400000;
-    c->led.gpio_pin=18;
     c->led.dma_channel=10;
+
+    /* Get board-specific SPI and GPIO pin defaults */
+    board_info_t board_info;
+    if (board_detect(&board_info) == RESULT_OK) {
+        /* Construct SPI device path from detected board */
+        SAFE_SNPRINTF(c->led.spi_device, sizeof(c->led.spi_device),
+                      "/dev/spidev%d.0", board_info.pins.spi_bus);
+        c->led.gpio_pin = board_info.pins.pwm_channel_0;
+        LOG_DEBUG("Config: Using detected board SPI bus %d, PWM pin %d",
+                  board_info.pins.spi_bus, board_info.pins.pwm_channel_0);
+    } else {
+        /* Fallback to common defaults if board detection fails */
+        SAFE_STRNCPY(c->led.spi_device, "/dev/spidev0.0", sizeof(c->led.spi_device));
+        c->led.gpio_pin = 18;
+        LOG_DEBUG("Config: Board detection failed, using default SPI/GPIO");
+    }
 
     /* Watchdog defaults - see config_defaults.h for rationale */
     c->watchdog.watchdog_interval_ms = WT_WATCHDOG_INTERVAL_MS;

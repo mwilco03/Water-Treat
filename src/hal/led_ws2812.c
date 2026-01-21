@@ -109,14 +109,22 @@ void led_config_defaults(led_config_t *config) {
     config->led_count = 8;           /* Conservative default */
     config->brightness = 64;         /* 25% brightness - safe for testing */
 
-    /* SPI defaults */
-    SAFE_STRNCPY(config->spi_device, "/dev/spidev0.0", sizeof(config->spi_device));
+    /* SPI and GPIO defaults - use board detection for board-agnosticism */
     config->spi_speed_hz = 2400000;  /* 2.4 MHz for WS2812 timing */
-
-    /* rpi_ws281x defaults */
-    config->gpio_pin = 18;           /* GPIO 18 (PWM0) */
     config->dma_channel = 10;        /* DMA channel 10 */
     config->strip_type = 0;          /* WS2812_STRIP_GRB */
+
+    board_info_t board_info;
+    if (board_detect(&board_info) == RESULT_OK) {
+        /* Use detected board's SPI bus and PWM pin */
+        snprintf(config->spi_device, sizeof(config->spi_device),
+                 "/dev/spidev%d.0", board_info.pins.spi_bus);
+        config->gpio_pin = board_info.pins.pwm_channel_0;
+    } else {
+        /* Fallback to common defaults */
+        SAFE_STRNCPY(config->spi_device, "/dev/spidev0.0", sizeof(config->spi_device));
+        config->gpio_pin = 18;
+    }
 
     /* RP2040 USB defaults */
     config->rp2040_device[0] = '\0'; /* Empty = auto-detect */

@@ -218,14 +218,11 @@ static void draw_step_board_detect(void) {
         mvprintw(row++, 4, "Board auto-detection inconclusive");
         attroff(COLOR_PAIR(3));
         row++;
-        mvprintw(row++, 4, "Generic GPIO configuration will be used.");
-        mvprintw(row++, 4, "You may need to manually configure pin mappings.");
+        mvprintw(row++, 4, "Board type could not be determined automatically.");
+        mvprintw(row++, 4, "You must manually configure pin mappings for your board.");
         row++;
-        mvprintw(row++, 4, "Common GPIO pins (Raspberry Pi compatible):");
-        mvprintw(row++, 6, "Relay/Output: GPIO 17, 27, 22, 23");
-        mvprintw(row++, 6, "Input: GPIO 5, 6, 13, 19");
-        mvprintw(row++, 6, "PWM: GPIO 18, 19");
-        mvprintw(row++, 6, "1-Wire: GPIO 4");
+        mvprintw(row++, 4, "Use [p] to open the pin selector and configure GPIO pins");
+        mvprintw(row++, 4, "for relays, inputs, PWM, and sensors.");
     }
 
     row += 2;
