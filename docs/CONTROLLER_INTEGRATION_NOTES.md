@@ -218,7 +218,7 @@ rtu_tank_1          ✗ Invalid (underscore)
 ## PROFINET Behavior Decisions (Authoritative)
 
 **Decision Date**: 2026-01-21
-**Status**: FINAL - Code-verified
+**Status**: FINAL - Code-verified, Controller-acknowledged
 
 | ID | Question | RTU Behavior | Code Reference |
 |----|----------|--------------|----------------|
@@ -248,6 +248,37 @@ Currently stored but NOT enforced:
 
 **Status**: Enum defined, value persisted, no behavioral difference implemented.
 **Action**: Define SUPERVISED behavior if differentiation needed.
+
+---
+
+## Controller Team Alignment (2026-01-21)
+
+**Status**: ✅ ALIGNED - Integration testing can proceed
+
+### Controller Confirmed
+
+| Item | Status |
+|------|--------|
+| Station name regex | `^[a-z0-9][a-z0-9-]{0,62}$` (no dots, no underscores) |
+| CRC16-CCITT | Verified: poly=0x1021, init=0xFFFF (matches RTU) |
+| Config models | Regenerated from schema |
+
+### Controller Will Code For
+
+| RTU Behavior | Controller Handling |
+|--------------|---------------------|
+| AR watchdog (passive) | Controller drives reconnect (3s, 6s, 12s backoff) |
+| Invalid slot (ignored) | Controller validates slots before write |
+| Firmware version | Read I&M0 @ 0x8000 |
+| Max 1 AR | No dual-controller redundancy |
+| Enrollment mismatch | Handle packet rejection, AR continues |
+
+### Remaining TBD (Joint Decision Required)
+
+| Item | Owner | Status |
+|------|-------|--------|
+| SUPERVISED mode behavior | Both | RTU stores, doesn't enforce. Define if needed. |
+| Sensor fault → PROFINET alarm | Both | RTU has API, no auto-generation. Specify triggers. |
 
 ---
 
