@@ -202,10 +202,6 @@ static void save_field_with_value(int idx, const char *old_value) {
     tui_set_status("Saved: %s", f->label);
 }
 
-static void save_field(int idx) {
-    save_field_with_value(idx, NULL);
-}
-
 static void undo_last_change(void) {
     if (!g_page.has_undo) {
         tui_set_status("Nothing to undo");
