@@ -148,6 +148,73 @@ No changes required. The PROFINET interface is unchanged.
 
 ---
 
+## DCP Protocol Behavior (Authoritative)
+
+**Decision Date**: 2026-01-21
+**Status**: FINAL - Aligned with IEC 61158 PROFINET specification
+
+### DCP Overview
+
+DCP (Discovery and Configuration Protocol) operates at Layer 2 (multicast `01:0E:CF:00:00:00`). The RTU implements DCP as a PROFINET I/O Device per IEC 61158.
+
+### DCP Operations Supported
+
+| Operation | RTU Behavior | Notes |
+|-----------|--------------|-------|
+| **DCP Identify** | Always responds | Returns station_name, vendor_id, device_id, MAC, IP |
+| **DCP Get** | Always responds | Read any DCP parameter |
+| **DCP Set IP** | Conditional | See DHCP behavior below |
+| **DCP Set Name** | Accepted | Station name can be changed via DCP |
+
+### DCP Set IP Behavior
+
+**DHCP Mode** (`network.dhcp_enabled = true`):
+- DCP Set IP requests are **accepted by p-net stack** (cannot be blocked at application layer)
+- IP change is **temporary** (not persisted to config file)
+- On RTU reboot, DHCP will reassign IP address
+- Log message: `"DCP Set IP received but DHCP enabled - change is temporary"`
+
+**Static Mode** (`network.dhcp_enabled = false`):
+- DCP Set IP requests are **accepted and applied**
+- IP change **may be persisted** if RTU implements NV callback (currently: not persisted)
+- Commissioning tools can use DCP to configure RTU IP address
+
+### Device Identity (Authoritative)
+
+Per PROFINET specification (IEC 61158-6):
+
+| Identifier | Value | Scope | Uniqueness |
+|------------|-------|-------|------------|
+| `vendor_id` | `0x0493` | Global | Assigned by PI to Water Treatment Systems |
+| `device_id` | `0x0001` | Per vendor | Identifies "Water-Treat RTU" product line |
+| `station_name` | User-configured | Per network | **MUST be unique** on L2 broadcast domain |
+| `MAC address` | Hardware | Global | Unique per physical device |
+
+**Key Points**:
+- `vendor_id` + `device_id` identify the **product type** (like a model number)
+- Multiple RTUs of the same model share `0x0493:0x0001`
+- `station_name` differentiates individual devices: `rtu-tank-1`, `rtu-pump-station`
+- Controller discovers RTUs by `station_name`, not by `device_id`
+
+### Station Name Requirements
+
+Per PROFINET specification:
+- Lowercase only
+- DNS-compatible characters: `a-z`, `0-9`, `-`
+- Maximum 63 characters
+- No underscores (use hyphens)
+- Must be unique within L2 broadcast domain
+
+**Examples**:
+```
+rtu-tank-1          ✓ Valid
+rtu-pump-station    ✓ Valid
+RTU-Tank-1          ✗ Invalid (uppercase)
+rtu_tank_1          ✗ Invalid (underscore)
+```
+
+---
+
 ## Files Changed
 
 | File | Change |
