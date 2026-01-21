@@ -11,6 +11,7 @@
 #include "db/db_modules.h"
 #include "drivers/digital/relay_output.h"
 #include "utils/logger.h"
+#include "gsdml_modules.h"
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
@@ -458,13 +459,16 @@ result_t actuator_manager_add(actuator_manager_t *mgr, const actuator_config_t *
 
     // Register with PROFINET manager as output module
     if (profinet_manager_is_running()) {
+        uint32_t mod_ident = gsdml_actuator_module_ident(config->type);
+        uint32_t submod_ident = gsdml_actuator_submodule_ident(config->type);
+
         profinet_manager_add_module(NULL,
                                      config->profinet_slot,
-                                     0x00000002,  // Output module ident
+                                     mod_ident,
                                      config->profinet_subslot,
-                                     0x00000002,  // Output submodule ident
+                                     submod_ident,
                                      0,           // No input data
-                                     sizeof(actuator_output_data_t));  // Output data size
+                                     GSDML_ACTUATOR_OUTPUT_SIZE);
     }
 
     /* Update slot_map for O(1) lookup before incrementing count */

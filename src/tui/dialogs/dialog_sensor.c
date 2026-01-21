@@ -9,6 +9,7 @@
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "db/db_actuators.h"
+#include "gsdml_modules.h"
 #include <ncurses.h>
 #include <string.h>
 #include <stdlib.h>
@@ -48,8 +49,8 @@ static void init_form(sensor_form_t *form) {
     memset(form, 0, sizeof(*form));
     form->slot = 1;
     form->subslot = 1;
-    form->module_ident = 0x00000001;
-    form->submodule_ident = 0x00000001;
+    form->module_ident = GSDML_MOD_SENSOR_GENERIC;
+    form->submodule_ident = GSDML_SUBMOD_SENSOR_GENERIC;
     SAFE_STRNCPY(form->module_type, "physical", sizeof(form->module_type));
     SAFE_STRNCPY(form->interface, "i2c", sizeof(form->interface));
     form->reference_voltage = 3.3f;

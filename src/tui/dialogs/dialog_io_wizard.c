@@ -23,6 +23,7 @@
 #include "platform/hw_discover.h"
 #include "sensors/sensor_api.h"
 #include "utils/logger.h"
+#include "gsdml_modules.h"
 #include <ncurses.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1673,8 +1674,9 @@ static bool save_sensor(void) {
     module.slot = g_wiz.assigned_slot;
     module.subslot = 1;
     SAFE_STRNCPY(module.name, g_wiz.name, sizeof(module.name));
-    module.module_ident = 0x00000001;
-    module.submodule_ident = 0x00000001;
+    /* Use GSDML generic sensor ident - sensor_manager will update with correct type */
+    module.module_ident = GSDML_MOD_SENSOR_GENERIC;
+    module.submodule_ident = GSDML_SUBMOD_SENSOR_GENERIC;
     SAFE_STRNCPY(module.status, STATUS_INACTIVE, sizeof(module.status));
 
     int sensor_id = 0;

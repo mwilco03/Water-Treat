@@ -4,6 +4,7 @@
 #include "db/db_modules.h"
 #include "db/db_events.h"
 #include "utils/logger.h"
+#include "gsdml_modules.h"
 
 #ifdef LED_SUPPORT
 #include "hal/led_status.h"
@@ -286,13 +287,32 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
 
             // Add module to PROFINET if configured
             if (mgr->profinet_mgr && instance->type != SENSOR_INSTANCE_CALCULATED) {
+                /* Determine GSDML module ident from sensor type */
+                uint32_t mod_ident = GSDML_MOD_SENSOR_GENERIC;
+                uint32_t submod_ident = GSDML_SUBMOD_SENSOR_GENERIC;
+
+                if (strcmp(module->module_type, "physical") == 0) {
+                    db_physical_sensor_t phys;
+                    if (db_physical_sensor_get(mgr->db, module->id, &phys) == RESULT_OK) {
+                        mod_ident = gsdml_sensor_module_from_string(phys.sensor_type);
+                        submod_ident = mod_ident + 1;
+                    }
+                } else if (strcmp(module->module_type, "adc") == 0) {
+                    db_adc_sensor_t adc;
+                    if (db_adc_sensor_get(mgr->db, module->id, &adc) == RESULT_OK) {
+                        /* Map ADC unit to sensor type */
+                        mod_ident = gsdml_sensor_module_from_string(adc.unit);
+                        submod_ident = mod_ident + 1;
+                    }
+                }
+
                 profinet_manager_add_module(
                     mgr->profinet_mgr,
                     instance->slot,
-                    0x00000001,  // module_ident
+                    mod_ident,
                     0,           // subslot
-                    0x00000001,  // submodule_ident
-                    sizeof(float), // input_length
+                    submod_ident,
+                    GSDML_SENSOR_INPUT_SIZE,  /* 5 bytes: float + quality */
                     0            // output_length
                 );
             }
