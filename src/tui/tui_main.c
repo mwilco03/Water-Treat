@@ -359,11 +359,25 @@ result_t tui_init(database_t *db, config_manager_t *config, app_config_t *app_co
     
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
-    
+
+    // Ensure minimum terminal size
+    if (max_y < 10 || max_x < 40) {
+        endwin();
+        LOG_ERROR("Terminal too small (need at least 40x10, got %dx%d)", max_x, max_y);
+        return RESULT_ERROR;
+    }
+
     // Create windows
     g_tui.status_bar = newwin(STATUS_BAR_HEIGHT, max_x, 0, 0);
     g_tui.main_win = newwin(max_y - STATUS_BAR_HEIGHT - FOOTER_HEIGHT, max_x, STATUS_BAR_HEIGHT, 0);
     g_tui.footer = newwin(FOOTER_HEIGHT, max_x, max_y - FOOTER_HEIGHT, 0);
+
+    // Verify window creation
+    if (!g_tui.status_bar || !g_tui.main_win || !g_tui.footer) {
+        endwin();
+        LOG_ERROR("Failed to create TUI windows");
+        return RESULT_ERROR;
+    }
 
     // Enable keypad input and timeout for main window (must be after window creation)
     keypad(g_tui.main_win, TRUE);
