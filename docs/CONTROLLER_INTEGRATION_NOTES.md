@@ -172,7 +172,7 @@ DCP (Discovery and Configuration Protocol) operates at Layer 2 (multicast `01:0E
 - DCP Set IP requests are **accepted by p-net stack** (cannot be blocked at application layer)
 - IP change is **temporary** (not persisted to config file)
 - On RTU reboot, DHCP will reassign IP address
-- Log message: `"DCP Set IP received but DHCP enabled - change is temporary"`
+- **Note**: p-net handles DCP internally; application cannot intercept or log DCP Set events
 
 **Static Mode** (`network.dhcp_enabled = false`):
 - DCP Set IP requests are **accepted and applied**
@@ -212,6 +212,42 @@ rtu-pump-station    ✓ Valid
 RTU-Tank-1          ✗ Invalid (uppercase)
 rtu_tank_1          ✗ Invalid (underscore)
 ```
+
+---
+
+## PROFINET Behavior Decisions (Authoritative)
+
+**Decision Date**: 2026-01-21
+**Status**: FINAL - Code-verified
+
+| ID | Question | RTU Behavior | Code Reference |
+|----|----------|--------------|----------------|
+| Q1 | AR watchdog timeout | **Wait** for PNET_EVENT_ABORT (passive) | `profinet_callbacks.c:99-100` |
+| Q2 | Command to unknown slot | **Ignore** silently (no NACK) | `profinet_manager.c:85-92,105-136` |
+| Q4 | Minimum cycle time | **1ms** (`PROFINET_TICK_INTERVAL_US=1000`) | `profinet_manager.c:24` |
+| Q5 | Authority mode | **Stored, not enforced** | `config_sync.c:43,96` |
+| Q6 | Token mismatch | **Reject packet**, AR continues | `rtu_registration.c:660-664` |
+| Q7 | Firmware version | **I&M0 @ 0x8000** (standard PROFINET) | `profinet_callbacks.c:165-168` |
+| Q8 | Diagnostic alarms | **Manual API only** (`profinet_manager_send_alarm()`) | `profinet_manager.c:934-962` |
+| Q9 | Config CRC mismatch | **Reject packet** (PNIO 0xCF/0x81) | `config_sync.c:88-91` |
+| Q10 | Max simultaneous AR | **1** (single-controller device) | `profinet_manager.c:48` |
+
+### CRC16-CCITT Parameters (Confirmed)
+
+All config sync, user sync, and enrollment packets use identical CRC:
+- **Polynomial**: 0x1021
+- **Initial value**: 0xFFFF
+- **Final XOR**: None
+- **Implementation**: `src/profinet/config_sync.c:19-31`, `src/auth/user_sync.c:108-121`
+
+### Authority Mode (Q5 Detail)
+
+Currently stored but NOT enforced:
+- `AUTHORITY_AUTONOMOUS (0)`: Default - RTU operates independently
+- `AUTHORITY_SUPERVISED (1)`: Intended for controller-directed operation
+
+**Status**: Enum defined, value persisted, no behavioral difference implemented.
+**Action**: Define SUPERVISED behavior if differentiation needed.
 
 ---
 
