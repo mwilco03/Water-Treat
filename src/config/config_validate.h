@@ -22,6 +22,7 @@ typedef enum {
     CONFIG_ERROR_MISSING_INTERFACE   = (1 << 10),
     CONFIG_ERROR_INVALID_DB_PATH     = (1 << 11),
     CONFIG_ERROR_INVALID_WATCHDOG    = (1 << 12),
+    CONFIG_ERROR_INVALID_STATION_NAME = (1 << 13),  /* Per IEC 61158-6 PROFINET spec */
 } config_validation_flags_t;
 
 /* Validation result structure */

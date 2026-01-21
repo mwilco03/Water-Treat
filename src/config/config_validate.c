@@ -7,10 +7,61 @@
 #include "utils/logger.h"
 #include <string.h>
 #include <sys/stat.h>
+#include <ctype.h>
 
 #ifdef HAVE_CURL
 #include <curl/curl.h>
 #endif
+
+/* ============================================================================
+ * Validation Helpers
+ * ========================================================================== */
+
+/**
+ * Validate PROFINET station name per IEC 61158-6
+ *
+ * Rules (regex equivalent: ^[a-z0-9][a-z0-9-]{0,62}$):
+ * - First character: lowercase letter or digit
+ * - Remaining: lowercase letters, digits, or hyphens
+ * - Maximum 63 characters
+ * - No underscores, dots, or uppercase
+ *
+ * @param name Station name to validate
+ * @return true if valid, false otherwise
+ */
+static bool validate_station_name(const char *name) {
+    if (!name || name[0] == '\0') {
+        return false;
+    }
+
+    size_t len = strlen(name);
+
+    /* Maximum 63 characters */
+    if (len > 63) {
+        return false;
+    }
+
+    /* First character must be lowercase letter or digit */
+    char c = name[0];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+        return false;
+    }
+
+    /* Remaining characters: lowercase letters, digits, or hyphens */
+    for (size_t i = 1; i < len; i++) {
+        c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+            return false;
+        }
+    }
+
+    /* Cannot end with hyphen (DNS compatibility) */
+    if (name[len - 1] == '-') {
+        return false;
+    }
+
+    return true;
+}
 
 /* ============================================================================
  * Validation
@@ -29,6 +80,14 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
     CHECK_NULL(result);
 
     memset(result, 0, sizeof(*result));
+
+    /* Validate station name per PROFINET spec (IEC 61158-6)
+     * Regex: ^[a-z0-9][a-z0-9-]{0,62}$ */
+    if (!validate_station_name(config->profinet.station_name)) {
+        result->flags |= CONFIG_ERROR_INVALID_STATION_NAME;
+        result->error_count++;
+        add_message(result, "ERROR: Station name invalid (must be lowercase a-z, 0-9, hyphen only, max 63 chars)");
+    }
 
     /* Check for auto-generated station names (rtu-XXXX pattern)
      * These are derived from MAC address and are valid, but user may want custom name */

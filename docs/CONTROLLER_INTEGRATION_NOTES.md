@@ -148,6 +148,140 @@ No changes required. The PROFINET interface is unchanged.
 
 ---
 
+## DCP Protocol Behavior (Authoritative)
+
+**Decision Date**: 2026-01-21
+**Status**: FINAL - Aligned with IEC 61158 PROFINET specification
+
+### DCP Overview
+
+DCP (Discovery and Configuration Protocol) operates at Layer 2 (multicast `01:0E:CF:00:00:00`). The RTU implements DCP as a PROFINET I/O Device per IEC 61158.
+
+### DCP Operations Supported
+
+| Operation | RTU Behavior | Notes |
+|-----------|--------------|-------|
+| **DCP Identify** | Always responds | Returns station_name, vendor_id, device_id, MAC, IP |
+| **DCP Get** | Always responds | Read any DCP parameter |
+| **DCP Set IP** | Conditional | See DHCP behavior below |
+| **DCP Set Name** | Accepted | Station name can be changed via DCP |
+
+### DCP Set IP Behavior
+
+**DHCP Mode** (`network.dhcp_enabled = true`):
+- DCP Set IP requests are **accepted by p-net stack** (cannot be blocked at application layer)
+- IP change is **temporary** (not persisted to config file)
+- On RTU reboot, DHCP will reassign IP address
+- **Note**: p-net handles DCP internally; application cannot intercept or log DCP Set events
+
+**Static Mode** (`network.dhcp_enabled = false`):
+- DCP Set IP requests are **accepted and applied**
+- IP change **may be persisted** if RTU implements NV callback (currently: not persisted)
+- Commissioning tools can use DCP to configure RTU IP address
+
+### Device Identity (Authoritative)
+
+Per PROFINET specification (IEC 61158-6):
+
+| Identifier | Value | Scope | Uniqueness |
+|------------|-------|-------|------------|
+| `vendor_id` | `0x0493` | Global | Assigned by PI to Water Treatment Systems |
+| `device_id` | `0x0001` | Per vendor | Identifies "Water-Treat RTU" product line |
+| `station_name` | User-configured | Per network | **MUST be unique** on L2 broadcast domain |
+| `MAC address` | Hardware | Global | Unique per physical device |
+
+**Key Points**:
+- `vendor_id` + `device_id` identify the **product type** (like a model number)
+- Multiple RTUs of the same model share `0x0493:0x0001`
+- `station_name` differentiates individual devices: `rtu-tank-1`, `rtu-pump-station`
+- Controller discovers RTUs by `station_name`, not by `device_id`
+
+### Station Name Requirements
+
+Per PROFINET specification:
+- Lowercase only
+- DNS-compatible characters: `a-z`, `0-9`, `-`
+- Maximum 63 characters
+- No underscores (use hyphens)
+- Must be unique within L2 broadcast domain
+
+**Examples**:
+```
+rtu-tank-1          ✓ Valid
+rtu-pump-station    ✓ Valid
+RTU-Tank-1          ✗ Invalid (uppercase)
+rtu_tank_1          ✗ Invalid (underscore)
+```
+
+---
+
+## PROFINET Behavior Decisions (Authoritative)
+
+**Decision Date**: 2026-01-21
+**Status**: FINAL - Code-verified, Controller-acknowledged
+
+| ID | Question | RTU Behavior | Code Reference |
+|----|----------|--------------|----------------|
+| Q1 | AR watchdog timeout | **Wait** for PNET_EVENT_ABORT (passive) | `profinet_callbacks.c:99-100` |
+| Q2 | Command to unknown slot | **Ignore** silently (no NACK) | `profinet_manager.c:85-92,105-136` |
+| Q4 | Minimum cycle time | **1ms** (`PROFINET_TICK_INTERVAL_US=1000`) | `profinet_manager.c:24` |
+| Q5 | Authority mode | **Stored, not enforced** | `config_sync.c:43,96` |
+| Q6 | Token mismatch | **Reject packet**, AR continues | `rtu_registration.c:660-664` |
+| Q7 | Firmware version | **I&M0 @ 0x8000** (standard PROFINET) | `profinet_callbacks.c:165-168` |
+| Q8 | Diagnostic alarms | **Manual API only** (`profinet_manager_send_alarm()`) | `profinet_manager.c:934-962` |
+| Q9 | Config CRC mismatch | **Reject packet** (PNIO 0xCF/0x81) | `config_sync.c:88-91` |
+| Q10 | Max simultaneous AR | **1** (single-controller device) | `profinet_manager.c:48` |
+
+### CRC16-CCITT Parameters (Confirmed)
+
+All config sync, user sync, and enrollment packets use identical CRC:
+- **Polynomial**: 0x1021
+- **Initial value**: 0xFFFF
+- **Final XOR**: None
+- **Implementation**: `src/profinet/config_sync.c:19-31`, `src/auth/user_sync.c:108-121`
+
+### Authority Mode (Q5 Detail)
+
+Currently stored but NOT enforced:
+- `AUTHORITY_AUTONOMOUS (0)`: Default - RTU operates independently
+- `AUTHORITY_SUPERVISED (1)`: Intended for controller-directed operation
+
+**Status**: Enum defined, value persisted, no behavioral difference implemented.
+**Action**: Define SUPERVISED behavior if differentiation needed.
+
+---
+
+## Controller Team Alignment (2026-01-21)
+
+**Status**: ✅ ALIGNED - Integration testing can proceed
+
+### Controller Confirmed
+
+| Item | Status |
+|------|--------|
+| Station name regex | `^[a-z0-9][a-z0-9-]{0,62}$` (no dots, no underscores) |
+| CRC16-CCITT | Verified: poly=0x1021, init=0xFFFF (matches RTU) |
+| Config models | Regenerated from schema |
+
+### Controller Will Code For
+
+| RTU Behavior | Controller Handling |
+|--------------|---------------------|
+| AR watchdog (passive) | Controller drives reconnect (3s, 6s, 12s backoff) |
+| Invalid slot (ignored) | Controller validates slots before write |
+| Firmware version | Read I&M0 @ 0x8000 |
+| Max 1 AR | No dual-controller redundancy |
+| Enrollment mismatch | Handle packet rejection, AR continues |
+
+### Remaining TBD (Joint Decision Required)
+
+| Item | Owner | Status |
+|------|-------|--------|
+| SUPERVISED mode behavior | Both | RTU stores, doesn't enforce. Define if needed. |
+| Sensor fault → PROFINET alarm | Both | RTU has API, no auto-generation. Specify triggers. |
+
+---
+
 ## Files Changed
 
 | File | Change |
