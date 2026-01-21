@@ -218,10 +218,6 @@ static void apply_field_to_config(int idx) {
     }
 }
 
-static void save_field(int idx) {
-    save_field_with_value(idx, NULL);
-}
-
 static void save_field_with_value(int idx, const char *old_value) {
     if (idx < 0 || idx >= g_page.field_count) return;
 
