@@ -336,7 +336,18 @@ result_t page_login_run(void) {
             int confirm_h = 5, confirm_w = 30;
             int confirm_y = (LINES - confirm_h) / 2;
             int confirm_x = (COLS - confirm_w) / 2;
+
+            /* Ensure valid window position */
+            if (confirm_y < 0) confirm_y = 0;
+            if (confirm_x < 0) confirm_x = 0;
+
             WINDOW *confirm_win = newwin(confirm_h, confirm_w, confirm_y, confirm_x);
+            if (!confirm_win) {
+                /* Fallback: just exit without confirmation if window fails */
+                running = false;
+                continue;
+            }
+
             box(confirm_win, 0, 0);
             mvwprintw(confirm_win, 0, (confirm_w - 11) / 2, "[ Confirm ]");
             mvwprintw(confirm_win, 2, 3, "Exit application? (y/n)");
