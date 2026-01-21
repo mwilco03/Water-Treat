@@ -9,6 +9,7 @@
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "utils/logger.h"
+#include "gsdml_modules.h"
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
@@ -174,9 +175,10 @@ static result_t load_modules_from_db(void) {
             slot->module_id = modules[i].id;
             slot->module_ident = modules[i].module_ident;
             slot->submodule_ident = modules[i].submodule_ident;
-            slot->input_size = 4;  // Default: 4 bytes (float)
-            slot->output_size = 0;
-            LOG_DEBUG("Loaded slot %d: module_id=%d, ident=0x%08X", 
+            /* Use correct sizes per GSDML specification */
+            slot->input_size = GSDML_SENSOR_INPUT_SIZE;   /* 5 bytes: float + quality */
+            slot->output_size = GSDML_ACTUATOR_OUTPUT_SIZE; /* 4 bytes if output module */
+            LOG_DEBUG("Loaded slot %d: module_id=%d, ident=0x%08X",
                       slot->slot, slot->module_id, slot->module_ident);
         }
     }
@@ -1047,12 +1049,26 @@ result_t profinet_manager_add_module(void *mgr, int slot, uint32_t module_ident,
                                      size_t input_len, size_t output_len) {
     UNUSED(mgr);
 
+    /* Check if slot already exists (may be loaded from database) */
+    profinet_slot_t *s = find_slot(slot, subslot);
+    if (s) {
+        /* Update existing slot with correct GSDML identifiers and sizes */
+        s->module_ident = module_ident;
+        s->submodule_ident = submodule_ident;
+        s->input_size = input_len;
+        s->output_size = output_len;
+        LOG_DEBUG("Updated PROFINET module: slot=%d, subslot=%d, ident=0x%08X",
+                  slot, subslot, module_ident);
+        return RESULT_OK;
+    }
+
+    /* Add new slot */
     if (g_pn.slot_count >= MAX_PROFINET_SLOTS) {
         LOG_ERROR("Maximum slots exceeded");
         return RESULT_ERROR;
     }
 
-    profinet_slot_t *s = &g_pn.slots[g_pn.slot_count++];
+    s = &g_pn.slots[g_pn.slot_count++];
     memset(s, 0, sizeof(*s));
 
     s->slot = slot;
