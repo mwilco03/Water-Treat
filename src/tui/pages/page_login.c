@@ -326,6 +326,11 @@ result_t page_login_run(void) {
         page_login_draw();
         int ch = getch();
 
+        if (ch == 3) {  /* Ctrl+C - immediate quit, return to shell */
+            running = false;
+            continue;
+        }
+
         if (ch == 27) {  /* ESC - exit with confirmation */
             /* Create a simple centered confirmation window */
             int confirm_h = 5, confirm_w = 30;

@@ -53,8 +53,13 @@ static struct {
     bool editing;
     char edit_buffer[64];
     int edit_pos;
-    
+
     int view_mode;  // 0 = config, 1 = events
+
+    /* Undo support */
+    char undo_value[64];
+    int undo_field_idx;
+    bool has_undo;
 } g_page = {0};
 
 static void load_logging_config(void) {
@@ -161,21 +166,68 @@ static void load_stats(void) {
     data_logger_get_stats(&g_page.stats);
 }
 
-static void save_field(int idx) {
+static void apply_field_to_config(int idx) {
+    field_t *f = &g_page.fields[idx];
+    config_manager_t *cfg_mgr = tui_get_config_manager();
+    if (!cfg_mgr) return;
+
+    if (strcmp(f->config_key, "log_level") == 0) {
+        config_set_string(cfg_mgr, "system", f->config_key, f->value);
+        logger_set_level(log_level_from_string(f->value));
+    } else {
+        config_set_string(cfg_mgr, "logging", f->config_key, f->value);
+    }
+}
+
+static void save_field_with_value(int idx, const char *old_value) {
     if (idx < 0 || idx >= g_page.field_count) return;
-    
+
     field_t *f = &g_page.fields[idx];
     if (!f->editable) return;
-    
+
+    config_manager_t *cfg_mgr = tui_get_config_manager();
+    if (!cfg_mgr) return;
+
+    /* Track undo state */
+    if (old_value) {
+        SAFE_STRNCPY(g_page.undo_value, old_value, sizeof(g_page.undo_value));
+        g_page.undo_field_idx = idx;
+        g_page.has_undo = true;
+    }
+
+    apply_field_to_config(idx);
+
+    /* Auto-save to disk */
+    config_save_file(cfg_mgr, NULL);
+    tui_set_status("Saved: %s", f->label);
+}
+
+static void save_field(int idx) {
+    save_field_with_value(idx, NULL);
+}
+
+static void undo_last_change(void) {
+    if (!g_page.has_undo) {
+        tui_set_status("Nothing to undo");
+        return;
+    }
+
+    int idx = g_page.undo_field_idx;
+    if (idx < 0 || idx >= g_page.field_count) return;
+
+    field_t *f = &g_page.fields[idx];
+
+    /* Swap current and undo values */
+    char current_value[64];
+    SAFE_STRNCPY(current_value, f->value, sizeof(current_value));
+    SAFE_STRNCPY(f->value, g_page.undo_value, sizeof(f->value));
+    SAFE_STRNCPY(g_page.undo_value, current_value, sizeof(g_page.undo_value));
+
     config_manager_t *cfg_mgr = tui_get_config_manager();
     if (cfg_mgr) {
-        if (strcmp(f->config_key, "log_level") == 0) {
-            config_set_string(cfg_mgr, "system", f->config_key, f->value);
-            logger_set_level(log_level_from_string(f->value));
-        } else {
-            config_set_string(cfg_mgr, "logging", f->config_key, f->value);
-        }
-        tui_set_status("Saved: %s", f->label);
+        apply_field_to_config(idx);
+        config_save_file(cfg_mgr, NULL);
+        tui_set_status("Undone: %s", f->label);
     }
 }
 
@@ -308,9 +360,9 @@ static void draw_events(WINDOW *win, int *row) {
 static void draw_help(WINDOW *win) {
     int max_y = getmaxy(win);
     int row = max_y - 2;
-    
+
     wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
-    mvwprintw(win, row, 2, "Tab:Switch  Enter:Edit  r:Refresh  c:Cleanup  Ctrl+S:Save");
+    mvwprintw(win, row, 2, "Tab:Switch  Enter:Edit  r:Refresh  c:Cleanup  Ctrl+Z:Undo");
     wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
 }
 
@@ -321,6 +373,7 @@ void page_logging_init(WINDOW *win) {
     g_page.selected_event = 0;
     g_page.scroll_offset = 0;
     g_page.editing = false;
+    g_page.has_undo = false;
     
     load_logging_config();
     load_events();
@@ -351,11 +404,18 @@ void page_logging_input(WINDOW *win, int ch) {
 
             case '\n':
             case KEY_ENTER:
-                SAFE_STRNCPY(g_page.fields[g_page.selected_field].value,
-                            g_page.edit_buffer,
-                            sizeof(g_page.fields[g_page.selected_field].value));
-                save_field(g_page.selected_field);
-                g_page.editing = false;
+                {
+                    /* Capture old value before overwriting */
+                    char old_value[64];
+                    SAFE_STRNCPY(old_value,
+                                g_page.fields[g_page.selected_field].value,
+                                sizeof(old_value));
+                    SAFE_STRNCPY(g_page.fields[g_page.selected_field].value,
+                                g_page.edit_buffer,
+                                sizeof(g_page.fields[g_page.selected_field].value));
+                    save_field_with_value(g_page.selected_field, old_value);
+                    g_page.editing = false;
+                }
                 break;
 
             case KEY_BACKSPACE:
@@ -471,14 +531,8 @@ void page_logging_input(WINDOW *win, int ch) {
             }
             break;
             
-        case 19:  // Ctrl+S
-            {
-                config_manager_t *cfg = tui_get_config_manager();
-                if (cfg) {
-                    config_save_file(cfg, NULL);
-                    tui_set_status("Configuration saved");
-                }
-            }
+        case 26:  // Ctrl+Z
+            undo_last_change();
             break;
     }
 }

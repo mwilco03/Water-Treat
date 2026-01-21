@@ -51,8 +51,13 @@ static struct {
     bool editing;
     char edit_buffer[64];
     int edit_pos;
-    
+
     int view_mode;  // 0 = interfaces, 1 = config
+
+    /* Undo support */
+    char undo_value[64];
+    int undo_field_idx;
+    bool has_undo;
 } g_page = {0};
 
 static void get_interface_info(void) {
@@ -178,17 +183,14 @@ static void load_network_config(void) {
     snprintf(f->value, sizeof(f->value), "0x%04X", cfg->profinet.device_id);
 }
 
-static void save_field(int idx) {
-    if (idx < 0 || idx >= g_page.field_count) return;
-    
+static void save_field_with_value(int idx, const char *old_value);
+
+static void apply_field_to_config(int idx) {
     field_t *f = &g_page.fields[idx];
-    if (!f->editable) return;
-    
     config_manager_t *cfg_mgr = tui_get_config_manager();
     app_config_t *app_cfg = tui_get_app_config();
     if (!cfg_mgr || !app_cfg) return;
-    
-    // Update config based on key
+
     if (strcmp(f->config_key, "interface") == 0) {
         SAFE_STRNCPY(app_cfg->network.interface, f->value, sizeof(app_cfg->network.interface));
         config_set_string(cfg_mgr, "network", f->config_key, f->value);
@@ -214,8 +216,58 @@ static void save_field(int idx) {
         app_cfg->profinet.device_id = (uint16_t)strtol(f->value, NULL, 0);
         config_set_string(cfg_mgr, "profinet", f->config_key, f->value);
     }
-    
+}
+
+static void save_field(int idx) {
+    save_field_with_value(idx, NULL);
+}
+
+static void save_field_with_value(int idx, const char *old_value) {
+    if (idx < 0 || idx >= g_page.field_count) return;
+
+    field_t *f = &g_page.fields[idx];
+    if (!f->editable) return;
+
+    config_manager_t *cfg_mgr = tui_get_config_manager();
+    if (!cfg_mgr) return;
+
+    /* Track undo state before making changes */
+    if (old_value) {
+        SAFE_STRNCPY(g_page.undo_value, old_value, sizeof(g_page.undo_value));
+        g_page.undo_field_idx = idx;
+        g_page.has_undo = true;
+    }
+
+    apply_field_to_config(idx);
+
+    /* Auto-save to disk */
+    config_save_file(cfg_mgr, NULL);
     tui_set_status("Saved: %s", f->label);
+}
+
+static void undo_last_change(void) {
+    if (!g_page.has_undo) {
+        tui_set_status("Nothing to undo");
+        return;
+    }
+
+    int idx = g_page.undo_field_idx;
+    if (idx < 0 || idx >= g_page.field_count) return;
+
+    field_t *f = &g_page.fields[idx];
+
+    /* Swap current and undo values */
+    char current_value[64];
+    SAFE_STRNCPY(current_value, f->value, sizeof(current_value));
+    SAFE_STRNCPY(f->value, g_page.undo_value, sizeof(f->value));
+    SAFE_STRNCPY(g_page.undo_value, current_value, sizeof(g_page.undo_value));
+
+    config_manager_t *cfg_mgr = tui_get_config_manager();
+    if (cfg_mgr) {
+        apply_field_to_config(idx);
+        config_save_file(cfg_mgr, NULL);
+        tui_set_status("Undone: %s", f->label);
+    }
 }
 
 static void draw_interfaces(WINDOW *win) {
@@ -318,9 +370,9 @@ static void draw_help(WINDOW *win) {
     mvwhline(win, row++, 2, ACS_HLINE, getmaxx(win) - 4);
     wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
     if (g_page.editing) {
-        mvwprintw(win, row++, 2, "Left/Right:Move cursor  Home/End:Jump  Backspace/Del:Delete  Enter:Save  Esc:Cancel");
+        mvwprintw(win, row++, 2, "Left/Right:Move  Home/End:Jump  Del:Delete  Enter:Save  Esc:Cancel");
     } else {
-        mvwprintw(win, row++, 2, "Tab:Switch view  Up/Down:Select  Enter:Edit  r:Refresh  Ctrl+S:Save  Esc:Back");
+        mvwprintw(win, row++, 2, "Tab:Switch view  Up/Down:Select  Enter:Edit  r:Refresh  Ctrl+Z:Undo");
     }
     wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
 }
@@ -331,6 +383,7 @@ void page_network_init(WINDOW *win) {
     g_page.selected_interface = 0;
     g_page.selected_field = 0;
     g_page.editing = false;
+    g_page.has_undo = false;
     get_interface_info();
     load_network_config();
 }
@@ -354,11 +407,15 @@ void page_network_input(WINDOW *win, int ch) {
 
             case '\n':
             case KEY_ENTER:
-                SAFE_STRNCPY(g_page.fields[g_page.selected_field].value,
-                            g_page.edit_buffer,
-                            sizeof(g_page.fields[g_page.selected_field].value));
-                save_field(g_page.selected_field);
-                g_page.editing = false;
+                {
+                    char old_value[64];
+                    SAFE_STRNCPY(old_value, g_page.fields[g_page.selected_field].value, sizeof(old_value));
+                    SAFE_STRNCPY(g_page.fields[g_page.selected_field].value,
+                                g_page.edit_buffer,
+                                sizeof(g_page.fields[g_page.selected_field].value));
+                    save_field_with_value(g_page.selected_field, old_value);
+                    g_page.editing = false;
+                }
                 break;
 
             case KEY_BACKSPACE:
@@ -454,14 +511,8 @@ void page_network_input(WINDOW *win, int ch) {
             tui_set_status("Refreshed");
             break;
             
-        case 19:  // Ctrl+S
-            {
-                config_manager_t *cfg = tui_get_config_manager();
-                if (cfg) {
-                    config_save_file(cfg, NULL);
-                    tui_set_status("Configuration saved");
-                }
-            }
+        case 26:  // Ctrl+Z - undo
+            undo_last_change();
             break;
     }
 }
