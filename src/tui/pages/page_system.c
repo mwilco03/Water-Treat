@@ -35,6 +35,10 @@ static struct {
     bool editing;
     char edit_buffer[128];
     int edit_pos;
+    /* Undo support */
+    char undo_value[128];
+    int undo_field_idx;
+    bool has_undo;
 } g_page = {0};
 
 static void load_system_info(void) {
@@ -133,17 +137,24 @@ static void load_system_info(void) {
     }
 }
 
-static void save_field(int idx) {
+static void save_field(int idx, const char *old_value) {
     if (idx < 0 || idx >= g_page.field_count) return;
-    
+
     field_t *f = &g_page.fields[idx];
     if (!f->editable || !f->config_section || !f->config_key) return;
-    
+
     config_manager_t *cfg_mgr = tui_get_config_manager();
     if (cfg_mgr) {
+        /* Track undo state before making changes */
+        if (old_value) {
+            SAFE_STRNCPY(g_page.undo_value, old_value, sizeof(g_page.undo_value));
+            g_page.undo_field_idx = idx;
+            g_page.has_undo = true;
+        }
+
         config_set_string(cfg_mgr, f->config_section, f->config_key, f->value);
-        
-        // Update app config
+
+        /* Update app config */
         app_config_t *app_cfg = tui_get_app_config();
         if (app_cfg) {
             if (strcmp(f->config_key, "device_name") == 0) {
@@ -153,8 +164,49 @@ static void save_field(int idx) {
                 logger_set_level(log_level_from_string(f->value));
             }
         }
-        
+
+        /* Auto-save to disk */
+        config_save_file(cfg_mgr, NULL);
         tui_set_status("Saved: %s", f->label);
+    }
+}
+
+static void undo_last_change(void) {
+    if (!g_page.has_undo) {
+        tui_set_status("Nothing to undo");
+        return;
+    }
+
+    int idx = g_page.undo_field_idx;
+    if (idx < 0 || idx >= g_page.field_count) return;
+
+    field_t *f = &g_page.fields[idx];
+
+    /* Restore previous value */
+    char current_value[128];
+    SAFE_STRNCPY(current_value, f->value, sizeof(current_value));
+    SAFE_STRNCPY(f->value, g_page.undo_value, sizeof(f->value));
+
+    /* Save restored value (swap undo buffer for redo capability) */
+    SAFE_STRNCPY(g_page.undo_value, current_value, sizeof(g_page.undo_value));
+
+    config_manager_t *cfg_mgr = tui_get_config_manager();
+    if (cfg_mgr) {
+        config_set_string(cfg_mgr, f->config_section, f->config_key, f->value);
+
+        /* Update app config */
+        app_config_t *app_cfg = tui_get_app_config();
+        if (app_cfg) {
+            if (strcmp(f->config_key, "device_name") == 0) {
+                SAFE_STRNCPY(app_cfg->system.device_name, f->value, sizeof(app_cfg->system.device_name));
+            } else if (strcmp(f->config_key, "log_level") == 0) {
+                SAFE_STRNCPY(app_cfg->system.log_level, f->value, sizeof(app_cfg->system.log_level));
+                logger_set_level(log_level_from_string(f->value));
+            }
+        }
+
+        config_save_file(cfg_mgr, NULL);
+        tui_set_status("Undone: %s", f->label);
     }
 }
 
@@ -162,6 +214,7 @@ void page_system_init(WINDOW *win) {
     g_page.win = win;
     g_page.selected = 0;
     g_page.editing = false;
+    g_page.has_undo = false;
     load_system_info();
 }
 
@@ -221,9 +274,8 @@ void page_system_draw(WINDOW *win) {
     // Help text
     row += 2;
     wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
-    mvwprintw(win, row++, label_col, "Navigation: Up/Down arrows | Edit: Enter");
-    mvwprintw(win, row++, label_col, "Save config: Ctrl+S | Export: E | Import: I");
-    mvwprintw(win, row++, label_col, "Database backup: B | Database restore: D");
+    mvwprintw(win, row++, label_col, "Navigation: Up/Down | Edit: Enter | Undo: Ctrl+Z");
+    mvwprintw(win, row++, label_col, "Export: E | Import: I | Backup DB: B | Restore DB: D");
     wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
 }
 
@@ -521,12 +573,16 @@ void page_system_input(WINDOW *win, int ch) {
 
             case '\n':
             case KEY_ENTER:
-                // Save edit
-                SAFE_STRNCPY(g_page.fields[g_page.selected].value,
-                            g_page.edit_buffer,
-                            sizeof(g_page.fields[g_page.selected].value));
-                save_field(g_page.selected);
-                g_page.editing = false;
+                {
+                    /* Save old value for undo before overwriting */
+                    char old_value[128];
+                    SAFE_STRNCPY(old_value, g_page.fields[g_page.selected].value, sizeof(old_value));
+                    SAFE_STRNCPY(g_page.fields[g_page.selected].value,
+                                g_page.edit_buffer,
+                                sizeof(g_page.fields[g_page.selected].value));
+                    save_field(g_page.selected, old_value);
+                    g_page.editing = false;
+                }
                 break;
 
             case KEY_BACKSPACE:
@@ -596,14 +652,8 @@ void page_system_input(WINDOW *win, int ch) {
                     g_page.edit_pos = strlen(g_page.edit_buffer);
                 }
                 break;
-            case 19:  // Ctrl+S
-                {
-                    config_manager_t *cfg = tui_get_config_manager();
-                    if (cfg) {
-                        config_save_file(cfg, NULL);
-                        tui_set_status("Configuration saved");
-                    }
-                }
+            case 26:  // Ctrl+Z - undo
+                undo_last_change();
                 break;
             case 'r':
             case 'R':

@@ -450,6 +450,7 @@ void tui_run(void) {
             case KEY_F(10):
             case 'q':
             case 'Q':
+            case 3:  /* Ctrl+C - immediate quit, return to shell */
                 g_tui.running = false;
                 break;
 

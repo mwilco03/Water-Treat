@@ -9,7 +9,8 @@ log_file = /var/log/water-treat/monitor.log
 daemon_mode = false
 
 [network]
-interface = eth0
+# interface is auto-detected if not set - only override if auto-detection fails
+# interface = eth0
 dhcp_enabled = true
 # ip_address = 192.168.1.100
 # netmask = 255.255.255.0

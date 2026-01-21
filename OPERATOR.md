@@ -292,7 +292,7 @@ device_name = water-treatment-rtu-01
 log_level = info
 
 [network]
-interface = eth0
+# interface auto-detected if not set
 dhcp_enabled = true
 
 [profinet]
