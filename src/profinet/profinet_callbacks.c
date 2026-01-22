@@ -81,8 +81,8 @@ static im0_data_t g_im0_data = {
 
 int profinet_state_callback(pnet_t *net, void *arg,
                             uint32_t arep, pnet_event_values_t event) {
-    UNUSED(net); UNUSED(arg); UNUSED(arep);
-    
+    UNUSED(arg);
+
     const char *event_str;
     switch (event) {
         case PNET_EVENT_STARTUP: event_str = "STARTUP"; break;
@@ -91,15 +91,28 @@ int profinet_state_callback(pnet_t *net, void *arg,
         case PNET_EVENT_ABORT: event_str = "ABORT"; break;
         default: event_str = "UNKNOWN"; break;
     }
-    
+
     LOG_INFO("PROFINET state: %s (arep=%u)", event_str, arep);
 
-    if (event == PNET_EVENT_APPLRDY) {
+    if (event == PNET_EVENT_PRMEND) {
+        /*
+         * Parameterization complete - signal application ready to controller.
+         * This is REQUIRED for the connection handshake to complete.
+         * Without this call, the controller never receives a response
+         * and the connection times out.
+         */
+        int ret = pnet_application_ready(net, arep);
+        if (ret != 0) {
+            LOG_ERROR("pnet_application_ready() failed: %d", ret);
+        } else {
+            LOG_INFO("Application ready signaled to controller (arep=%u)", arep);
+        }
+    } else if (event == PNET_EVENT_APPLRDY) {
         profinet_manager_set_connected(true, arep);
     } else if (event == PNET_EVENT_ABORT) {
         profinet_manager_set_connected(false, 0);
     }
-    
+
     return 0;
 }
 
