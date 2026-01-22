@@ -677,45 +677,47 @@ result_t profinet_manager_start(const char *interface) {
     int dap_ret;
 
     // Plug DAP module at slot 0
-    dap_ret = pnet_plug_module(g_pn.pnet, 0, 0, PNET_MOD_DAP_IDENT);
+    // Uses GSDML-defined idents from gsdml_modules.h
+    dap_ret = pnet_plug_module(g_pn.pnet, 0, 0, GSDML_MOD_DAP);
     if (dap_ret != 0) {
         LOG_ERROR("Failed to plug DAP module at slot 0 (required by PROFINET)");
         g_pn.pnet = NULL;
         return RESULT_ERROR;
     }
-    LOG_DEBUG("Plugged DAP module at slot 0");
+    LOG_DEBUG("Plugged DAP module at slot 0 (ident=0x%08X)", GSDML_MOD_DAP);
 
     // Plug DAP submodule at slot 0, subslot 1
     dap_ret = pnet_plug_submodule(g_pn.pnet, 0, 0, 1,
-                                   PNET_MOD_DAP_IDENT, PNET_SUBMOD_DAP_IDENT,
+                                   GSDML_MOD_DAP, GSDML_SUBMOD_DAP,
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
         LOG_ERROR("Failed to plug DAP submodule at slot 0.1");
         g_pn.pnet = NULL;
         return RESULT_ERROR;
     }
-    LOG_DEBUG("Plugged DAP submodule at slot 0.1");
+    LOG_DEBUG("Plugged DAP submodule at slot 0.1 (ident=0x%08X)", GSDML_SUBMOD_DAP);
 
     // Plug DAP interface submodule at slot 0, subslot 0x8000
+    // Note: subslot 0x8000 is standard, but submodule ident is per GSDML
     dap_ret = pnet_plug_submodule(g_pn.pnet, 0, 0, 0x8000,
-                                   PNET_MOD_DAP_IDENT, PNET_SUBMOD_DAP_INTERFACE_1_IDENT,
+                                   GSDML_MOD_DAP, GSDML_SUBMOD_DAP_INTERFACE,
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
         LOG_WARNING("Failed to plug DAP interface submodule at slot 0.0x8000");
         // Non-fatal - some controllers don't require this
     } else {
-        LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000");
+        LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000 (ident=0x%08X)", GSDML_SUBMOD_DAP_INTERFACE);
     }
 
     // Plug DAP port submodule at slot 0, subslot 0x8001
     dap_ret = pnet_plug_submodule(g_pn.pnet, 0, 0, 0x8001,
-                                   PNET_MOD_DAP_IDENT, PNET_SUBMOD_DAP_INTERFACE_1_PORT_1_IDENT,
+                                   GSDML_MOD_DAP, GSDML_SUBMOD_DAP_PORT,
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
         LOG_WARNING("Failed to plug DAP port submodule at slot 0.0x8001");
         // Non-fatal - some controllers don't require this
     } else {
-        LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001");
+        LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001 (ident=0x%08X)", GSDML_SUBMOD_DAP_PORT);
     }
 
     // =========================================================================
