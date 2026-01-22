@@ -246,14 +246,15 @@ result_t auth_init(database_t *db) {
 
 /**
  * Convert user_sync_role_t to auth_role_t
+ * Note: user_sync_role_t uses USER_ROLE_* constants from shared header
  */
 static auth_role_t convert_sync_role(user_sync_role_t sync_role) {
     switch (sync_role) {
-        case USER_SYNC_ROLE_NONE:     return AUTH_ROLE_NONE;
-        case USER_SYNC_ROLE_VIEWER:   return AUTH_ROLE_VIEWER;
-        case USER_SYNC_ROLE_OPERATOR: return AUTH_ROLE_OPERATOR;
-        case USER_SYNC_ROLE_ADMIN:    return AUTH_ROLE_ADMIN;
-        default:                      return AUTH_ROLE_NONE;
+        case USER_ROLE_VIEWER:   return AUTH_ROLE_VIEWER;
+        case USER_ROLE_OPERATOR: return AUTH_ROLE_OPERATOR;
+        case USER_ROLE_ENGINEER: return AUTH_ROLE_OPERATOR;  /* Map engineer to operator */
+        case USER_ROLE_ADMIN:    return AUTH_ROLE_ADMIN;
+        default:                 return AUTH_ROLE_NONE;
     }
 }
 
