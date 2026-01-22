@@ -11,6 +11,10 @@
  * - Fail-safe defaults (deny on any error)
  * - DJB2 hash format compatible with controller: "DJB2:%08X:%08X"
  *
+ * Protocol Definition:
+ *   Canonical definitions are in user_sync_protocol.h (from Water-Controller)
+ *   See: docs/RTU_SHARED_PROTOCOL_SYNC.md
+ *
  * Controller Format Reference (web/api/app/persistence/users.py):
  *   Hash: _djb2_hash() with 32-bit overflow masking
  *   Salt: USER_SYNC_SALT = "NaCl4Life"
@@ -26,29 +30,43 @@
 #include <stdint.h>
 
 /* ============================================================================
- * Constants
- * ============================================================================ */
+ * Shared Protocol Definitions (from Water-Controller)
+ * ============================================================================
+ * These constants are defined in the shared protocol header fetched from
+ * the Water-Controller repository at build time. This ensures RTU and
+ * Controller use identical wire format definitions.
+ *
+ * See: docs/RTU_SHARED_PROTOCOL_SYNC.md
+ */
+#include "user_sync_protocol.h"
 
-/** Maximum users that can be stored in RTU (embedded constraint) */
-#define USER_SYNC_MAX_USERS         16
+/* ============================================================================
+ * RTU-Local Aliases for Backward Compatibility
+ * ============================================================================
+ * Map existing RTU code names to shared protocol names.
+ * New code should use the USER_SYNC_* names from the protocol header directly.
+ *
+ * Protocol header provides:
+ *   USER_SYNC_MAX_USERS        (16)
+ *   USER_SYNC_USERNAME_LEN     (32)
+ *   USER_SYNC_HASH_LEN         (24)
+ *   USER_SYNC_SALT             ("NaCl4Life")
+ *   USER_SYNC_RECORD_INDEX     (0xF840)
+ *   USER_SYNC_MAGIC            (0x55534552)
+ *   USER_SYNC_PROTOCOL_VERSION (2)
+ */
 
-/** Maximum username length (matches auth.h) */
-#define USER_SYNC_MAX_USERNAME      32
+/** Maximum username length - alias for shared protocol constant */
+#define USER_SYNC_MAX_USERNAME      USER_SYNC_USERNAME_LEN
 
-/** Maximum hash string length: "DJB2:XXXXXXXX:XXXXXXXX" + null */
-#define USER_SYNC_MAX_HASH          24
+/** Maximum hash string length - alias for shared protocol constant */
+#define USER_SYNC_MAX_HASH          USER_SYNC_HASH_LEN
 
-/** Salt used for password hashing (must match controller) */
-#define USER_SYNC_SALT              "NaCl4Life"
+/** PROFINET record index - alias for shared protocol constant */
+#define USER_SYNC_PROFINET_INDEX    USER_SYNC_RECORD_INDEX
 
-/** PROFINET record index for user sync data (vendor-specific range) */
-#define USER_SYNC_PROFINET_INDEX    0xF840
-
-/** Magic header for user sync packets */
-#define USER_SYNC_MAGIC             0x55534552  /* "USER" in ASCII */
-
-/** Protocol version for user sync format */
-#define USER_SYNC_VERSION           1
+/** Protocol version - alias for shared protocol constant */
+#define USER_SYNC_VERSION           USER_SYNC_PROTOCOL_VERSION
 
 /* ============================================================================
  * Types
@@ -83,15 +101,28 @@ typedef struct {
 /**
  * User sync packet header (from controller via PROFINET)
  * All multi-byte fields are big-endian (network byte order)
+ *
+ * Wire format (20 bytes) - Protocol Version 2:
+ *   magic:u32         = 0x55534552 ("USER")
+ *   version:u8        = 2
+ *   operation:u8      = 0x00 (full), 0x01 (add/update), 0x02 (delete)
+ *   user_count:u8     = 0-16
+ *   reserved:u8       = 0
+ *   timestamp:u32     = Unix timestamp
+ *   nonce:u32         = Random (replay detection)
+ *   checksum:u16      = CRC16-CCITT of user records
+ *   reserved2:u16     = 0
  */
 typedef struct __attribute__((packed)) {
     uint32_t magic;         /**< USER_SYNC_MAGIC */
-    uint8_t  version;       /**< Protocol version */
+    uint8_t  version;       /**< Protocol version (2) */
     uint8_t  operation;     /**< 0=full sync, 1=add/update, 2=delete */
-    uint16_t user_count;    /**< Number of users in packet */
+    uint8_t  user_count;    /**< Number of users in packet (0-16) */
+    uint8_t  reserved;      /**< Reserved for alignment */
     uint32_t timestamp;     /**< Sync timestamp (epoch seconds) */
+    uint32_t nonce;         /**< Random nonce for replay detection */
     uint16_t checksum;      /**< CRC16-CCITT of payload */
-    uint16_t reserved;      /**< Reserved for alignment */
+    uint16_t reserved2;     /**< Reserved for alignment */
 } user_sync_header_t;
 
 /**

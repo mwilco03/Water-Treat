@@ -142,7 +142,7 @@ static bool validate_header(const user_sync_header_t *hdr, uint16_t total_len) {
     }
 
     /* Check packet size makes sense */
-    uint16_t user_count = ntohs(hdr->user_count);
+    uint8_t user_count = hdr->user_count;  /* v2: single byte, no byte swap needed */
     size_t expected_size = sizeof(user_sync_header_t) +
                            (user_count * sizeof(user_sync_packet_entry_t));
 
@@ -328,7 +328,7 @@ result_t user_sync_process_packet(const uint8_t *data, uint16_t length) {
     }
 
     user_sync_operation_t operation = (user_sync_operation_t)hdr->operation;
-    uint16_t user_count = ntohs(hdr->user_count);
+    uint8_t user_count = hdr->user_count;  /* v2: single byte, no byte swap needed */
 
     LOG_INFO("User sync: processing %s with %u users",
              operation == USER_SYNC_OP_FULL_SYNC ? "full sync" :

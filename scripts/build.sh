@@ -187,6 +187,48 @@ check_libraries() {
 }
 
 # ------------------------------------------------------------------------------
+# Fetch Shared Protocol Headers
+# ------------------------------------------------------------------------------
+# What: Download protocol definitions from Water-Controller repo
+# Why: RTU must use identical wire formats to Controller
+#      Single source of truth prevents protocol drift
+# Edge cases: Network failure, validation failure are breaking
+# User impact: Build fails fast if protocols can't be fetched/validated
+#
+# See: docs/RTU_SHARED_PROTOCOL_SYNC.md
+#
+
+fetch_shared_protocols() {
+    local shared_dir="${PROJECT_ROOT}/include/shared"
+
+    action "Fetching shared protocol definitions"
+    detail "Source: github.com/mwilco03/Water-Controller"
+    detail "Destination: ${shared_dir}"
+
+    # Run fetch script
+    if ! "${SCRIPT_DIR}/fetch_shared_protocols.sh" "${shared_dir}"; then
+        breaking "Failed to fetch shared protocol headers"
+        echo ""
+        error "Cannot build without protocol definitions from Water-Controller."
+        error "Check network connectivity to GitHub."
+        return 1
+    fi
+
+    # Run validation script
+    if ! "${SCRIPT_DIR}/validate_protocols.sh" "${shared_dir}"; then
+        breaking "Protocol validation failed"
+        echo ""
+        error "Downloaded headers do not match expected versions."
+        error "This may indicate a protocol version mismatch."
+        error "Check docs/RTU_SHARED_PROTOCOL_SYNC.md for details."
+        return 1
+    fi
+
+    success "Protocol headers fetched and validated"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # CMake Configuration
 # ------------------------------------------------------------------------------
 # What: Run cmake to configure the build
@@ -370,6 +412,10 @@ main() {
             rm -rf "${BUILD_DIR}"
         fi
     fi
+
+    # Fetch shared protocol headers from Water-Controller
+    header "Shared Protocols"
+    fetch_shared_protocols || exit 1
 
     # Configure
     header "Configure"
