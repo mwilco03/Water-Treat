@@ -358,6 +358,7 @@ endif()
 
 target_include_directories(water-treat PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/shared    # Protocol headers from Water-Controller
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/drivers
     ${CMAKE_SOURCE_DIR}/src/sensors

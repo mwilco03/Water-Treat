@@ -33,7 +33,13 @@ readonly BACKUP_DIR="/var/backups/water-treat"
 readonly BOOTSTRAP_LOG="/var/log/water-treat-bootstrap.log"
 readonly MIN_DISK_SPACE_MB=512
 readonly REQUIRED_TOOLS=("git" "curl" "cmake" "make" "gcc")
-readonly BUILD_DEPS=("build-essential" "cmake" "libncurses5-dev" "libsqlite3-dev" "libcurl4-openssl-dev" "libcjson-dev" "libgpiod-dev")
+readonly BUILD_DEPS=("build-essential" "cmake" "libncurses5-dev" "libsqlite3-dev" "libcurl4-openssl-dev" "libcjson-dev" "libgpiod-dev" "libsystemd-dev")
+
+# Shared protocol headers from Water-Controller
+readonly CONTROLLER_REPO="mwilco03/Water-Controller"
+readonly CONTROLLER_BRANCH="main"
+readonly CONTROLLER_RAW_URL="https://raw.githubusercontent.com/${CONTROLLER_REPO}/${CONTROLLER_BRANCH}/shared/include"
+readonly SHARED_PROTOCOL_FILES=("user_sync_protocol.h" "config_sync_protocol.h")
 
 # Service name
 readonly SERVICE_NAME="water-treat"
@@ -569,6 +575,119 @@ clone_to_staging() {
 }
 
 # =============================================================================
+# Shared Protocol Fetch
+# =============================================================================
+
+fetch_shared_protocols() {
+    local source_dir="$1"
+    local shared_dir="${source_dir}/include/shared"
+
+    log_step "Fetching shared protocol headers from Water-Controller..."
+
+    mkdir -p "$shared_dir"
+
+    local failed=0
+    for file in "${SHARED_PROTOCOL_FILES[@]}"; do
+        local url="${CONTROLLER_RAW_URL}/${file}"
+        local dest="${shared_dir}/${file}"
+
+        log_verbose "Fetching ${file}..."
+
+        # Retry with exponential backoff
+        local max_retries=4
+        local delay=2
+        local success=false
+
+        for ((attempt=1; attempt<=max_retries; attempt++)); do
+            if curl -fsSL --connect-timeout 10 "$url" -o "$dest" 2>/dev/null; then
+                # Verify file is not empty and looks like a C header
+                if [[ -s "$dest" ]] && grep -q "#ifndef" "$dest"; then
+                    success=true
+                    break
+                fi
+            fi
+
+            if [[ $attempt -lt $max_retries ]]; then
+                log_verbose "Retry $attempt for ${file} in ${delay}s..."
+                sleep $delay
+                delay=$((delay * 2))
+            fi
+        done
+
+        if [[ "$success" == "true" ]]; then
+            log_verbose "Downloaded: ${file}"
+        else
+            log_error "Failed to fetch: ${file}"
+            ((failed++))
+        fi
+    done
+
+    if [[ $failed -gt 0 ]]; then
+        log_error "Failed to fetch $failed protocol file(s) from Water-Controller"
+        log_error "Check network connectivity to GitHub"
+        return 1
+    fi
+
+    # Validate protocol files
+    validate_shared_protocols "$shared_dir" || return 1
+
+    log_info "Shared protocol headers fetched and validated"
+    return 0
+}
+
+validate_shared_protocols() {
+    local shared_dir="$1"
+
+    log_verbose "Validating protocol headers..."
+
+    # Validate user_sync_protocol.h
+    local user_sync="${shared_dir}/user_sync_protocol.h"
+    if [[ ! -f "$user_sync" ]]; then
+        log_error "Missing: user_sync_protocol.h"
+        return 1
+    fi
+
+    # Check required markers
+    local markers=(
+        "USER_SYNC_MAGIC.*0x55534552"
+        "USER_SYNC_PROTOCOL_VERSION.*2"
+        "USER_SYNC_RECORD_INDEX.*0xF840"
+        "USER_SYNC_MAX_USERS.*16"
+        "USER_SYNC_SALT.*NaCl4Life"
+    )
+
+    for marker in "${markers[@]}"; do
+        if ! grep -qE "$marker" "$user_sync"; then
+            log_error "user_sync_protocol.h: missing marker pattern: $marker"
+            return 1
+        fi
+    done
+
+    # Validate config_sync_protocol.h
+    local config_sync="${shared_dir}/config_sync_protocol.h"
+    if [[ ! -f "$config_sync" ]]; then
+        log_error "Missing: config_sync_protocol.h"
+        return 1
+    fi
+
+    local config_markers=(
+        "CONFIG_SYNC_PROTOCOL_VERSION.*1"
+        "CONFIG_SYNC_DEVICE_INDEX.*0xF841"
+        "ENROLLMENT_MAGIC.*0x454E524C"
+    )
+
+    for marker in "${config_markers[@]}"; do
+        if ! grep -qE "$marker" "$config_sync"; then
+            log_error "config_sync_protocol.h: missing marker pattern: $marker"
+            return 1
+        fi
+    done
+
+    log_verbose "Protocol headers validated successfully"
+    return 0
+}
+
+# =============================================================================
 # Build Functions
 # =============================================================================
 
@@ -581,6 +700,12 @@ build_from_source() {
         log_error "CMakeLists.txt not found in $source_dir"
         return 1
     fi
+
+    # Fetch shared protocol headers from Water-Controller
+    fetch_shared_protocols "$source_dir" || {
+        log_error "Cannot build without protocol headers from Water-Controller"
+        return 1
+    }
 
     local build_dir="$source_dir/build"
     mkdir -p "$build_dir"

@@ -1,0 +1,25 @@
+# =============================================================================
+# Shared Protocol Headers - Fetched from Water-Controller
+# =============================================================================
+#
+# These files are downloaded at build time from:
+#   github.com/mwilco03/Water-Controller/shared/include/
+#
+# DO NOT:
+#   - Edit these files locally (changes will be overwritten)
+#   - Commit .h files to this directory
+#   - Copy-paste from these files into other code
+#
+# Instead:
+#   - #include the headers and use the defined constants
+#   - Submit protocol changes to Water-Controller repo
+#   - Re-run fetch_shared_protocols.sh after controller updates
+#
+# See: docs/RTU_SHARED_PROTOCOL_SYNC.md
+# =============================================================================
+
+# Ignore all .h files (they are fetched, not committed)
+*.h
+
+# But track this .gitignore
+!.gitignore
