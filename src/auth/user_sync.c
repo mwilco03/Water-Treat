@@ -9,12 +9,14 @@
  * - Static allocation only - no heap usage after initialization
  * - Fail-safe: any error condition results in access denial
  * - Hash format matches controller: "DJB2:%08X:%08X"
+ *
+ * Protocol types and inline functions from: user_sync_protocol.h (shared)
  */
 
 #include "user_sync.h"
 #include "utils/logger.h"
 #include <string.h>
-#include <arpa/inet.h>  /* ntohl, ntohs for network byte order */
+#include <arpa/inet.h>  /* ntohl for network byte order */
 #include <time.h>
 
 /* ============================================================================
@@ -83,7 +85,7 @@ static int find_user_by_id(uint32_t user_id) {
 
 /**
  * Find user by username
- * Uses constant-time comparison
+ * Uses constant-time comparison from shared header
  * @return Index of user, or -1 if not found
  */
 static int find_user_by_name(const char *username) {
@@ -92,7 +94,7 @@ static int find_user_by_name(const char *username) {
     for (int i = 0; i < USER_SYNC_MAX_USERS; i++) {
         if (g_users[i].valid) {
             if (user_sync_constant_time_compare(g_users[i].username, username,
-                                                 USER_SYNC_MAX_USERNAME)) {
+                                                 USER_SYNC_USERNAME_LEN)) {
                 return i;
             }
         }
@@ -101,61 +103,26 @@ static int find_user_by_name(const char *username) {
 }
 
 /**
- * CRC16-CCITT for packet validation
- * Polynomial: 0x1021, Initial: 0xFFFF
- * This matches the controller's implementation
- */
-static uint16_t compute_crc16_ccitt(const uint8_t *data, size_t length) {
-    uint16_t crc = 0xFFFF;
-
-    for (size_t i = 0; i < length; i++) {
-        crc ^= ((uint16_t)data[i] << 8);
-        for (int j = 0; j < 8; j++) {
-            if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-
-    return crc;
-}
-
-/**
  * Validate packet header
+ * Uses user_sync_validate_header from shared header for magic/version checks
  */
 static bool validate_header(const user_sync_header_t *hdr, uint16_t total_len) {
-    /* Check magic */
-    uint32_t magic = ntohl(hdr->magic);
-    if (magic != USER_SYNC_MAGIC) {
-        LOG_WARNING("User sync: invalid magic 0x%08X (expected 0x%08X)",
-                    magic, USER_SYNC_MAGIC);
-        return false;
-    }
-
-    /* Check version */
-    if (hdr->version != USER_SYNC_VERSION) {
-        LOG_WARNING("User sync: unsupported version %d (expected %d)",
-                    hdr->version, USER_SYNC_VERSION);
+    /* Use shared header validation for magic/version */
+    user_sync_result_t result = user_sync_validate_header(hdr);
+    if (result != USER_SYNC_OK) {
+        LOG_WARNING("User sync: header validation failed: %s",
+                    user_sync_result_str(result));
         return false;
     }
 
     /* Check packet size makes sense */
-    uint8_t user_count = hdr->user_count;  /* v2: single byte, no byte swap needed */
+    uint8_t user_count = hdr->user_count;
     size_t expected_size = sizeof(user_sync_header_t) +
-                           (user_count * sizeof(user_sync_packet_entry_t));
+                           (user_count * sizeof(user_sync_record_t));
 
     if (total_len < expected_size) {
         LOG_WARNING("User sync: packet too short (%u < %zu)",
                     total_len, expected_size);
-        return false;
-    }
-
-    /* Validate user count */
-    if (user_count > USER_SYNC_MAX_USERS) {
-        LOG_WARNING("User sync: too many users %u (max %d)",
-                    user_count, USER_SYNC_MAX_USERS);
         return false;
     }
 
@@ -164,13 +131,14 @@ static bool validate_header(const user_sync_header_t *hdr, uint16_t total_len) {
 
 /**
  * Process a single user entry from sync packet
+ * Uses user_sync_record_t from shared header
  */
-static result_t process_user_entry(const user_sync_packet_entry_t *entry,
-                                   user_sync_operation_t operation) {
+static result_t process_user_entry(const user_sync_record_t *entry,
+                                   uint8_t operation) {
     uint32_t user_id = ntohl(entry->user_id);
 
-    /* Skip users not marked for RTU sync */
-    if (!entry->sync_to_rtus) {
+    /* Check if user is marked for RTU sync via flags */
+    if (!(entry->flags & USER_FLAG_SYNC_TO_RTUS)) {
         LOG_DEBUG("User sync: skipping user ID %u (not marked for RTU sync)", user_id);
         return RESULT_OK;
     }
@@ -182,9 +150,9 @@ static result_t process_user_entry(const user_sync_packet_entry_t *entry,
     }
 
     /* Ensure null termination (paranoid check) */
-    char username[USER_SYNC_MAX_USERNAME];
-    memcpy(username, entry->username, USER_SYNC_MAX_USERNAME - 1);
-    username[USER_SYNC_MAX_USERNAME - 1] = '\0';
+    char username[USER_SYNC_USERNAME_LEN];
+    memcpy(username, entry->username, USER_SYNC_USERNAME_LEN - 1);
+    username[USER_SYNC_USERNAME_LEN - 1] = '\0';
 
     /* Handle delete operation */
     if (operation == USER_SYNC_OP_DELETE) {
@@ -215,9 +183,9 @@ static result_t process_user_entry(const user_sync_packet_entry_t *entry,
     SAFE_STRNCPY(user->username, username, sizeof(user->username));
 
     /* Copy and validate hash format */
-    char hash[USER_SYNC_MAX_HASH];
-    memcpy(hash, entry->password_hash, USER_SYNC_MAX_HASH - 1);
-    hash[USER_SYNC_MAX_HASH - 1] = '\0';
+    char hash[USER_SYNC_HASH_LEN];
+    memcpy(hash, entry->password_hash, USER_SYNC_HASH_LEN - 1);
+    hash[USER_SYNC_HASH_LEN - 1] = '\0';
 
     /* Validate hash format: "DJB2:XXXXXXXX:XXXXXXXX" */
     if (strncmp(hash, "DJB2:", 5) != 0 || strlen(hash) < 22) {
@@ -227,22 +195,22 @@ static result_t process_user_entry(const user_sync_packet_entry_t *entry,
     SAFE_STRNCPY(user->password_hash, hash, sizeof(user->password_hash));
 
     /* Set role with validation */
-    if (entry->role > USER_SYNC_ROLE_ADMIN) {
+    if (entry->role > USER_ROLE_ADMIN) {
         LOG_WARNING("User sync: invalid role %d for user '%s', defaulting to VIEWER",
                     entry->role, username);
-        user->role = USER_SYNC_ROLE_VIEWER;
+        user->role = USER_ROLE_VIEWER;
     } else {
-        user->role = (user_sync_role_t)entry->role;
+        user->role = entry->role;
     }
 
-    user->active = (entry->active != 0);
+    user->active = (entry->flags & USER_FLAG_ACTIVE) != 0;
     user->sync_to_rtus = true;  /* Already validated above */
     user->sync_timestamp = (uint32_t)time(NULL);
     user->valid = true;
 
     LOG_INFO("User sync: %s user '%s' (ID %u, role=%s, active=%d)",
              (find_user_by_id(user_id) == idx) ? "updated" : "added",
-             username, user_id, user_sync_role_to_string(user->role), user->active);
+             username, user_id, user_sync_role_str(user->role), user->active);
 
     return RESULT_OK;
 }
@@ -304,7 +272,7 @@ result_t user_sync_process_packet(const uint8_t *data, uint16_t length) {
     /* Parse header */
     const user_sync_header_t *hdr = (const user_sync_header_t *)data;
 
-    /* Validate header */
+    /* Validate header using shared function */
     if (!validate_header(hdr, length)) {
         g_status.error_count++;
         g_status.last_error_code = RESULT_INVALID_PARAM;
@@ -312,11 +280,11 @@ result_t user_sync_process_packet(const uint8_t *data, uint16_t length) {
         return RESULT_INVALID_PARAM;
     }
 
-    /* Verify checksum (CRC16-CCITT) */
+    /* Verify checksum (CRC16-CCITT) using shared function */
     uint16_t stored_checksum = ntohs(hdr->checksum);
     size_t payload_offset = sizeof(user_sync_header_t);
     size_t payload_len = length - payload_offset;
-    uint16_t computed_checksum = compute_crc16_ccitt(data + payload_offset, payload_len);
+    uint16_t computed_checksum = user_sync_crc16_ccitt(data + payload_offset, payload_len);
 
     if (stored_checksum != computed_checksum) {
         LOG_WARNING("User sync: checksum mismatch (got 0x%04X, expected 0x%04X)",
@@ -327,13 +295,11 @@ result_t user_sync_process_packet(const uint8_t *data, uint16_t length) {
         return RESULT_ERROR;
     }
 
-    user_sync_operation_t operation = (user_sync_operation_t)hdr->operation;
-    uint8_t user_count = hdr->user_count;  /* v2: single byte, no byte swap needed */
+    uint8_t operation = hdr->operation;
+    uint8_t user_count = hdr->user_count;
 
     LOG_INFO("User sync: processing %s with %u users",
-             operation == USER_SYNC_OP_FULL_SYNC ? "full sync" :
-             operation == USER_SYNC_OP_ADD_UPDATE ? "add/update" : "delete",
-             user_count);
+             user_sync_op_str(operation), user_count);
 
     /* For full sync, clear existing users first */
     if (operation == USER_SYNC_OP_FULL_SYNC) {
@@ -341,14 +307,14 @@ result_t user_sync_process_packet(const uint8_t *data, uint16_t length) {
     }
 
     /* Process each user entry */
-    const user_sync_packet_entry_t *entries =
-        (const user_sync_packet_entry_t *)(data + sizeof(user_sync_header_t));
+    const user_sync_record_t *entries =
+        (const user_sync_record_t *)(data + sizeof(user_sync_header_t));
 
     result_t result = RESULT_OK;
     int processed = 0;
     int errors = 0;
 
-    for (uint16_t i = 0; i < user_count; i++) {
+    for (uint8_t i = 0; i < user_count; i++) {
         result_t r = process_user_entry(&entries[i], operation);
         if (r == RESULT_OK) {
             processed++;
@@ -399,8 +365,8 @@ bool user_sync_authenticate(const char *username, const char *password,
     int idx = find_user_by_name(username);
     if (idx < 0) {
         /* User not found - but still compute hash to prevent timing leak */
-        char dummy_hash[USER_SYNC_MAX_HASH];
-        user_sync_hash_password(password, dummy_hash);
+        char dummy_hash[USER_SYNC_HASH_LEN];
+        user_sync_format_hash(password, dummy_hash);
         return false;
     }
 
@@ -412,21 +378,21 @@ bool user_sync_authenticate(const char *username, const char *password,
         return false;
     }
 
-    /* Compute hash for provided password */
-    char computed_hash[USER_SYNC_MAX_HASH];
-    user_sync_hash_password(password, computed_hash);
+    /* Compute hash for provided password using shared function */
+    char computed_hash[USER_SYNC_HASH_LEN];
+    user_sync_format_hash(password, computed_hash);
 
-    /* Constant-time comparison of hashes */
+    /* Constant-time comparison of hashes using shared function */
     bool match = user_sync_constant_time_compare(computed_hash,
                                                   user->password_hash,
-                                                  USER_SYNC_MAX_HASH);
+                                                  USER_SYNC_HASH_LEN);
 
     if (match) {
         if (role) {
             *role = user->role;
         }
         LOG_INFO("User sync auth: user '%s' authenticated (role=%s)",
-                 username, user_sync_role_to_string(user->role));
+                 username, user_sync_role_str(user->role));
         return true;
     }
 
@@ -504,91 +470,27 @@ bool user_sync_has_users(void) {
 }
 
 /* ============================================================================
- * Hash Utility Functions
+ * Hash Utility Functions (wrappers around shared inline functions)
  * ============================================================================ */
 
 uint32_t user_sync_djb2_hash(const char *str) {
     if (!str) {
-        return 5381;
+        return DJB2_INIT;
     }
-
-    uint32_t hash = 5381;
-    int c;
-
-    while ((c = (unsigned char)*str++)) {
-        hash = ((hash << 5) + hash) + (uint32_t)c;  /* hash * 33 + c */
-    }
-
-    return hash;
+    return user_sync_djb2(str);
 }
 
 void user_sync_hash_password(const char *password, char *hash_out) {
     if (!hash_out) return;
-
     if (!password) {
         hash_out[0] = '\0';
         return;
     }
-
-    /* Compute salt hash */
-    uint32_t salt_hash = user_sync_djb2_hash(USER_SYNC_SALT);
-
-    /* Compute hash of salt + password */
-    char combined[256];
-    snprintf(combined, sizeof(combined), "%s%s", USER_SYNC_SALT, password);
-    uint32_t password_hash = user_sync_djb2_hash(combined);
-
-    /* Format: "DJB2:%08X:%08X" */
-    snprintf(hash_out, USER_SYNC_MAX_HASH, "DJB2:%08X:%08X",
-             salt_hash, password_hash);
-}
-
-bool user_sync_constant_time_compare(const char *a, const char *b, size_t len) {
-    if (!a || !b) {
-        return false;
-    }
-
-    volatile uint8_t result = 0;
-    size_t i;
-
-    /*
-     * Always iterate full length to prevent timing attacks.
-     * XOR accumulates differences - if any byte differs, result != 0
-     */
-    for (i = 0; i < len; i++) {
-        uint8_t ca = (uint8_t)a[i];
-        uint8_t cb = (uint8_t)b[i];
-        result |= (ca ^ cb);
-
-        /*
-         * Handle null termination consistently.
-         * Once we hit null in either string, use null for comparison.
-         * This ensures we still iterate the full length.
-         */
-        if (a[i] == '\0' || b[i] == '\0') {
-            /* Check if both terminated at same point */
-            if (a[i] != b[i]) {
-                result |= 0xFF;  /* Strings have different lengths */
-            }
-            /* Continue iterating with nulls to maintain constant time */
-            for (i++; i < len; i++) {
-                result |= 0;  /* No-op but compiler can't optimize away */
-            }
-            break;
-        }
-    }
-
-    return result == 0;
+    user_sync_format_hash(password, hash_out);
 }
 
 const char* user_sync_role_to_string(user_sync_role_t role) {
-    switch (role) {
-        case USER_SYNC_ROLE_NONE:     return "None";
-        case USER_SYNC_ROLE_VIEWER:   return "Viewer";
-        case USER_SYNC_ROLE_OPERATOR: return "Operator";
-        case USER_SYNC_ROLE_ADMIN:    return "Admin";
-        default:                      return "Unknown";
-    }
+    return user_sync_role_str(role);
 }
 
 /* ============================================================================
@@ -748,22 +650,6 @@ result_t user_sync_save_to_nv(void) {
  * Hash Verification Functions
  * ============================================================================ */
 
-void user_sync_hash_with_salt(const char *password,
-                               uint32_t *salt_hash,
-                               uint32_t *pass_hash) {
-    if (salt_hash) {
-        *salt_hash = user_sync_djb2_hash(USER_SYNC_SALT);
-    }
-
-    if (pass_hash && password) {
-        char combined[256];
-        snprintf(combined, sizeof(combined), "%s%s", USER_SYNC_SALT, password);
-        *pass_hash = user_sync_djb2_hash(combined);
-    } else if (pass_hash) {
-        *pass_hash = 0;
-    }
-}
-
 bool user_sync_verify_hash_implementation(void) {
     /*
      * Verified DJB2 test vectors (confirmed with Controller team 2026-01-20):
@@ -781,19 +667,19 @@ bool user_sync_verify_hash_implementation(void) {
     bool pass = true;
 
     /* Test empty string */
-    if (user_sync_djb2_hash("") != 5381) {
+    if (user_sync_djb2("") != 5381) {
         LOG_ERROR("Hash verify: empty string failed");
         pass = false;
     }
 
     /* Test single char */
-    if (user_sync_djb2_hash("a") != 177670) {
+    if (user_sync_djb2("a") != 177670) {
         LOG_ERROR("Hash verify: single char failed");
         pass = false;
     }
 
     /* Test salt hash - must match controller exactly */
-    uint32_t salt_hash = user_sync_djb2_hash(USER_SYNC_SALT);
+    uint32_t salt_hash = user_sync_djb2(USER_SYNC_SALT);
     if (salt_hash != 0x1A3C1FD7) {
         LOG_ERROR("Hash verify: salt hash failed (got 0x%08X, expected 0x1A3C1FD7)", salt_hash);
         pass = false;
@@ -809,8 +695,8 @@ bool user_sync_verify_hash_implementation(void) {
     }
 
     /* Verify full wire format */
-    char hash_str[USER_SYNC_MAX_HASH];
-    user_sync_hash_password("test123", hash_str);
+    char hash_str[USER_SYNC_HASH_LEN];
+    user_sync_format_hash("test123", hash_str);
     LOG_INFO("Hash verify: test password hash = %s", hash_str);
 
     /* Check format matches expected wire format exactly */

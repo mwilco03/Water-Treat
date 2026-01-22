@@ -32,9 +32,29 @@
 /* ============================================================================
  * Shared Protocol Definitions (from Water-Controller)
  * ============================================================================
- * These constants are defined in the shared protocol header fetched from
- * the Water-Controller repository at build time. This ensures RTU and
- * Controller use identical wire format definitions.
+ * These types, constants, and inline functions are defined in the shared
+ * protocol header fetched from the Water-Controller repository at build time.
+ * This ensures RTU and Controller use identical wire format definitions.
+ *
+ * Provided by user_sync_protocol.h:
+ *   Constants:
+ *     USER_SYNC_PROTOCOL_VERSION, USER_SYNC_MAGIC, USER_SYNC_RECORD_INDEX
+ *     USER_SYNC_MAX_USERS, USER_SYNC_USERNAME_LEN, USER_SYNC_HASH_LEN
+ *     USER_SYNC_SALT, DJB2_INIT
+ *     USER_SYNC_OP_FULL_SYNC, USER_SYNC_OP_ADD_UPDATE, USER_SYNC_OP_DELETE
+ *     USER_ROLE_VIEWER, USER_ROLE_OPERATOR, USER_ROLE_ENGINEER, USER_ROLE_ADMIN
+ *     USER_FLAG_ACTIVE, USER_FLAG_SYNC_TO_RTUS
+ *
+ *   Types:
+ *     user_sync_role_t, user_sync_header_t, user_sync_record_t
+ *     user_sync_payload_t, user_sync_result_t
+ *
+ *   Inline functions:
+ *     user_sync_djb2(), user_sync_hash_with_salt(), user_sync_format_hash()
+ *     user_sync_constant_time_compare(), user_sync_crc16_ccitt()
+ *     user_sync_validate_header(), user_sync_validate_payload()
+ *     user_sync_init_header(), user_sync_result_str(), user_sync_role_str()
+ *     user_sync_op_str(), user_sync_role_sufficient(), user_sync_payload_size()
  *
  * See: docs/RTU_SHARED_PROTOCOL_SYNC.md
  */
@@ -44,16 +64,7 @@
  * RTU-Local Aliases for Backward Compatibility
  * ============================================================================
  * Map existing RTU code names to shared protocol names.
- * New code should use the USER_SYNC_* names from the protocol header directly.
- *
- * Protocol header provides:
- *   USER_SYNC_MAX_USERS        (16)
- *   USER_SYNC_USERNAME_LEN     (32)
- *   USER_SYNC_HASH_LEN         (24)
- *   USER_SYNC_SALT             ("NaCl4Life")
- *   USER_SYNC_RECORD_INDEX     (0xF840)
- *   USER_SYNC_MAGIC            (0x55534552)
- *   USER_SYNC_PROTOCOL_VERSION (2)
+ * New code should use the shared protocol names directly.
  */
 
 /** Maximum username length - alias for shared protocol constant */
@@ -69,84 +80,28 @@
 #define USER_SYNC_VERSION           USER_SYNC_PROTOCOL_VERSION
 
 /* ============================================================================
- * Types
- * ============================================================================ */
-
-/**
- * User roles for RTU local access control
- * Must match controller auth_role_t values
+ * RTU-Local Types
+ * ============================================================================
+ * These types are specific to the RTU implementation and not shared.
  */
-typedef enum {
-    USER_SYNC_ROLE_NONE     = 0,    /**< No access */
-    USER_SYNC_ROLE_VIEWER   = 1,    /**< Read-only access */
-    USER_SYNC_ROLE_OPERATOR = 2,    /**< Can control actuators, ack alarms */
-    USER_SYNC_ROLE_ADMIN    = 3,    /**< Full access including config */
-} user_sync_role_t;
 
 /**
- * Synced user credential entry
- * Stored in static array, no heap allocation
+ * Synced user credential entry (RTU local storage format)
+ *
+ * This is the RTU's internal representation of a user.
+ * Differs from user_sync_record_t (wire format) in having additional
+ * local state like sync_timestamp and valid flag.
  */
 typedef struct {
     uint32_t user_id;                           /**< Unique ID from controller */
-    char username[USER_SYNC_MAX_USERNAME];      /**< Username for login */
-    char password_hash[USER_SYNC_MAX_HASH];     /**< DJB2:%08X:%08X format */
+    char username[USER_SYNC_USERNAME_LEN];      /**< Username for login */
+    char password_hash[USER_SYNC_HASH_LEN];     /**< DJB2:%08X:%08X format */
     user_sync_role_t role;                      /**< Access level */
     bool active;                                /**< Account enabled flag */
     bool sync_to_rtus;                          /**< Controller marked for RTU sync */
     uint32_t sync_timestamp;                    /**< When last synced (epoch) */
     bool valid;                                 /**< Slot in use flag */
 } user_sync_entry_t;
-
-/**
- * User sync packet header (from controller via PROFINET)
- * All multi-byte fields are big-endian (network byte order)
- *
- * Wire format (20 bytes) - Protocol Version 2:
- *   magic:u32         = 0x55534552 ("USER")
- *   version:u8        = 2
- *   operation:u8      = 0x00 (full), 0x01 (add/update), 0x02 (delete)
- *   user_count:u8     = 0-16
- *   reserved:u8       = 0
- *   timestamp:u32     = Unix timestamp
- *   nonce:u32         = Random (replay detection)
- *   checksum:u16      = CRC16-CCITT of user records
- *   reserved2:u16     = 0
- */
-typedef struct __attribute__((packed)) {
-    uint32_t magic;         /**< USER_SYNC_MAGIC */
-    uint8_t  version;       /**< Protocol version (2) */
-    uint8_t  operation;     /**< 0=full sync, 1=add/update, 2=delete */
-    uint8_t  user_count;    /**< Number of users in packet (0-16) */
-    uint8_t  reserved;      /**< Reserved for alignment */
-    uint32_t timestamp;     /**< Sync timestamp (epoch seconds) */
-    uint32_t nonce;         /**< Random nonce for replay detection */
-    uint16_t checksum;      /**< CRC16-CCITT of payload */
-    uint16_t reserved2;     /**< Reserved for alignment */
-} user_sync_header_t;
-
-/**
- * User sync packet entry (from controller)
- * Follows header, repeated user_count times
- */
-typedef struct __attribute__((packed)) {
-    uint32_t user_id;                           /**< User ID from controller DB */
-    char     username[USER_SYNC_MAX_USERNAME];  /**< Null-terminated username */
-    char     password_hash[USER_SYNC_MAX_HASH]; /**< DJB2:%08X:%08X */
-    uint8_t  role;                              /**< user_sync_role_t value */
-    uint8_t  active;                            /**< 1=enabled, 0=disabled */
-    uint8_t  sync_to_rtus;                      /**< 1=sync to RTU, 0=skip */
-    uint8_t  reserved;                          /**< Padding for alignment */
-} user_sync_packet_entry_t;
-
-/**
- * User sync operation types
- */
-typedef enum {
-    USER_SYNC_OP_FULL_SYNC  = 0,    /**< Replace all users */
-    USER_SYNC_OP_ADD_UPDATE = 1,    /**< Add or update specific users */
-    USER_SYNC_OP_DELETE     = 2,    /**< Delete specific users */
-} user_sync_operation_t;
 
 /**
  * Sync status for diagnostics
@@ -184,7 +139,7 @@ void user_sync_shutdown(void);
  * Process incoming user sync packet from PROFINET
  *
  * Called from profinet_write_callback() when a user sync record
- * is received (index USER_SYNC_PROFINET_INDEX).
+ * is received (index USER_SYNC_RECORD_INDEX).
  *
  * @param data      Raw packet data
  * @param length    Packet length in bytes
@@ -255,16 +210,15 @@ void user_sync_clear_all(void);
 bool user_sync_has_users(void);
 
 /* ============================================================================
- * Hash Utility Functions
- * ============================================================================ */
+ * Hash Utility Functions (RTU-specific wrappers)
+ * ============================================================================
+ * These wrap the shared inline functions for compatibility with existing code.
+ */
 
 /**
  * Compute DJB2 hash of a string
  *
- * Standard DJB2 algorithm with 32-bit masking:
- *   hash = 5381
- *   for each char c: hash = ((hash << 5) + hash) + c
- *   return hash & 0xFFFFFFFF
+ * Wrapper around user_sync_djb2() from shared header.
  *
  * @param str   String to hash
  * @return 32-bit hash value
@@ -274,30 +228,17 @@ uint32_t user_sync_djb2_hash(const char *str);
 /**
  * Generate password hash in controller-compatible format
  *
- * Format: "DJB2:%08X:%08X" where:
- *   - First hash is djb2(salt)
- *   - Second hash is djb2(salt + password)
+ * Wrapper around user_sync_format_hash() from shared header.
  *
  * @param password      Plaintext password
- * @param[out] hash_out Buffer for hash string (min USER_SYNC_MAX_HASH bytes)
+ * @param[out] hash_out Buffer for hash string (min USER_SYNC_HASH_LEN bytes)
  */
 void user_sync_hash_password(const char *password, char *hash_out);
 
 /**
- * Constant-time string comparison
- *
- * Compares two strings in constant time to prevent timing attacks.
- * Always compares all bytes even if mismatch found early.
- *
- * @param a     First string
- * @param b     Second string
- * @param len   Maximum length to compare
- * @return true if strings match (up to len or first null), false otherwise
- */
-bool user_sync_constant_time_compare(const char *a, const char *b, size_t len);
-
-/**
  * Convert role to string for logging/display
+ *
+ * Wrapper around user_sync_role_str() from shared header.
  *
  * @param role  Role value
  * @return Static string representation
@@ -370,21 +311,8 @@ result_t user_sync_load_from_nv(void);
 result_t user_sync_save_to_nv(void);
 
 /* ============================================================================
- * Hash Verification / Test Functions
+ * Test/Verification Functions
  * ============================================================================ */
-
-/**
- * Compute DJB2 hashes for password with salt (for verification)
- *
- * Use this to verify RTU hash computation matches controller.
- *
- * @param password      Password to hash
- * @param[out] salt_hash    DJB2 hash of salt alone
- * @param[out] pass_hash    DJB2 hash of salt+password
- */
-void user_sync_hash_with_salt(const char *password,
-                               uint32_t *salt_hash,
-                               uint32_t *pass_hash);
 
 /**
  * Verify hash implementation against known test vectors
