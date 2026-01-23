@@ -1087,6 +1087,13 @@ do_install() {
         sleep 1
     fi
 
+    # Clear any existing p-net NV storage to ensure clean state
+    # Prevents stale AR state (PNIO error 0x03) and station name contamination
+    if [[ -d "$PNET_DATA_DIR" ]]; then
+        log_info "Clearing existing p-net state..."
+        run_privileged rm -f "$PNET_DATA_DIR"/pf_* 2>/dev/null || true
+    fi
+
     # Check build dependencies
     check_build_deps || return 1
 
@@ -1195,6 +1202,18 @@ do_upgrade() {
             return 1
         fi
         log_info "Killed rogue water-treat process(es)"
+    fi
+
+    # Clear p-net NV storage to reset stale AR state
+    # PNIO error status1=0x01, status2=0x03 = stale AR from previous connection
+    # Clearing NV files forces p-net to:
+    #   1. Use station_name from config (not cached "rt-labs-dev")
+    #   2. Clear any stale AR/session state
+    #   3. Accept new connections without "AR already exists" errors
+    if [[ -d "$PNET_DATA_DIR" ]]; then
+        log_info "Clearing p-net NV storage to reset AR state..."
+        run_privileged rm -f "$PNET_DATA_DIR"/pf_* 2>/dev/null || true
+        log_info "Cleared p-net state files"
     fi
 
     # Check build dependencies
