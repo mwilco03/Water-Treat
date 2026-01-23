@@ -492,7 +492,7 @@ void tui_config_page_load(tui_config_page_state_t *state) {
         return;
     }
 
-    config_manager_t *mgr = tui_get_config();
+    config_manager_t *mgr = tui_get_config_manager();
     if (!mgr) {
         return;
     }
@@ -670,7 +670,7 @@ bool tui_config_page_save(tui_config_page_state_t *state) {
         return false;
     }
 
-    config_manager_t *mgr = tui_get_config();
+    config_manager_t *mgr = tui_get_config_manager();
     if (!mgr) {
         return false;
     }
