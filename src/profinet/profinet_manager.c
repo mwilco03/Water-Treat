@@ -25,7 +25,7 @@
 #include <linux/if_packet.h> /* SOCK_RAW for PROFINET */
 
 #define PROFINET_TICK_INTERVAL_US   1000
-#define MAX_PROFINET_SLOTS          64
+#define MAX_PROFINET_SLOTS          247
 #define PROFINET_DATA_SIZE          256
 
 typedef struct {
