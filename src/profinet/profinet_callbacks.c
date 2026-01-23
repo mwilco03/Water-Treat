@@ -76,6 +76,57 @@ static im0_data_t g_im0_data = {
 };
 
 /* ============================================================================
+ * PNIO Error Recovery
+ * ========================================================================== */
+
+/* Forward declaration - implemented in profinet_manager.c */
+void profinet_manager_clear_ar_state(void);
+
+/**
+ * @brief Check PNIO result and auto-recover from transient errors
+ *
+ * Recoverable errors (auto-fix and retry):
+ *   0x03 - AR already exists (stale state) -> clear AR, ready for retry
+ *   0x04 - Session key mismatch -> clear session state, ready for retry
+ *
+ * Non-recoverable (log only, needs external fix):
+ *   0x01 - Configuration mismatch (GSDML problem)
+ *
+ * @return true if error was recoverable and state was cleared
+ */
+static bool handle_pnio_error(const pnet_result_t *result) {
+    if (!result) return false;
+
+    uint16_t detail = result->pnio_status.error_code_2;
+
+    /* No error */
+    if (result->pnio_status.error_code == 0 &&
+        result->pnio_status.error_code_1 == 0 && detail == 0) {
+        return false;
+    }
+
+    switch (detail) {
+        case 0x0003:  /* AR already exists - stale connection */
+            LOG_INFO("Stale AR detected, clearing state for retry");
+            profinet_manager_clear_ar_state();
+            return true;
+
+        case 0x0004:  /* Session key mismatch */
+            LOG_INFO("Session key mismatch, clearing state for retry");
+            profinet_manager_clear_ar_state();
+            return true;
+
+        case 0x0001:  /* Configuration mismatch - can't auto-fix */
+            LOG_ERROR("GSDML/module configuration mismatch - check controller config");
+            return false;
+
+        default:
+            LOG_DEBUG("PNIO error 0x%04X", detail);
+            return false;
+    }
+}
+
+/* ============================================================================
  * State and Connection Callbacks
  * ========================================================================== */
 
@@ -97,42 +148,28 @@ int profinet_state_callback(pnet_t *net, void *arg,
 
     if (event == PNET_EVENT_PRMEND) {
         /*
-         * Parameterization complete - signal application ready to controller.
-         * This is REQUIRED for the connection handshake to complete.
-         * Without this call, the controller never receives a response
-         * and the connection times out.
+         * Parameterization complete - RTU must send ApplicationReady TO controller.
+         * Protocol sequence:
+         *   1. Controller sends PrmEnd to RTU (we just received it)
+         *   2. RTU sends ApplicationReady to Controller (this call)
+         *   3. Controller responds with acknowledgment
+         *   4. RTU gets PNET_EVENT_APPLRDY
          *
-         * CRITICAL: Before calling pnet_application_ready(), we MUST initialize
-         * all input subslots with data and IOPS. The p-net library checks that
-         * all plugged INPUT subslots have valid data set via pnet_input_set_data_and_iops()
-         * before it will send the CControl (APPL_RDY) response to the controller.
-         *
-         * If pnet_application_ready() returns -1, it means:
-         *   - Not all input data is set, OR
-         *   - Not all IOPS values are set, OR
-         *   - Internal p-net error
+         * CRITICAL: Initialize all inputs before signaling ready.
          */
         int inputs_initialized = profinet_manager_init_all_inputs();
-        LOG_DEBUG("Initialized %d input subslots before application_ready", inputs_initialized);
+        LOG_DEBUG("Initialized %d input subslots", inputs_initialized);
 
         int ret = pnet_application_ready(net, arep);
         if (ret != 0) {
-            LOG_ERROR("pnet_application_ready() failed: %d", ret);
-            LOG_ERROR("This usually means input data/IOPS not set for all plugged input subslots.");
-            LOG_ERROR("Controller will timeout waiting for CControl response.");
-            /*
-             * Note: We don't abort here - p-net may still recover in some cases.
-             * The controller will timeout and may retry the connection.
-             */
+            LOG_WARNING("pnet_application_ready() failed: %d - clearing state for retry", ret);
+            profinet_manager_clear_ar_state();
         } else {
-            LOG_INFO("Application ready signaled to controller (arep=%u)", arep);
+            LOG_INFO("Sent ApplicationReady to controller (arep=%u)", arep);
         }
     } else if (event == PNET_EVENT_APPLRDY) {
-        /*
-         * Controller acknowledged our APPL_RDY - connection is now established.
-         * Cyclic data exchange can begin.
-         */
-        LOG_INFO("Controller acknowledged APPL_RDY - connection established");
+        /* Controller acknowledged our ApplicationReady - connection established */
+        LOG_INFO("Connection established (arep=%u)", arep);
         profinet_manager_set_connected(true, arep);
     } else if (event == PNET_EVENT_DATA) {
         /*
@@ -141,12 +178,10 @@ int profinet_state_callback(pnet_t *net, void *arg,
          */
         LOG_INFO("Cyclic data exchange active (arep=%u)", arep);
     } else if (event == PNET_EVENT_ABORT) {
-        /*
-         * Connection aborted - either by controller or due to error.
-         * Reset connection state and wait for new connection.
-         */
-        LOG_WARNING("Connection aborted (arep=%u)", arep);
+        /* Connection aborted - clear state and be ready for reconnect */
+        LOG_INFO("Connection aborted (arep=%u), clearing AR state", arep);
         profinet_manager_set_connected(false, 0);
+        profinet_manager_clear_ar_state();
     }
 
     return 0;
@@ -154,9 +189,15 @@ int profinet_state_callback(pnet_t *net, void *arg,
 
 int profinet_connect_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
-    UNUSED(net); UNUSED(arg); UNUSED(result);
-    
-    LOG_INFO("PROFINET connect request (arep=%u)", arep);
+    UNUSED(net); UNUSED(arg);
+
+    LOG_INFO("PROFINET connect (arep=%u)", arep);
+
+    /* Auto-recover from transient errors - controller will retry */
+    if (result) {
+        handle_pnio_error(result);
+    }
+
     return 0;
 }
 
@@ -173,17 +214,31 @@ int profinet_dcontrol_callback(pnet_t *net, void *arg,
                                uint32_t arep, pnet_control_command_t command,
                                pnet_result_t *result) {
     UNUSED(net); UNUSED(arg); UNUSED(result);
-    
-    const char *cmd_str;
+
     switch (command) {
-        case PNET_CONTROL_COMMAND_PRM_BEGIN: cmd_str = "PRM_BEGIN"; break;
-        case PNET_CONTROL_COMMAND_PRM_END: cmd_str = "PRM_END"; break;
-        case PNET_CONTROL_COMMAND_APP_RDY: cmd_str = "APP_RDY"; break;
-        case PNET_CONTROL_COMMAND_RELEASE: cmd_str = "RELEASE"; break;
-        default: cmd_str = "UNKNOWN"; break;
+        case PNET_CONTROL_COMMAND_PRM_BEGIN:
+            LOG_DEBUG("DControl: PRM_BEGIN (arep=%u)", arep);
+            break;
+        case PNET_CONTROL_COMMAND_PRM_END:
+            LOG_DEBUG("DControl: PRM_END (arep=%u)", arep);
+            break;
+        case PNET_CONTROL_COMMAND_APP_RDY:
+            /*
+             * Controller sent APP_RDY to us - this is BACKWARDS.
+             * Per PROFINET spec: RTU sends ApplicationReady TO controller.
+             * Controller should be LISTENING, not sending.
+             * This indicates controller bug.
+             */
+            LOG_WARNING("Controller sent APP_RDY to RTU - protocol violation!");
+            LOG_WARNING("RTU sends ApplicationReady TO controller, not vice versa");
+            break;
+        case PNET_CONTROL_COMMAND_RELEASE:
+            LOG_DEBUG("DControl: RELEASE (arep=%u)", arep);
+            break;
+        default:
+            LOG_DEBUG("DControl: UNKNOWN (arep=%u, cmd=%d)", arep, command);
+            break;
     }
-    
-    LOG_DEBUG("PROFINET DControl: %s (arep=%u)", cmd_str, arep);
     return 0;
 }
 
@@ -437,9 +492,8 @@ int profinet_alarm_ind_callback(pnet_t *net, void *arg,
 
 int profinet_alarm_cnf_callback(pnet_t *net, void *arg,
                                 uint32_t arep, const pnet_pnio_status_t *status) {
-    UNUSED(net); UNUSED(arg); UNUSED(arep);
-    
-    LOG_DEBUG("PROFINET alarm confirmation: error_code=%u", status->error_code);
+    UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(status);
+    LOG_DEBUG("PROFINET alarm confirmed");
     return 0;
 }
 

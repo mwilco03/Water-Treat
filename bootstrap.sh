@@ -294,17 +294,30 @@ detect_station_name() {
 }
 
 # =============================================================================
-# p-net NV Storage Contamination Purge
+# p-net NV Storage Purge (Clear ALL p-net state)
 # =============================================================================
-# CRITICAL: The p-net library has "rt-labs-dev" as its compiled-in default
-# station name. If p-net's NV (non-volatile) storage files exist with this
-# default, p-net will IGNORE our configured station name and use the cached
-# "rt-labs-dev" value instead.
+# CRITICAL: This function clears ALL p-net NV (non-volatile) storage files
+# to ensure a clean PROFINET state on install/upgrade.
 #
-# This function scans and deletes any files containing "rt-labs-dev" in the
-# p-net data directory, forcing p-net to use our configured station name.
+# Why this matters:
+# 1. Station name contamination: The p-net library has "rt-labs-dev" as its
+#    compiled-in default. If NV files exist with this value, p-net IGNORES
+#    our configured station name.
+#
+# 2. Stale AR (Application Relationship) state: When the RTU crashes or is
+#    improperly shutdown, p-net may persist AR state. On restart, the controller
+#    tries to connect but the RTU rejects with PNIO error codes:
+#      - status1=0x00000001 (AR block error)
+#      - status2=0x00000003 (AR already exists / session mismatch)
+#
+#    Clearing ALL pf_* files forces the RTU to start fresh without stale AR.
+#
+# 3. DCP Set-Name contamination: The controller can re-contaminate via DCP
+#    Set-Name AFTER purge runs, so we clear unconditionally every time.
+#
+# p-net NV files use "pf_" prefix (pf_ip, pf_im, pf_pdport, pf_ar, etc.)
 # =============================================================================
-purge_pnet_contamination() {
+purge_pnet_nv_storage() {
     local pnet_dir="$1"
 
     if [[ -z "$pnet_dir" || ! -d "$pnet_dir" ]]; then
@@ -317,19 +330,30 @@ purge_pnet_contamination() {
     for file in "$pnet_dir"/*; do
         [[ -f "$file" ]] || continue
 
-        # Check if file contains "rt-labs-dev" (binary-safe grep)
-        if grep -q "rt-labs-dev" "$file" 2>/dev/null; then
-            log_warn "PURGING contaminated p-net NV file: $file"
+        local basename
+        basename=$(basename "$file")
+
+        # Only delete p-net NV files (pf_* prefix)
+        # This preserves any application data files we might store there
+        if [[ "$basename" == pf_* ]]; then
+            log_verbose "Removing p-net NV file: $file"
             run_privileged rm -f "$file" && ((purged++))
         fi
     done
 
     if [[ $purged -gt 0 ]]; then
-        log_warn "Purged $purged contaminated p-net NV file(s) containing 'rt-labs-dev'"
-        log_info "Station name will be reset to configured value on next start"
+        log_info "Cleared $purged p-net NV file(s) - ensures clean PROFINET state"
+        log_info "This clears stale AR state and station name cache"
+    else
+        log_debug "No p-net NV files found in $pnet_dir"
     fi
 
     return 0
+}
+
+# Legacy alias for backwards compatibility
+purge_pnet_contamination() {
+    purge_pnet_nv_storage "$@"
 }
 
 # =============================================================================
@@ -846,10 +870,13 @@ install_files() {
     run_privileged mkdir -p "$PNET_DATA_DIR"
     run_privileged mkdir -p "$LOG_DIR"
 
-    # CRITICAL: Purge any p-net NV files contaminated with "rt-labs-dev"
-    # The p-net library has "rt-labs-dev" as its compiled-in default station name.
-    # If NV files exist with this value, p-net ignores our configured station name.
-    purge_pnet_contamination "$PNET_DATA_DIR"
+    # CRITICAL: Clear ALL p-net NV storage for clean PROFINET state
+    # This addresses two issues:
+    # 1. Station name contamination (e.g., "rt-labs-dev" from p-net defaults)
+    # 2. Stale AR state causing PNIO errors (status1=0x00000001, status2=0x00000003)
+    #    which means "AR already exists" - the RTU rejects reconnection attempts
+    # Clearing pf_* files forces fresh AR negotiation with the controller.
+    purge_pnet_nv_storage "$PNET_DATA_DIR"
 
     # Copy source to install location
     run_privileged cp -a "$source_dir/." "$INSTALL_DIR/"
