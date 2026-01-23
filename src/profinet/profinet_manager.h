@@ -122,6 +122,14 @@ void profinet_manager_set_connected(bool connected, uint32_t arep);
 void profinet_manager_handle_output_data(int slot, int subslot, const uint8_t *data, size_t len);
 
 /**
+ * @brief Clear stale AR state to recover from connection errors
+ *
+ * Auto-recovery for PNIO errors 0x03 (AR exists) and 0x04 (session mismatch).
+ * Clears NV files and resets state so controller can reconnect.
+ */
+void profinet_manager_clear_ar_state(void);
+
+/**
  * @brief Initialize all input subslots with default data and GOOD IOPS
  *
  * CRITICAL: This function MUST be called before pnet_application_ready().

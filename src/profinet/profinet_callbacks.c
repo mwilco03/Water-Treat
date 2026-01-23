@@ -76,83 +76,53 @@ static im0_data_t g_im0_data = {
 };
 
 /* ============================================================================
- * PNIO Error Code Helpers
+ * PNIO Error Recovery
  * ========================================================================== */
 
-/**
- * @brief Decode PNIO error codes for human-readable logging
- *
- * PROFINET uses structured error codes in connect/release responses:
- *   - error_code:   Category (0xCF = RTA, 0xDE = PNIO)
- *   - error_code_1: Specific error within category
- *   - error_code_2: Additional detail
- *
- * Common status combinations for AR (Application Relationship) errors:
- *   status1=0x00000001, status2=0x00000003:
- *     "AR already exists" - stale AR from previous connection
- *     Fix: Clear p-net NV files or reboot RTU
- *
- *   status1=0x00000001, status2=0x00000004:
- *     "Session key mismatch" - controller/RTU out of sync
- *     Fix: Clear p-net NV files
- *
- *   status1=0x00000001, status2=0x00000001:
- *     "Configuration mismatch" - GSDML/module config doesn't match
- *     Fix: Verify GSDML matches between controller and RTU
- */
-static const char* decode_pnio_ar_error(uint32_t status2) {
-    switch (status2) {
-        case 0x00000001: return "Configuration mismatch (GSDML/module)";
-        case 0x00000002: return "AR type not supported";
-        case 0x00000003: return "AR already exists (stale connection state)";
-        case 0x00000004: return "Session key mismatch";
-        case 0x00000005: return "No AR resource available";
-        case 0x00000006: return "AR UUID already in use";
-        case 0x00000007: return "Parameter error";
-        case 0x00000008: return "Alarm type not supported";
-        case 0x00000009: return "RPC interface not supported";
-        default: return "Unknown AR error";
-    }
-}
+/* Forward declaration - implemented in profinet_manager.c */
+void profinet_manager_clear_ar_state(void);
 
 /**
- * @brief Log PNIO error details for debugging connection issues
+ * @brief Check PNIO result and auto-recover from transient errors
+ *
+ * Recoverable errors (auto-fix and retry):
+ *   0x03 - AR already exists (stale state) -> clear AR, ready for retry
+ *   0x04 - Session key mismatch -> clear session state, ready for retry
+ *
+ * Non-recoverable (log only, needs external fix):
+ *   0x01 - Configuration mismatch (GSDML problem)
+ *
+ * @return true if error was recoverable and state was cleared
  */
-static void log_pnio_result(const char *context, const pnet_result_t *result) {
-    if (!result) return;
+static bool handle_pnio_error(const pnet_result_t *result) {
+    if (!result) return false;
 
-    uint8_t err_cls = result->pnio_status.error_code;
-    uint8_t err_code = result->pnio_status.error_code_1;
     uint16_t detail = result->pnio_status.error_code_2;
 
-    /* Construct status values as seen in pcap */
-    uint32_t status1 = ((uint32_t)err_cls << 24) | ((uint32_t)err_code << 16);
-    uint32_t status2 = detail;
-
-    if (err_cls == 0 && err_code == 0 && detail == 0) {
-        /* Success - no error */
-        return;
+    /* No error */
+    if (result->pnio_status.error_code == 0 &&
+        result->pnio_status.error_code_1 == 0 && detail == 0) {
+        return false;
     }
 
-    LOG_WARNING("PROFINET %s PNIO error: status1=0x%08X, status2=0x%08X",
-                context, status1, status2);
+    switch (detail) {
+        case 0x0003:  /* AR already exists - stale connection */
+            LOG_INFO("Stale AR detected, clearing state for retry");
+            profinet_manager_clear_ar_state();
+            return true;
 
-    /* Decode error class */
-    const char *class_str;
-    switch (err_cls) {
-        case 0xCF: class_str = "RTA error"; break;
-        case 0xDE: class_str = "PNIO-specific"; break;
-        case 0xDF: class_str = "IOD block error"; break;
-        default: class_str = "Unknown"; break;
-    }
+        case 0x0004:  /* Session key mismatch */
+            LOG_INFO("Session key mismatch, clearing state for retry");
+            profinet_manager_clear_ar_state();
+            return true;
 
-    LOG_WARNING("  Error class: 0x%02X (%s), code: 0x%02X, detail: 0x%04X",
-                err_cls, class_str, err_code, detail);
+        case 0x0001:  /* Configuration mismatch - can't auto-fix */
+            LOG_ERROR("GSDML/module configuration mismatch - check controller config");
+            return false;
 
-    /* Special handling for AR block errors (status1 high byte = 0x01) */
-    if (status1 == 0x00000001 || err_cls == 0x01) {
-        LOG_WARNING("  AR error: %s", decode_pnio_ar_error(status2));
-        LOG_WARNING("  Recommended fix: Run 'systemctl restart water-treat' or clear p-net NV files");
+        default:
+            LOG_DEBUG("PNIO error 0x%04X", detail);
+            return false;
     }
 }
 
@@ -222,21 +192,10 @@ int profinet_state_callback(pnet_t *net, void *arg,
          */
         LOG_INFO("Cyclic data exchange active (arep=%u)", arep);
     } else if (event == PNET_EVENT_ABORT) {
-        /*
-         * Connection aborted - either by controller or due to error.
-         * Reset connection state and wait for new connection.
-         *
-         * Common causes of ABORT:
-         * 1. AR already exists (PNIO status1=0x1, status2=0x3) - stale AR state
-         *    Fix: Clear p-net NV files with bootstrap.sh or restart service
-         * 2. Controller timeout waiting for APPL_RDY
-         * 3. Configuration mismatch between controller and RTU
-         * 4. Network disconnection
-         */
-        LOG_WARNING("Connection aborted (arep=%u) - AR state cleared", arep);
-        LOG_WARNING("If this persists, run: sudo systemctl restart water-treat");
-        LOG_WARNING("Or clear stale state: sudo rm -f /var/lib/water-treat/pnet/pf_*");
+        /* Connection aborted - clear state and be ready for reconnect */
+        LOG_INFO("Connection aborted (arep=%u), clearing AR state", arep);
         profinet_manager_set_connected(false, 0);
+        profinet_manager_clear_ar_state();
     }
 
     return 0;
@@ -246,11 +205,11 @@ int profinet_connect_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
     UNUSED(net); UNUSED(arg);
 
-    LOG_INFO("PROFINET connect request (arep=%u)", arep);
+    LOG_INFO("PROFINET connect (arep=%u)", arep);
 
-    /* Log any PNIO errors from the connect response */
+    /* Auto-recover from transient errors - controller will retry */
     if (result) {
-        log_pnio_result("connect response", result);
+        handle_pnio_error(result);
     }
 
     return 0;
@@ -258,15 +217,9 @@ int profinet_connect_callback(pnet_t *net, void *arg,
 
 int profinet_release_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
-    UNUSED(net); UNUSED(arg);
+    UNUSED(net); UNUSED(arg); UNUSED(result);
 
     LOG_INFO("PROFINET release (arep=%u)", arep);
-
-    /* Log any PNIO errors explaining why connection was released */
-    if (result) {
-        log_pnio_result("release", result);
-    }
-
     profinet_manager_set_connected(false, 0);
     return 0;
 }
@@ -539,14 +492,8 @@ int profinet_alarm_ind_callback(pnet_t *net, void *arg,
 
 int profinet_alarm_cnf_callback(pnet_t *net, void *arg,
                                 uint32_t arep, const pnet_pnio_status_t *status) {
-    UNUSED(net); UNUSED(arg); UNUSED(arep);
-
-    if (status && (status->error_code != 0 || status->error_code_1 != 0)) {
-        LOG_WARNING("PROFINET alarm confirmation error: class=0x%02X, code=0x%02X, detail=0x%04X",
-                    status->error_code, status->error_code_1, status->error_code_2);
-    } else {
-        LOG_DEBUG("PROFINET alarm confirmation: OK");
-    }
+    UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(status);
+    LOG_DEBUG("PROFINET alarm confirmed");
     return 0;
 }
 

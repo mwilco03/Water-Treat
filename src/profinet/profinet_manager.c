@@ -1214,6 +1214,44 @@ void profinet_manager_set_connected(bool connected, uint32_t arep) {
     }
 }
 
+/**
+ * @brief Clear AR state to recover from stale connection errors
+ *
+ * Called when PNIO errors indicate stale AR state:
+ *   - 0x03: AR already exists
+ *   - 0x04: Session key mismatch
+ *
+ * Clears p-net NV files that store AR/session state so next
+ * connection attempt starts fresh. Controller will automatically
+ * retry after a brief timeout.
+ */
+void profinet_manager_clear_ar_state(void) {
+#ifdef HAVE_PNET
+    g_pn.arep = 0;
+
+    /* Clear p-net AR state files if data directory is configured */
+    if (g_pn.pnet_cfg.file_directory[0] != '\0') {
+        DIR *dir = opendir(g_pn.pnet_cfg.file_directory);
+        if (dir) {
+            struct dirent *entry;
+            char filepath[512];
+
+            while ((entry = readdir(dir)) != NULL) {
+                /* Clear AR and session-related NV files */
+                if (strncmp(entry->d_name, "pf_", 3) == 0) {
+                    snprintf(filepath, sizeof(filepath), "%s/%s",
+                             g_pn.pnet_cfg.file_directory, entry->d_name);
+                    unlink(filepath);
+                }
+            }
+            closedir(dir);
+            LOG_DEBUG("AR state cleared, ready for reconnect");
+        }
+    }
+#endif
+    g_pn.state = PROFINET_STATE_READY;
+}
+
 void profinet_manager_handle_output_data(int slot, int subslot, const uint8_t *data, size_t len) {
     profinet_slot_t *s = find_slot(slot, subslot);
     if (s && len <= sizeof(s->output_data)) {
