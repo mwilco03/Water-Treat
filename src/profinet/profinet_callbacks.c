@@ -89,6 +89,7 @@ int profinet_state_callback(pnet_t *net, void *arg,
         case PNET_EVENT_PRMEND: event_str = "PRMEND"; break;
         case PNET_EVENT_APPLRDY: event_str = "APPLRDY"; break;
         case PNET_EVENT_ABORT: event_str = "ABORT"; break;
+        case PNET_EVENT_DATA: event_str = "DATA"; break;
         default: event_str = "UNKNOWN"; break;
     }
 
@@ -100,16 +101,51 @@ int profinet_state_callback(pnet_t *net, void *arg,
          * This is REQUIRED for the connection handshake to complete.
          * Without this call, the controller never receives a response
          * and the connection times out.
+         *
+         * CRITICAL: Before calling pnet_application_ready(), we MUST initialize
+         * all input subslots with data and IOPS. The p-net library checks that
+         * all plugged INPUT subslots have valid data set via pnet_input_set_data_and_iops()
+         * before it will send the CControl (APPL_RDY) response to the controller.
+         *
+         * If pnet_application_ready() returns -1, it means:
+         *   - Not all input data is set, OR
+         *   - Not all IOPS values are set, OR
+         *   - Internal p-net error
          */
+        int inputs_initialized = profinet_manager_init_all_inputs();
+        LOG_DEBUG("Initialized %d input subslots before application_ready", inputs_initialized);
+
         int ret = pnet_application_ready(net, arep);
         if (ret != 0) {
             LOG_ERROR("pnet_application_ready() failed: %d", ret);
+            LOG_ERROR("This usually means input data/IOPS not set for all plugged input subslots.");
+            LOG_ERROR("Controller will timeout waiting for CControl response.");
+            /*
+             * Note: We don't abort here - p-net may still recover in some cases.
+             * The controller will timeout and may retry the connection.
+             */
         } else {
             LOG_INFO("Application ready signaled to controller (arep=%u)", arep);
         }
     } else if (event == PNET_EVENT_APPLRDY) {
+        /*
+         * Controller acknowledged our APPL_RDY - connection is now established.
+         * Cyclic data exchange can begin.
+         */
+        LOG_INFO("Controller acknowledged APPL_RDY - connection established");
         profinet_manager_set_connected(true, arep);
+    } else if (event == PNET_EVENT_DATA) {
+        /*
+         * Cyclic data exchange is now active.
+         * This event indicates the controller is sending/receiving cyclic data.
+         */
+        LOG_INFO("Cyclic data exchange active (arep=%u)", arep);
     } else if (event == PNET_EVENT_ABORT) {
+        /*
+         * Connection aborted - either by controller or due to error.
+         * Reset connection state and wait for new connection.
+         */
+        LOG_WARNING("Connection aborted (arep=%u)", arep);
         profinet_manager_set_connected(false, 0);
     }
 

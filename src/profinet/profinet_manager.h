@@ -121,4 +121,17 @@ bool profinet_manager_init_attempted(void);
 void profinet_manager_set_connected(bool connected, uint32_t arep);
 void profinet_manager_handle_output_data(int slot, int subslot, const uint8_t *data, size_t len);
 
+/**
+ * @brief Initialize all input subslots with default data and GOOD IOPS
+ *
+ * CRITICAL: This function MUST be called before pnet_application_ready().
+ * The p-net library requires all input subslots to have valid data and
+ * IOPS set before the application can signal readiness to the controller.
+ *
+ * Called from profinet_state_callback() on PNET_EVENT_PRMEND.
+ *
+ * @return Number of input subslots initialized
+ */
+int profinet_manager_init_all_inputs(void);
+
 #endif
