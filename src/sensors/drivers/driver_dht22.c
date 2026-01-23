@@ -212,67 +212,86 @@ void dht22_close(dht22_t *dev) {
     }
 }
 
-/* Driver interface wrapper */
+/* ============================================================================
+ * Driver Interface (uses driver_common.h infrastructure)
+ * ========================================================================== */
+
+#include "driver_common.h"
+
 typedef struct {
+    DRIVER_INSTANCE_FIELDS;  /* ops, scale, offset */
     dht22_t device;
-    bool read_humidity;  // false = temperature, true = humidity
-    float scale;
-    float offset;
+    bool read_humidity;  /* false = temperature, true = humidity */
 } dht22_instance_t;
+
+/* Forward declarations for ops table */
+static result_t dht22_driver_read(void *handle, float *value);
+static void dht22_driver_close(void *handle);
+
+/* Driver operations table - exported for driver registry */
+const driver_ops_t driver_dht22_ops = {
+    .read = dht22_driver_read,
+    .close = dht22_driver_close,
+    .set_calibration = driver_set_calibration_generic,
+    .name = "DHT22"
+};
 
 result_t driver_dht22_init(void **handle, int gpio_pin, bool read_humidity) {
     dht22_instance_t *inst = calloc(1, sizeof(dht22_instance_t));
     if (!inst) return RESULT_NO_MEMORY;
-    
+
+    driver_instance_init_base(inst, &driver_dht22_ops);
+
     result_t r = dht22_init(&inst->device, gpio_pin);
     if (r != RESULT_OK) {
         free(inst);
         return r;
     }
-    
+
     inst->read_humidity = read_humidity;
-    inst->scale = 1.0f;
-    inst->offset = 0.0f;
-    
     *handle = inst;
     return RESULT_OK;
 }
 
-result_t driver_dht22_read(void *handle, float *value) {
+static result_t dht22_driver_read(void *handle, float *value) {
     CHECK_NULL(handle);
     CHECK_NULL(value);
-    
+
     dht22_instance_t *inst = (dht22_instance_t *)handle;
     float temp, hum;
-    
+
     result_t r = dht22_read(&inst->device, &temp, &hum);
     if (r != RESULT_OK) return r;
-    
-    *value = inst->read_humidity ? hum : temp;
-    *value = *value * inst->scale + inst->offset;
-    
+
+    float raw_value = inst->read_humidity ? hum : temp;
+    *value = driver_apply_calibration(inst, raw_value);
     return RESULT_OK;
+}
+
+/* Legacy wrapper */
+result_t driver_dht22_read(void *handle, float *value) {
+    return dht22_driver_read(handle, value);
 }
 
 result_t driver_dht22_read_both(void *handle, float *temperature, float *humidity) {
     CHECK_NULL(handle);
-    
     dht22_instance_t *inst = (dht22_instance_t *)handle;
     return dht22_read(&inst->device, temperature, humidity);
 }
 
 result_t driver_dht22_set_calibration(void *handle, float scale, float offset) {
-    CHECK_NULL(handle);
-    dht22_instance_t *inst = (dht22_instance_t *)handle;
-    inst->scale = scale;
-    inst->offset = offset;
-    return RESULT_OK;
+    return driver_set_calibration_generic(handle, scale, offset);
 }
 
-void driver_dht22_close(void *handle) {
+static void dht22_driver_close(void *handle) {
     if (handle) {
         dht22_instance_t *inst = (dht22_instance_t *)handle;
         dht22_close(&inst->device);
         free(inst);
     }
+}
+
+/* Legacy wrapper */
+void driver_dht22_close(void *handle) {
+    dht22_driver_close(handle);
 }

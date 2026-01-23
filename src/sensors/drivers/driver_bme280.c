@@ -219,7 +219,12 @@ void bme280_close(bme280_t *dev) {
     }
 }
 
-/* Driver interface wrapper */
+/* ============================================================================
+ * Driver Interface (uses driver_common.h infrastructure)
+ * ========================================================================== */
+
+#include "driver_common.h"
+
 typedef enum {
     BME280_READ_TEMPERATURE = 0,
     BME280_READ_PRESSURE,
@@ -227,49 +232,65 @@ typedef enum {
 } bme280_reading_t;
 
 typedef struct {
+    DRIVER_INSTANCE_FIELDS;  /* ops, scale, offset */
     bme280_t device;
     bme280_reading_t reading;
-    float scale;
-    float offset;
 } bme280_instance_t;
+
+/* Forward declarations for ops table */
+static result_t bme280_driver_read(void *handle, float *value);
+static void bme280_driver_close(void *handle);
+
+/* Driver operations table - exported for driver registry */
+const driver_ops_t driver_bme280_ops = {
+    .read = bme280_driver_read,
+    .close = bme280_driver_close,
+    .set_calibration = driver_set_calibration_generic,
+    .name = "BME280"
+};
 
 result_t driver_bme280_init(void **handle, int bus, uint8_t address, int reading_type) {
     bme280_instance_t *inst = calloc(1, sizeof(bme280_instance_t));
     if (!inst) return RESULT_NO_MEMORY;
-    
+
+    driver_instance_init_base(inst, &driver_bme280_ops);
+
     result_t r = bme280_init(&inst->device, bus, address);
     if (r != RESULT_OK) {
         free(inst);
         return r;
     }
-    
+
     inst->reading = (bme280_reading_t)reading_type;
-    inst->scale = 1.0f;
-    inst->offset = 0.0f;
-    
     *handle = inst;
     return RESULT_OK;
 }
 
-result_t driver_bme280_read(void *handle, float *value) {
+static result_t bme280_driver_read(void *handle, float *value) {
     CHECK_NULL(handle);
     CHECK_NULL(value);
-    
+
     bme280_instance_t *inst = (bme280_instance_t *)handle;
     float temp, pres, hum;
-    
+
     result_t r = bme280_read(&inst->device, &temp, &pres, &hum);
     if (r != RESULT_OK) return r;
-    
+
+    float raw_value;
     switch (inst->reading) {
-        case BME280_READ_TEMPERATURE: *value = temp; break;
-        case BME280_READ_PRESSURE: *value = pres; break;
-        case BME280_READ_HUMIDITY: *value = hum; break;
+        case BME280_READ_TEMPERATURE: raw_value = temp; break;
+        case BME280_READ_PRESSURE: raw_value = pres; break;
+        case BME280_READ_HUMIDITY: raw_value = hum; break;
         default: return RESULT_INVALID_PARAM;
     }
-    
-    *value = *value * inst->scale + inst->offset;
+
+    *value = driver_apply_calibration(inst, raw_value);
     return RESULT_OK;
+}
+
+/* Legacy wrapper */
+result_t driver_bme280_read(void *handle, float *value) {
+    return bme280_driver_read(handle, value);
 }
 
 result_t driver_bme280_read_all(void *handle, float *temperature, float *pressure, float *humidity) {
@@ -278,10 +299,15 @@ result_t driver_bme280_read_all(void *handle, float *temperature, float *pressur
     return bme280_read(&inst->device, temperature, pressure, humidity);
 }
 
-void driver_bme280_close(void *handle) {
+static void bme280_driver_close(void *handle) {
     if (handle) {
         bme280_instance_t *inst = (bme280_instance_t *)handle;
         bme280_close(&inst->device);
         free(inst);
     }
+}
+
+/* Legacy wrapper */
+void driver_bme280_close(void *handle) {
+    bme280_driver_close(handle);
 }
