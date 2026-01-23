@@ -3,7 +3,7 @@
  * @brief PROFINET I/O Device manager using p-net stack
  */
 
-#define _GNU_SOURCE  /* Required for memmem() */
+#define _GNU_SOURCE  /* Required for various GNU extensions */
 #include "profinet_manager.h"
 #include "profinet_callbacks.h"
 #include "controller_discovery.h"
@@ -122,43 +122,58 @@ static bool is_actuator_module(uint32_t module_ident) {
 
 #ifdef HAVE_PNET
 /**
- * @brief Purge p-net NV storage files contaminated with "rt-labs-dev"
+ * @brief Clear p-net NV storage to ensure config is authoritative
  *
- * CRITICAL: The p-net library has "rt-labs-dev" as its compiled-in default
- * station name. If p-net's NV (non-volatile) storage files exist and contain
- * this default or any wrong station name, p-net will use the cached value
- * instead of our configured station name.
+ * CRITICAL: p-net persists station_name to NV storage. If a controller sends
+ * DCP Set-Name (e.g., with wrong name "rt-labs-dev"), p-net stores it and
+ * ignores our configured station_name on subsequent boots.
  *
- * This function scans all files in the p-net data directory and:
- * 1. Reads each file looking for "rt-labs-dev" string
- * 2. If found, DELETES the contaminated file
- * 3. Logs all actions for debugging
+ * The old approach searched for "rt-labs-dev" string, but this fails because:
+ * 1. Controller can re-contaminate via DCP Set-Name AFTER purge runs
+ * 2. Any mismatched name is wrong, not just "rt-labs-dev"
+ *
+ * New approach: Delete the IP/station_name NV file unconditionally.
+ * Our config file is the source of truth, not p-net's NV cache.
+ *
+ * The file is named "pf_ip_*" or similar (p-net internal naming).
+ * We delete any file starting with "pf_" to be safe.
  *
  * Must be called BEFORE pnet_init() to ensure clean state.
  *
  * @param data_dir Path to p-net NV storage directory
+ * @param configured_station Expected station name from config
  */
-static void purge_pnet_nv_contamination(const char *data_dir) {
+static void clear_pnet_nv_station(const char *data_dir, const char *configured_station) {
     if (!data_dir || data_dir[0] == '\0') {
+        LOG_WARNING("p-net data_dir not set, NV files may be in CWD");
         return;
     }
 
     DIR *dir = opendir(data_dir);
     if (!dir) {
-        /* Directory doesn't exist yet - nothing to purge */
+        /* Directory doesn't exist yet - nothing to clear */
+        LOG_DEBUG("p-net NV directory doesn't exist yet: %s", data_dir);
         return;
     }
 
-    LOG_DEBUG("Scanning p-net NV storage for contamination: %s", data_dir);
+    LOG_INFO("Clearing p-net NV storage to enforce station_name='%s'", configured_station);
 
     struct dirent *entry;
-    int purged_count = 0;
+    int cleared_count = 0;
     char filepath[512];
-    char buffer[1024];
 
     while ((entry = readdir(dir)) != NULL) {
         /* Skip . and .. */
         if (entry->d_name[0] == '.') {
+            continue;
+        }
+
+        /*
+         * p-net NV files use "pf_" prefix (pf_ip, pf_im, pf_pdport, etc.)
+         * Delete all of them to ensure clean state.
+         * This loses I&M data too, but station_name correctness is critical.
+         */
+        if (strncmp(entry->d_name, "pf_", 3) != 0) {
             continue;
         }
 
@@ -170,45 +185,21 @@ static void purge_pnet_nv_contamination(const char *data_dir) {
             continue;
         }
 
-        /* Read file and check for contamination */
-        FILE *f = fopen(filepath, "rb");
-        if (!f) {
-            continue;
-        }
-
-        bool contaminated = false;
-        size_t bytes_read;
-
-        /* Scan file for "rt-labs-dev" string (may be in binary data) */
-        while ((bytes_read = fread(buffer, 1, sizeof(buffer) - 1, f)) > 0) {
-            buffer[bytes_read] = '\0';
-            if (memmem(buffer, bytes_read, "rt-labs-dev", 11) != NULL) {
-                contaminated = true;
-                break;
-            }
-            /* Handle string spanning buffer boundary - rewind a bit */
-            if (bytes_read == sizeof(buffer) - 1) {
-                fseek(f, -11, SEEK_CUR);
-            }
-        }
-        fclose(f);
-
-        if (contaminated) {
-            LOG_WARNING("PURGING contaminated p-net NV file: %s (contains 'rt-labs-dev')", filepath);
-            if (unlink(filepath) == 0) {
-                purged_count++;
-            } else {
-                LOG_ERROR("Failed to delete contaminated file %s: %s", filepath, strerror(errno));
-            }
+        LOG_INFO("Deleting p-net NV file: %s", filepath);
+        if (unlink(filepath) == 0) {
+            cleared_count++;
+        } else {
+            LOG_ERROR("Failed to delete %s: %s", filepath, strerror(errno));
         }
     }
 
     closedir(dir);
 
-    if (purged_count > 0) {
-        LOG_WARNING("Purged %d contaminated p-net NV file(s). Station name will be reset to configured value.", purged_count);
+    if (cleared_count > 0) {
+        LOG_INFO("Cleared %d p-net NV file(s). Station name forced to '%s'",
+                 cleared_count, configured_station);
     } else {
-        LOG_DEBUG("No p-net NV contamination found");
+        LOG_DEBUG("No p-net NV files found in %s", data_dir);
     }
 }
 
@@ -731,11 +722,11 @@ result_t profinet_manager_start(const char *interface) {
             LOG_DEBUG("p-net NV storage directory exists: %s", g_pn.pnet_cfg.file_directory);
         }
 
-        // 7. CRITICAL: Purge any p-net NV files contaminated with "rt-labs-dev"
-        // p-net persists station name to disk. If these files contain the wrong
-        // station name, p-net will ignore our configured name and use the cached one.
-        // We must delete any contaminated files BEFORE calling pnet_init().
-        purge_pnet_nv_contamination(g_pn.pnet_cfg.file_directory);
+        // 7. CRITICAL: Clear p-net NV files to enforce our configured station_name
+        // p-net persists station name to disk via DCP Set-Name from controller.
+        // If controller has wrong name (e.g., "rt-labs-dev"), it contaminates RTU.
+        // Delete NV files BEFORE pnet_init() so our config is authoritative.
+        clear_pnet_nv_station(g_pn.pnet_cfg.file_directory, g_pn.pnet_cfg.station_name);
     }
 
     // Log validated configuration
