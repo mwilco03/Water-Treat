@@ -9,8 +9,8 @@
 // Forward declarations
 typedef struct profinet_manager_t profinet_manager_t;
 
-/* Maximum slot number for O(1) lookup (PROFINET slots typically 1-64) */
-#define SENSOR_MAX_SLOT 64
+/* Maximum slot number for O(1) lookup (matches Modbus address limit) */
+#define SENSOR_MAX_SLOT 247
 
 typedef struct {
     database_t *db;
