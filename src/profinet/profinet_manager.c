@@ -16,9 +16,10 @@
 #include <errno.h>      /* errno, strerror for error reporting */
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
-#include <net/if.h>     /* IFF_UP, IFF_RUNNING for interface detection */
+#include <net/if.h>     /* IFF_UP, IFF_RUNNING, IFF_PROMISC for interface detection */
 #include <ifaddrs.h>    /* getifaddrs, freeifaddrs for IP configuration */
 #include <sys/socket.h> /* socket, AF_PACKET for raw socket test */
+#include <sys/ioctl.h>  /* ioctl for setting promiscuous mode */
 #include <linux/if_packet.h> /* SOCK_RAW for PROFINET */
 
 #define PROFINET_TICK_INTERVAL_US   1000
@@ -414,6 +415,53 @@ static bool detect_network_interface(char *buf, size_t buf_size) {
 
     return false;
 }
+
+/**
+ * @brief Enable promiscuous mode on network interface
+ *
+ * PROFINET requires promiscuous mode for raw Ethernet frame handling.
+ * DCP discovery uses multicast frames that need promisc mode to be received.
+ *
+ * @param iface Network interface name
+ * @return true on success, false on failure
+ */
+static bool enable_promiscuous_mode(const char *iface) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        LOG_WARNING("Cannot create socket for promisc mode: %s", strerror(errno));
+        return false;
+    }
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
+
+    /* Get current flags */
+    if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
+        LOG_WARNING("Cannot get interface flags for %s: %s", iface, strerror(errno));
+        close(sock);
+        return false;
+    }
+
+    /* Check if already in promisc mode */
+    if (ifr.ifr_flags & IFF_PROMISC) {
+        LOG_DEBUG("Interface %s already in promiscuous mode", iface);
+        close(sock);
+        return true;
+    }
+
+    /* Enable promisc mode */
+    ifr.ifr_flags |= IFF_PROMISC;
+    if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
+        LOG_WARNING("Cannot enable promiscuous mode on %s: %s", iface, strerror(errno));
+        close(sock);
+        return false;
+    }
+
+    close(sock);
+    LOG_INFO("Enabled promiscuous mode on %s", iface);
+    return true;
+}
 #endif
 
 #ifdef HAVE_PNET
@@ -572,6 +620,12 @@ result_t profinet_manager_start(const char *interface) {
         }
     }
     g_pn.pnet_cfg.if_cfg.main_netif_name = g_netif_name;
+
+    // Enable promiscuous mode for PROFINET raw Ethernet frames
+    if (!enable_promiscuous_mode(g_netif_name)) {
+        LOG_WARNING("Could not enable promiscuous mode - PROFINET may not work correctly");
+        // Continue anyway - p-net might still work if already in promisc mode
+    }
 
     // Configure physical port (single port device - same as main interface)
     g_pn.pnet_cfg.if_cfg.physical_ports[0].netif_name = g_netif_name;
