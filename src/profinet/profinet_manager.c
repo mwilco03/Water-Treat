@@ -3,6 +3,7 @@
  * @brief PROFINET I/O Device manager using p-net stack
  */
 
+#define _GNU_SOURCE  /* Required for memmem() */
 #include "profinet_manager.h"
 #include "profinet_callbacks.h"
 #include "controller_discovery.h"
@@ -120,6 +121,97 @@ static bool is_actuator_module(uint32_t module_ident) {
 }
 
 #ifdef HAVE_PNET
+/**
+ * @brief Purge p-net NV storage files contaminated with "rt-labs-dev"
+ *
+ * CRITICAL: The p-net library has "rt-labs-dev" as its compiled-in default
+ * station name. If p-net's NV (non-volatile) storage files exist and contain
+ * this default or any wrong station name, p-net will use the cached value
+ * instead of our configured station name.
+ *
+ * This function scans all files in the p-net data directory and:
+ * 1. Reads each file looking for "rt-labs-dev" string
+ * 2. If found, DELETES the contaminated file
+ * 3. Logs all actions for debugging
+ *
+ * Must be called BEFORE pnet_init() to ensure clean state.
+ *
+ * @param data_dir Path to p-net NV storage directory
+ */
+static void purge_pnet_nv_contamination(const char *data_dir) {
+    if (!data_dir || data_dir[0] == '\0') {
+        return;
+    }
+
+    DIR *dir = opendir(data_dir);
+    if (!dir) {
+        /* Directory doesn't exist yet - nothing to purge */
+        return;
+    }
+
+    LOG_DEBUG("Scanning p-net NV storage for contamination: %s", data_dir);
+
+    struct dirent *entry;
+    int purged_count = 0;
+    char filepath[512];
+    char buffer[1024];
+
+    while ((entry = readdir(dir)) != NULL) {
+        /* Skip . and .. */
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+
+        snprintf(filepath, sizeof(filepath), "%s/%s", data_dir, entry->d_name);
+
+        /* Check if it's a regular file */
+        struct stat st;
+        if (stat(filepath, &st) != 0 || !S_ISREG(st.st_mode)) {
+            continue;
+        }
+
+        /* Read file and check for contamination */
+        FILE *f = fopen(filepath, "rb");
+        if (!f) {
+            continue;
+        }
+
+        bool contaminated = false;
+        size_t bytes_read;
+
+        /* Scan file for "rt-labs-dev" string (may be in binary data) */
+        while ((bytes_read = fread(buffer, 1, sizeof(buffer) - 1, f)) > 0) {
+            buffer[bytes_read] = '\0';
+            if (memmem(buffer, bytes_read, "rt-labs-dev", 11) != NULL) {
+                contaminated = true;
+                break;
+            }
+            /* Handle string spanning buffer boundary - rewind a bit */
+            if (bytes_read == sizeof(buffer) - 1) {
+                fseek(f, -11, SEEK_CUR);
+            }
+        }
+        fclose(f);
+
+        if (contaminated) {
+            LOG_WARNING("PURGING contaminated p-net NV file: %s (contains 'rt-labs-dev')", filepath);
+            if (unlink(filepath) == 0) {
+                purged_count++;
+            } else {
+                LOG_ERROR("Failed to delete contaminated file %s: %s", filepath, strerror(errno));
+            }
+        }
+    }
+
+    closedir(dir);
+
+    if (purged_count > 0) {
+        LOG_WARNING("Purged %d contaminated p-net NV file(s). Station name will be reset to configured value.", purged_count);
+    } else {
+        LOG_DEBUG("No p-net NV contamination found");
+    }
+}
+
 static void poll_output_slots(void) {
     /* Poll all output slots for new data from controller */
     for (int i = 0; i < g_pn.slot_count; i++) {
@@ -638,6 +730,12 @@ result_t profinet_manager_start(const char *interface) {
         } else {
             LOG_DEBUG("p-net NV storage directory exists: %s", g_pn.pnet_cfg.file_directory);
         }
+
+        // 7. CRITICAL: Purge any p-net NV files contaminated with "rt-labs-dev"
+        // p-net persists station name to disk. If these files contain the wrong
+        // station name, p-net will ignore our configured name and use the cached one.
+        // We must delete any contaminated files BEFORE calling pnet_init().
+        purge_pnet_nv_contamination(g_pn.pnet_cfg.file_directory);
     }
 
     // Log validated configuration
