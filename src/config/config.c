@@ -263,52 +263,221 @@ static void detect_station_id(char *station_name, size_t size) {
     fclose(f);
 }
 
-static char* trim(char *str) { char *e; while(isspace((unsigned char)*str)) str++; if(*str==0) return str; e=str+strlen(str)-1; while(e>str && isspace((unsigned char)*e)) e--; *(e+1)='\0'; return str; }
-static config_entry_t* find_entry(config_manager_t *m, const char *s, const char *k) { for(int i=0;i<m->entry_count;i++) if(strcasecmp(m->entries[i].section,s)==0 && strcasecmp(m->entries[i].key,k)==0) return &m->entries[i]; return NULL; }
+static char *trim(char *str) {
+    char *end;
 
-result_t config_manager_init(config_manager_t *m) { CHECK_NULL(m); memset(m,0,sizeof(*m)); return RESULT_OK; }
-void config_manager_destroy(config_manager_t *m) { if(m) memset(m,0,sizeof(*m)); }
-
-result_t config_load_file(config_manager_t *m, const char *p) {
-    CHECK_NULL(m); CHECK_NULL(p);
-    FILE *f = fopen(p,"r");
-    if(!f) {
-        /* Provide detailed error context for operators troubleshooting config issues */
-        LOG_WARNING("Cannot open config file '%s': %s (errno=%d)",
-                    p, strerror(errno), errno);
-        return RESULT_IO_ERROR;
+    /* Trim leading whitespace */
+    while (isspace((unsigned char)*str)) {
+        str++;
     }
-    SAFE_STRNCPY(m->config_path,p,sizeof(m->config_path)); m->entry_count=0;
-    char line[1024], sec[MAX_NAME_LEN]="default";
-    while(fgets(line,sizeof(line),f)) {
-        char *t = trim(line); if(*t=='\0' || *t=='#' || *t==';') continue;
-        if(*t=='[') { char *e=strchr(t,']'); if(e) { *e='\0'; SAFE_STRNCPY(sec,t+1,sizeof(sec)); } continue; }
-        char *eq=strchr(t,'=');
-        if(eq && m->entry_count < MAX_CONFIG_ENTRIES) {
-            *eq='\0'; char *k=trim(t), *v=trim(eq+1);
-            size_t vl=strlen(v); if(vl>=2 && ((v[0]=='"' && v[vl-1]=='"') || (v[0]=='\'' && v[vl-1]=='\''))) { v[vl-1]='\0'; v++; }
-            config_entry_t *e = &m->entries[m->entry_count++];
-            SAFE_STRNCPY(e->section,sec,sizeof(e->section)); SAFE_STRNCPY(e->key,k,sizeof(e->key)); SAFE_STRNCPY(e->value,v,sizeof(e->value));
+
+    if (*str == 0) {
+        return str;
+    }
+
+    /* Trim trailing whitespace */
+    end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) {
+        end--;
+    }
+
+    *(end + 1) = '\0';
+    return str;
+}
+
+static config_entry_t *find_entry(config_manager_t *mgr, const char *section, const char *key) {
+    for (int i = 0; i < mgr->entry_count; i++) {
+        if (strcasecmp(mgr->entries[i].section, section) == 0 &&
+            strcasecmp(mgr->entries[i].key, key) == 0) {
+            return &mgr->entries[i];
         }
     }
-    fclose(f); LOG_INFO("Loaded %d entries from %s",m->entry_count,p); return RESULT_OK;
+    return NULL;
 }
 
-result_t config_save_file(config_manager_t *m, const char *p) {
-    CHECK_NULL(m); const char *sp = p ? p : m->config_path; if(!sp || strlen(sp)==0) return RESULT_INVALID_PARAM;
-    FILE *f = fopen(sp,"w"); if(!f) return RESULT_IO_ERROR;
-    fprintf(f,"# Water-Treat RTU Configuration\n\n"); char cs[MAX_NAME_LEN]="";
-    for(int i=0;i<m->entry_count;i++) {
-        if(strcmp(cs,m->entries[i].section)!=0) { if(cs[0]!='\0') fprintf(f,"\n"); fprintf(f,"[%s]\n",m->entries[i].section); SAFE_STRNCPY(cs,m->entries[i].section,sizeof(cs)); }
-        fprintf(f,"%s = %s\n",m->entries[i].key,m->entries[i].value);
+result_t config_manager_init(config_manager_t *mgr) {
+    CHECK_NULL(mgr);
+    memset(mgr, 0, sizeof(*mgr));
+    return RESULT_OK;
+}
+
+void config_manager_destroy(config_manager_t *mgr) {
+    if (mgr) {
+        memset(mgr, 0, sizeof(*mgr));
     }
-    fclose(f); m->modified=false; return RESULT_OK;
 }
 
-result_t config_get_string(config_manager_t *m, const char *s, const char *k, char *v, size_t sz) { CHECK_NULL(m); CHECK_NULL(s); CHECK_NULL(k); CHECK_NULL(v); config_entry_t *e=find_entry(m,s,k); if(!e) return RESULT_NOT_FOUND; SAFE_STRNCPY(v,e->value,sz); return RESULT_OK; }
-result_t config_set_string(config_manager_t *m, const char *s, const char *k, const char *v) { CHECK_NULL(m); CHECK_NULL(s); CHECK_NULL(k); CHECK_NULL(v); config_entry_t *e=find_entry(m,s,k); if(e) { SAFE_STRNCPY(e->value,v,sizeof(e->value)); } else { if(m->entry_count>=MAX_CONFIG_ENTRIES) return RESULT_NO_MEMORY; e=&m->entries[m->entry_count++]; SAFE_STRNCPY(e->section,s,sizeof(e->section)); SAFE_STRNCPY(e->key,k,sizeof(e->key)); SAFE_STRNCPY(e->value,v,sizeof(e->value)); } m->modified=true; return RESULT_OK; }
-result_t config_get_int(config_manager_t *m, const char *s, const char *k, int *v) { char str[MAX_CONFIG_VALUE_LEN]; result_t r=config_get_string(m,s,k,str,sizeof(str)); if(r!=RESULT_OK) return r; *v=(int)strtol(str,NULL,0); return RESULT_OK; }
-result_t config_get_bool(config_manager_t *m, const char *s, const char *k, bool *v) { char str[MAX_CONFIG_VALUE_LEN]; result_t r=config_get_string(m,s,k,str,sizeof(str)); if(r!=RESULT_OK) return r; *v=(strcasecmp(str,"true")==0||strcasecmp(str,"yes")==0||strcasecmp(str,"1")==0); return RESULT_OK; }
+result_t config_load_file(config_manager_t *mgr, const char *path) {
+    CHECK_NULL(mgr);
+    CHECK_NULL(path);
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        /* Provide detailed error context for operators troubleshooting config issues */
+        LOG_WARNING("Cannot open config file '%s': %s (errno=%d)",
+                    path, strerror(errno), errno);
+        return RESULT_IO_ERROR;
+    }
+
+    SAFE_STRNCPY(mgr->config_path, path, sizeof(mgr->config_path));
+    mgr->entry_count = 0;
+
+    char line[1024];
+    char current_section[MAX_NAME_LEN] = "default";
+
+    while (fgets(line, sizeof(line), f)) {
+        char *trimmed = trim(line);
+
+        /* Skip empty lines and comments */
+        if (*trimmed == '\0' || *trimmed == '#' || *trimmed == ';') {
+            continue;
+        }
+
+        /* Section header */
+        if (*trimmed == '[') {
+            char *end = strchr(trimmed, ']');
+            if (end) {
+                *end = '\0';
+                SAFE_STRNCPY(current_section, trimmed + 1, sizeof(current_section));
+            }
+            continue;
+        }
+
+        /* Key=value pair */
+        char *eq = strchr(trimmed, '=');
+        if (eq && mgr->entry_count < MAX_CONFIG_ENTRIES) {
+            *eq = '\0';
+            char *key = trim(trimmed);
+            char *value = trim(eq + 1);
+
+            /* Strip surrounding quotes */
+            size_t value_len = strlen(value);
+            if (value_len >= 2) {
+                if ((value[0] == '"' && value[value_len - 1] == '"') ||
+                    (value[0] == '\'' && value[value_len - 1] == '\'')) {
+                    value[value_len - 1] = '\0';
+                    value++;
+                }
+            }
+
+            config_entry_t *entry = &mgr->entries[mgr->entry_count++];
+            SAFE_STRNCPY(entry->section, current_section, sizeof(entry->section));
+            SAFE_STRNCPY(entry->key, key, sizeof(entry->key));
+            SAFE_STRNCPY(entry->value, value, sizeof(entry->value));
+        }
+    }
+
+    fclose(f);
+    LOG_INFO("Loaded %d entries from %s", mgr->entry_count, path);
+    return RESULT_OK;
+}
+
+result_t config_save_file(config_manager_t *mgr, const char *path) {
+    CHECK_NULL(mgr);
+
+    const char *save_path = path ? path : mgr->config_path;
+    if (!save_path || strlen(save_path) == 0) {
+        return RESULT_INVALID_PARAM;
+    }
+
+    FILE *f = fopen(save_path, "w");
+    if (!f) {
+        return RESULT_IO_ERROR;
+    }
+
+    fprintf(f, "# Water-Treat RTU Configuration\n\n");
+
+    char current_section[MAX_NAME_LEN] = "";
+
+    for (int i = 0; i < mgr->entry_count; i++) {
+        /* Start new section if needed */
+        if (strcmp(current_section, mgr->entries[i].section) != 0) {
+            if (current_section[0] != '\0') {
+                fprintf(f, "\n");
+            }
+            fprintf(f, "[%s]\n", mgr->entries[i].section);
+            SAFE_STRNCPY(current_section, mgr->entries[i].section, sizeof(current_section));
+        }
+
+        fprintf(f, "%s = %s\n", mgr->entries[i].key, mgr->entries[i].value);
+    }
+
+    fclose(f);
+    mgr->modified = false;
+    return RESULT_OK;
+}
+
+result_t config_get_string(config_manager_t *mgr, const char *section,
+                           const char *key, char *value, size_t size) {
+    CHECK_NULL(mgr);
+    CHECK_NULL(section);
+    CHECK_NULL(key);
+    CHECK_NULL(value);
+
+    config_entry_t *entry = find_entry(mgr, section, key);
+    if (!entry) {
+        return RESULT_NOT_FOUND;
+    }
+
+    SAFE_STRNCPY(value, entry->value, size);
+    return RESULT_OK;
+}
+
+result_t config_set_string(config_manager_t *mgr, const char *section,
+                           const char *key, const char *value) {
+    CHECK_NULL(mgr);
+    CHECK_NULL(section);
+    CHECK_NULL(key);
+    CHECK_NULL(value);
+
+    config_entry_t *entry = find_entry(mgr, section, key);
+
+    if (entry) {
+        /* Update existing entry */
+        SAFE_STRNCPY(entry->value, value, sizeof(entry->value));
+    } else {
+        /* Create new entry */
+        if (mgr->entry_count >= MAX_CONFIG_ENTRIES) {
+            return RESULT_NO_MEMORY;
+        }
+
+        entry = &mgr->entries[mgr->entry_count++];
+        SAFE_STRNCPY(entry->section, section, sizeof(entry->section));
+        SAFE_STRNCPY(entry->key, key, sizeof(entry->key));
+        SAFE_STRNCPY(entry->value, value, sizeof(entry->value));
+    }
+
+    mgr->modified = true;
+    return RESULT_OK;
+}
+
+result_t config_get_int(config_manager_t *mgr, const char *section,
+                        const char *key, int *value) {
+    char str[MAX_CONFIG_VALUE_LEN];
+
+    result_t r = config_get_string(mgr, section, key, str, sizeof(str));
+    if (r != RESULT_OK) {
+        return r;
+    }
+
+    *value = (int)strtol(str, NULL, 0);
+    return RESULT_OK;
+}
+
+result_t config_get_bool(config_manager_t *mgr, const char *section,
+                         const char *key, bool *value) {
+    char str[MAX_CONFIG_VALUE_LEN];
+
+    result_t r = config_get_string(mgr, section, key, str, sizeof(str));
+    if (r != RESULT_OK) {
+        return r;
+    }
+
+    *value = (strcasecmp(str, "true") == 0 ||
+              strcasecmp(str, "yes") == 0 ||
+              strcasecmp(str, "1") == 0);
+    return RESULT_OK;
+}
 
 void config_get_defaults(app_config_t *c) {
     memset(c,0,sizeof(*c));

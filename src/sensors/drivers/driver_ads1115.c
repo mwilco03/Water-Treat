@@ -172,60 +172,81 @@ void ads1115_close(ads1115_t *dev) {
     }
 }
 
-/* Driver interface wrapper */
+/* ============================================================================
+ * Driver Interface (uses driver_common.h infrastructure)
+ * ========================================================================== */
+
+#include "driver_common.h"
+
 typedef struct {
+    DRIVER_INSTANCE_FIELDS;  /* ops, scale, offset */
     ads1115_t device;
     int channel;
-    float scale;
-    float offset;
 } ads1115_instance_t;
+
+/* Forward declarations for ops table */
+static result_t ads1115_driver_read(void *handle, float *value);
+static void ads1115_driver_close(void *handle);
+
+/* Driver operations table - exported for driver registry */
+const driver_ops_t driver_ads1115_ops = {
+    .read = ads1115_driver_read,
+    .close = ads1115_driver_close,
+    .set_calibration = driver_set_calibration_generic,
+    .name = "ADS1115"
+};
 
 result_t driver_ads1115_init(void **handle, const char *address, int bus, int channel, int gain) {
     ads1115_instance_t *inst = calloc(1, sizeof(ads1115_instance_t));
     if (!inst) return RESULT_NO_MEMORY;
-    
+
+    driver_instance_init_base(inst, &driver_ads1115_ops);
+
     uint8_t addr = address ? (uint8_t)strtol(address, NULL, 0) : ADS1115_DEFAULT_ADDR;
-    
+
     result_t r = ads1115_init(&inst->device, bus, addr, gain);
     if (r != RESULT_OK) {
         free(inst);
         return r;
     }
-    
+
     inst->channel = channel;
-    inst->scale = 1.0f;
-    inst->offset = 0.0f;
-    
     *handle = inst;
     return RESULT_OK;
 }
 
-result_t driver_ads1115_read(void *handle, float *value) {
+static result_t ads1115_driver_read(void *handle, float *value) {
     CHECK_NULL(handle);
     CHECK_NULL(value);
-    
+
     ads1115_instance_t *inst = (ads1115_instance_t *)handle;
     float voltage;
-    
+
     result_t r = ads1115_read_channel(&inst->device, inst->channel, &voltage);
     if (r != RESULT_OK) return r;
-    
-    *value = voltage * inst->scale + inst->offset;
+
+    *value = driver_apply_calibration(inst, voltage);
     return RESULT_OK;
+}
+
+/* Legacy wrapper - calls through ops for compatibility */
+result_t driver_ads1115_read(void *handle, float *value) {
+    return ads1115_driver_read(handle, value);
 }
 
 result_t driver_ads1115_set_calibration(void *handle, float scale, float offset) {
-    CHECK_NULL(handle);
-    ads1115_instance_t *inst = (ads1115_instance_t *)handle;
-    inst->scale = scale;
-    inst->offset = offset;
-    return RESULT_OK;
+    return driver_set_calibration_generic(handle, scale, offset);
 }
 
-void driver_ads1115_close(void *handle) {
+static void ads1115_driver_close(void *handle) {
     if (handle) {
         ads1115_instance_t *inst = (ads1115_instance_t *)handle;
         ads1115_close(&inst->device);
         free(inst);
     }
+}
+
+/* Legacy wrapper */
+void driver_ads1115_close(void *handle) {
+    ads1115_driver_close(handle);
 }

@@ -255,42 +255,62 @@ void hx711_close(hx711_t *dev) {
     }
 }
 
-/* Driver interface wrapper */
+/* ============================================================================
+ * Driver Interface (uses driver_common.h infrastructure)
+ * ========================================================================== */
+
+#include "driver_common.h"
+
 typedef struct {
+    DRIVER_INSTANCE_FIELDS;  /* ops, scale, offset */
     hx711_t device;
-    float cal_scale;
-    float cal_offset;
 } hx711_instance_t;
+
+/* Forward declarations for ops table */
+static result_t hx711_driver_read(void *handle, float *value);
+static void hx711_driver_close(void *handle);
+
+/* Driver operations table - exported for driver registry */
+const driver_ops_t driver_hx711_ops = {
+    .read = hx711_driver_read,
+    .close = hx711_driver_close,
+    .set_calibration = driver_set_calibration_generic,
+    .name = "HX711"
+};
 
 result_t driver_hx711_init(void **handle, int dout_pin, int sck_pin, int gain) {
     hx711_instance_t *inst = calloc(1, sizeof(hx711_instance_t));
     if (!inst) return RESULT_NO_MEMORY;
-    
+
+    driver_instance_init_base(inst, &driver_hx711_ops);
+
     result_t r = hx711_init(&inst->device, dout_pin, sck_pin, gain);
     if (r != RESULT_OK) {
         free(inst);
         return r;
     }
-    
-    inst->cal_scale = 1.0f;
-    inst->cal_offset = 0.0f;
-    
+
     *handle = inst;
     return RESULT_OK;
 }
 
-result_t driver_hx711_read(void *handle, float *value) {
+static result_t hx711_driver_read(void *handle, float *value) {
     CHECK_NULL(handle);
     CHECK_NULL(value);
-    
+
     hx711_instance_t *inst = (hx711_instance_t *)handle;
     float raw_value;
-    
+
     result_t r = hx711_read(&inst->device, &raw_value);
     if (r != RESULT_OK) return r;
-    
-    *value = raw_value * inst->cal_scale + inst->cal_offset;
+
+    *value = driver_apply_calibration(inst, raw_value);
     return RESULT_OK;
+}
+
+/* Legacy wrapper */
+result_t driver_hx711_read(void *handle, float *value) {
+    return hx711_driver_read(handle, value);
 }
 
 result_t driver_hx711_tare(void *handle) {
@@ -305,10 +325,15 @@ result_t driver_hx711_calibrate(void *handle, float known_weight) {
     return hx711_calibrate(&inst->device, known_weight, 10);
 }
 
-void driver_hx711_close(void *handle) {
+static void hx711_driver_close(void *handle) {
     if (handle) {
         hx711_instance_t *inst = (hx711_instance_t *)handle;
         hx711_close(&inst->device);
         free(inst);
     }
+}
+
+/* Legacy wrapper */
+void driver_hx711_close(void *handle) {
+    hx711_driver_close(handle);
 }

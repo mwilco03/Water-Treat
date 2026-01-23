@@ -107,62 +107,81 @@ void mcp3008_close(mcp3008_t *dev) {
     }
 }
 
-/* Driver interface wrapper */
+/* ============================================================================
+ * Driver Interface (uses driver_common.h infrastructure)
+ * ========================================================================== */
+
+#include "driver_common.h"
+
 typedef struct {
+    DRIVER_INSTANCE_FIELDS;  /* ops, scale, offset */
     mcp3008_t device;
     int channel;
-    float scale;
-    float offset;
     float eng_min;
     float eng_max;
     int raw_min;
     int raw_max;
 } mcp3008_instance_t;
 
+/* Forward declarations for ops table */
+static result_t mcp3008_driver_read(void *handle, float *value);
+static void mcp3008_driver_close(void *handle);
+
+/* Driver operations table - exported for driver registry */
+const driver_ops_t driver_mcp3008_ops = {
+    .read = mcp3008_driver_read,
+    .close = mcp3008_driver_close,
+    .set_calibration = driver_set_calibration_generic,
+    .name = "MCP3008"
+};
+
 result_t driver_mcp3008_init(void **handle, int bus, int cs, int channel, float vref) {
     mcp3008_instance_t *inst = calloc(1, sizeof(mcp3008_instance_t));
     if (!inst) return RESULT_NO_MEMORY;
-    
+
+    driver_instance_init_base(inst, &driver_mcp3008_ops);
+
     result_t r = mcp3008_init(&inst->device, bus, cs, vref);
     if (r != RESULT_OK) {
         free(inst);
         return r;
     }
-    
+
     inst->channel = channel;
-    inst->scale = 1.0f;
-    inst->offset = 0.0f;
     inst->eng_min = 0.0f;
     inst->eng_max = vref;
     inst->raw_min = 0;
     inst->raw_max = MCP3008_MAX_VALUE;
-    
     *handle = inst;
     return RESULT_OK;
 }
 
-result_t driver_mcp3008_read(void *handle, float *value) {
+static result_t mcp3008_driver_read(void *handle, float *value) {
     CHECK_NULL(handle);
     CHECK_NULL(value);
-    
+
     mcp3008_instance_t *inst = (mcp3008_instance_t *)handle;
     uint16_t raw;
-    
+
     result_t r = mcp3008_read_channel(&inst->device, inst->channel, &raw);
     if (r != RESULT_OK) return r;
-    
-    // Linear interpolation from raw to engineering units
+
+    /* Linear interpolation from raw to engineering units */
     float normalized = (float)(raw - inst->raw_min) / (float)(inst->raw_max - inst->raw_min);
-    *value = inst->eng_min + normalized * (inst->eng_max - inst->eng_min);
-    *value = *value * inst->scale + inst->offset;
-    
+    float eng_value = inst->eng_min + normalized * (inst->eng_max - inst->eng_min);
+    *value = driver_apply_calibration(inst, eng_value);
+
     return RESULT_OK;
+}
+
+/* Legacy wrapper */
+result_t driver_mcp3008_read(void *handle, float *value) {
+    return mcp3008_driver_read(handle, value);
 }
 
 result_t driver_mcp3008_read_raw(void *handle, uint16_t *raw) {
     CHECK_NULL(handle);
     CHECK_NULL(raw);
-    
     mcp3008_instance_t *inst = (mcp3008_instance_t *)handle;
     return mcp3008_read_channel(&inst->device, inst->channel, raw);
 }
@@ -178,17 +197,18 @@ result_t driver_mcp3008_set_scaling(void *handle, int raw_min, int raw_max, floa
 }
 
 result_t driver_mcp3008_set_calibration(void *handle, float scale, float offset) {
-    CHECK_NULL(handle);
-    mcp3008_instance_t *inst = (mcp3008_instance_t *)handle;
-    inst->scale = scale;
-    inst->offset = offset;
-    return RESULT_OK;
+    return driver_set_calibration_generic(handle, scale, offset);
 }
 
-void driver_mcp3008_close(void *handle) {
+static void mcp3008_driver_close(void *handle) {
     if (handle) {
         mcp3008_instance_t *inst = (mcp3008_instance_t *)handle;
         mcp3008_close(&inst->device);
         free(inst);
     }
+}
+
+/* Legacy wrapper */
+void driver_mcp3008_close(void *handle) {
+    mcp3008_driver_close(handle);
 }

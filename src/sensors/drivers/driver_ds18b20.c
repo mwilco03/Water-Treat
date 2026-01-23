@@ -128,58 +128,72 @@ void ds18b20_close(ds18b20_t *dev) {
     }
 }
 
-/* Driver interface wrapper */
+/* ============================================================================
+ * Driver Interface (uses driver_common.h infrastructure)
+ * ========================================================================== */
+
+#include "driver_common.h"
+
 typedef struct {
+    DRIVER_INSTANCE_FIELDS;  /* ops, scale, offset */
     ds18b20_t device;
-    float scale;
-    float offset;
     bool use_fahrenheit;
 } ds18b20_instance_t;
+
+/* Forward declarations for ops table */
+static result_t ds18b20_driver_read(void *handle, float *value);
+static void ds18b20_driver_close(void *handle);
+
+/* Driver operations table - exported for driver registry */
+const driver_ops_t driver_ds18b20_ops = {
+    .read = ds18b20_driver_read,
+    .close = ds18b20_driver_close,
+    .set_calibration = driver_set_calibration_generic,
+    .name = "DS18B20"
+};
 
 result_t driver_ds18b20_init(void **handle, const char *device_id) {
     ds18b20_instance_t *inst = calloc(1, sizeof(ds18b20_instance_t));
     if (!inst) return RESULT_NO_MEMORY;
-    
+
+    driver_instance_init_base(inst, &driver_ds18b20_ops);
+
     result_t r = ds18b20_init(&inst->device, device_id);
     if (r != RESULT_OK) {
         free(inst);
         return r;
     }
-    
-    inst->scale = 1.0f;
-    inst->offset = 0.0f;
+
     inst->use_fahrenheit = false;
-    
     *handle = inst;
     return RESULT_OK;
 }
 
-result_t driver_ds18b20_read(void *handle, float *value) {
+static result_t ds18b20_driver_read(void *handle, float *value) {
     CHECK_NULL(handle);
     CHECK_NULL(value);
-    
+
     ds18b20_instance_t *inst = (ds18b20_instance_t *)handle;
     float temp_c;
-    
+
     result_t r = ds18b20_read(&inst->device, &temp_c);
     if (r != RESULT_OK) return r;
-    
+
     if (inst->use_fahrenheit) {
-        *value = temp_c * 9.0f / 5.0f + 32.0f;
-    } else {
-        *value = temp_c;
+        temp_c = temp_c * 9.0f / 5.0f + 32.0f;
     }
-    
-    *value = *value * inst->scale + inst->offset;
+
+    *value = driver_apply_calibration(inst, temp_c);
     return RESULT_OK;
 }
 
+/* Legacy wrapper */
+result_t driver_ds18b20_read(void *handle, float *value) {
+    return ds18b20_driver_read(handle, value);
+}
+
 result_t driver_ds18b20_set_calibration(void *handle, float scale, float offset) {
-    CHECK_NULL(handle);
-    ds18b20_instance_t *inst = (ds18b20_instance_t *)handle;
-    inst->scale = scale;
-    inst->offset = offset;
-    return RESULT_OK;
+    return driver_set_calibration_generic(handle, scale, offset);
 }
 
 result_t driver_ds18b20_set_fahrenheit(void *handle, bool fahrenheit) {
@@ -189,10 +203,15 @@ result_t driver_ds18b20_set_fahrenheit(void *handle, bool fahrenheit) {
     return RESULT_OK;
 }
 
-void driver_ds18b20_close(void *handle) {
+static void ds18b20_driver_close(void *handle) {
     if (handle) {
         ds18b20_instance_t *inst = (ds18b20_instance_t *)handle;
         ds18b20_close(&inst->device);
         free(inst);
     }
+}
+
+/* Legacy wrapper */
+void driver_ds18b20_close(void *handle) {
+    ds18b20_driver_close(handle);
 }
