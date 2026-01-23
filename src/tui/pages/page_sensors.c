@@ -1,10 +1,11 @@
 /**
  * @file page_sensors.c
- * @brief Sensor management page
+ * @brief Sensor management page - refactored to use tui_templates
  */
 
 #include "page_sensors.h"
 #include "../tui_common.h"
+#include "../tui_templates.h"
 #include "../dialogs/dialog_sensor.h"
 #include "../dialogs/dialog_io_wizard.h"
 #include "db/database.h"
@@ -13,9 +14,9 @@
 #include <ncurses.h>
 #include <string.h>
 
-#define MAX_SENSORS 64
 #define VISIBLE_ROWS 15
 
+/* Sensor item structure - matches db_module_with_status_t layout for efficiency */
 typedef struct {
     int id;
     int slot;
@@ -23,127 +24,131 @@ typedef struct {
     char type[32];
     char status[16];
     float value;
-    char unit[16];
 } sensor_item_t;
 
-static struct {
-    WINDOW *win;
-    sensor_item_t sensors[MAX_SENSORS];
-    tui_list_state_t list;    /* Reusable list widget for navigation */
-    bool show_dialog;
-    int dialog_type;  // 0=view, 1=add, 2=edit, 3=delete
-} g_page = {0};
+/* ============================================================================
+ * Template Callbacks
+ * ========================================================================== */
 
-static void load_sensors(void) {
-    int sensor_count = 0;
-
+static int sensors_load_data(void **items, int *count) {
     database_t *db = tui_get_database();
     if (!db) {
-        tui_list_set_count(&g_page.list, 0);
-        return;
+        *items = NULL;
+        *count = 0;
+        return 0;
     }
 
     /* Use optimized JOIN query - single query instead of N+1 */
     db_module_with_status_t *modules = NULL;
-    int count = 0;
+    int module_count = 0;
 
-    if (db_module_list_with_status(db, &modules, &count) != RESULT_OK || !modules) {
-        tui_list_set_count(&g_page.list, 0);
-        return;
+    if (db_module_list_with_status(db, &modules, &module_count) != RESULT_OK || !modules) {
+        *items = NULL;
+        *count = 0;
+        return 0;
     }
 
-    for (int i = 0; i < count && i < MAX_SENSORS; i++) {
-        sensor_item_t *s = &g_page.sensors[sensor_count];
-        s->id = modules[i].module.id;
-        s->slot = modules[i].module.slot;
-        SAFE_STRNCPY(s->name, modules[i].module.name, sizeof(s->name));
-        SAFE_STRNCPY(s->type, modules[i].module.module_type, sizeof(s->type));
-        /* Value and status come from JOIN - no additional query needed */
-        s->value = modules[i].value;
-        SAFE_STRNCPY(s->status, modules[i].sensor_status, sizeof(s->status));
+    /* Allocate sensor items array */
+    sensor_item_t *sensors = calloc(module_count, sizeof(sensor_item_t));
+    if (!sensors) {
+        free(modules);
+        *items = NULL;
+        *count = 0;
+        return 0;
+    }
 
-        sensor_count++;
+    /* Copy module data to sensor items */
+    for (int i = 0; i < module_count; i++) {
+        sensors[i].id = modules[i].module.id;
+        sensors[i].slot = modules[i].module.slot;
+        SAFE_STRNCPY(sensors[i].name, modules[i].module.name, sizeof(sensors[i].name));
+        SAFE_STRNCPY(sensors[i].type, modules[i].module.module_type, sizeof(sensors[i].type));
+        sensors[i].value = modules[i].value;
+        SAFE_STRNCPY(sensors[i].status, modules[i].sensor_status, sizeof(sensors[i].status));
     }
 
     free(modules);
-    tui_list_set_count(&g_page.list, sensor_count);
+    *items = sensors;
+    *count = module_count;
+    return module_count;
 }
 
-static void draw_sensor_list(WINDOW *win) {
-    int row = 3;
-    int max_y, max_x;
-    getmaxyx(win, max_y, max_x);
-    UNUSED(max_y);
+static void sensors_free_data(void *items) {
+    free(items);
+}
 
-    // Header
-    wattron(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
-    mvwprintw(win, row++, 2, "%-4s %-20s %-12s %-10s %-12s %-8s",
-              "Slot", "Name", "Type", "Value", "Status", "");
-    wattroff(win, A_BOLD | COLOR_PAIR(TUI_COLOR_TITLE));
+static void sensors_format_cell(void *item, int column, char *buffer, size_t size) {
+    sensor_item_t *s = (sensor_item_t *)item;
 
-    mvwhline(win, row++, 2, ACS_HLINE, max_x - 4);
-
-    if (g_page.list.item_count == 0) {
-        wattron(win, COLOR_PAIR(TUI_COLOR_WARNING));
-        mvwprintw(win, row + 2, 4, "No sensors configured. Press 'a' to add a sensor.");
-        wattroff(win, COLOR_PAIR(TUI_COLOR_WARNING));
-        return;
-    }
-
-    // Sensor list - use list widget helper
-    int visible = tui_list_visible_count(&g_page.list);
-
-    for (int i = 0; i < visible; i++) {
-        int idx = g_page.list.scroll_offset + i;
-        sensor_item_t *s = &g_page.sensors[idx];
-
-        if (idx == g_page.list.selected) {
-            wattron(win, A_REVERSE);
-        }
-
-        /* Use centralized status color function */
-        int color = tui_status_color(s->status);
-
-        mvwprintw(win, row, 2, "%-4d %-20s %-12s ", s->slot, s->name, s->type);
-
-        // Value
-        wattron(win, COLOR_PAIR(color));
-        wprintw(win, "%-10.2f ", s->value);
-        wattroff(win, COLOR_PAIR(color));
-
-        // Status
-        wattron(win, COLOR_PAIR(color));
-        wprintw(win, "%-12s", s->status);
-        wattroff(win, COLOR_PAIR(color));
-
-        if (idx == g_page.list.selected) {
-            wattroff(win, A_REVERSE);
-        }
-
-        row++;
-    }
-
-    // Scroll indicator - use list widget helper
-    if (g_page.list.item_count > VISIBLE_ROWS) {
-        mvwprintw(win, 3, max_x - 8, "[%3d%%]", tui_list_scroll_percent(&g_page.list));
+    switch (column) {
+        case 0: snprintf(buffer, size, "%d", s->slot); break;
+        case 1: SAFE_STRNCPY(buffer, s->name, size); break;
+        case 2: SAFE_STRNCPY(buffer, s->type, size); break;
+        case 3: snprintf(buffer, size, "%.2f", s->value); break;
+        case 4: SAFE_STRNCPY(buffer, s->status, size); break;
+        default: buffer[0] = '\0'; break;
     }
 }
 
-static void draw_help(WINDOW *win) {
-    int max_y = getmaxy(win);
-    int row = max_y - 4;
-    
-    wattron(win, COLOR_PAIR(TUI_COLOR_NORMAL));
-    mvwhline(win, row++, 2, ACS_HLINE, getmaxx(win) - 4);
-    mvwprintw(win, row++, 2, "a:Add  e:Edit  d:Delete  Enter:View  r:Refresh  Arrows:Navigate");
-    wattroff(win, COLOR_PAIR(TUI_COLOR_NORMAL));
+static int sensors_get_cell_color(void *item, int column) {
+    sensor_item_t *s = (sensor_item_t *)item;
+    /* Apply status color to value and status columns */
+    if (column == 3 || column == 4) {
+        return tui_status_color(s->status);
+    }
+    return TUI_COLOR_NORMAL;
 }
 
-static void show_view_dialog(void) {
+/* Forward declarations for action callbacks */
+static void sensors_on_view(void *item, int index);
+static void sensors_on_add(void *item, int index);
+static void sensors_on_edit(void *item, int index);
+static void sensors_on_delete(void *item, int index);
+
+/* ============================================================================
+ * Template Configuration
+ * ========================================================================== */
+
+static const tui_list_page_config_t sensors_config = {
+    .title = "Sensors",
+    .columns = {
+        TUI_COL("Slot", 4),
+        TUI_COL("Name", 20),
+        TUI_COL("Type", 12),
+        TUI_COL_RIGHT("Value", 10),
+        TUI_COL("Status", 12),
+    },
+    .column_count = 5,
+    .load_data = sensors_load_data,
+    .free_data = sensors_free_data,
+    .format_cell = sensors_format_cell,
+    .get_cell_color = sensors_get_cell_color,
+    .on_view = sensors_on_view,
+    .on_add = sensors_on_add,
+    .on_edit = sensors_on_edit,
+    .on_delete = sensors_on_delete,
+    .on_refresh = NULL,  /* Default reload behavior is sufficient */
+    .help_text = "a:Add  e:Edit  d:Delete  Enter:View  r:Refresh  Arrows:Navigate",
+    .item_size = sizeof(sensor_item_t),
+    .visible_rows = VISIBLE_ROWS,
+};
+
+/* ============================================================================
+ * Page State
+ * ========================================================================== */
+
+static tui_list_page_state_t g_state = {0};
+
+/* ============================================================================
+ * Action Callbacks
+ * ========================================================================== */
+
+static void sensors_on_view(void *item, int index) {
+    UNUSED(index);
+    sensor_item_t *s = (sensor_item_t *)item;
+
     database_t *db = tui_get_database();
-    if (!db || g_page.list.selected >= g_page.list.item_count) return;
-
-    sensor_item_t *s = &g_page.sensors[g_page.list.selected];
+    if (!db) return;
 
     WINDOW *dialog = newwin(20, 60, 4, 10);
     box(dialog, 0, 0);
@@ -189,9 +194,12 @@ static void show_view_dialog(void) {
     delwin(dialog);
 }
 
-static void handle_add_sensor(void) {
+static void sensors_on_add(void *item, int index) {
+    UNUSED(item);
+    UNUSED(index);
+
     /*
-     * Use the new progressive disclosure I/O wizard.
+     * Use the progressive disclosure I/O wizard.
      *
      * Design Philosophy Applied:
      * - Dynamic Discovery: Wizard scans I2C/1-Wire before asking questions
@@ -199,113 +207,78 @@ static void handle_add_sensor(void) {
      * - Graceful Degradation: Conflicts shown, not blocked
      * - Single Source of Truth: User points at device, system derives config
      * - Informational Output: Shows what was discovered
-     *
-     * The old dialog_sensor_add() is still available for power users
-     * who need to configure advanced settings.
      */
     io_wizard_result_t result;
     if (dialog_io_wizard_add_sensor(&result)) {
-        /* Sensor was created - reload and notify */
-        load_sensors();
+        /* Sensor was created - template will reload, notify PROFINET */
         tui_notify_sensor_changed(-1);  /* -1 = all sensors changed */
         tui_set_status("Added sensor '%s' at slot %d", result.name, result.assigned_slot);
 
-        /* Select the newly added sensor */
-        for (int i = 0; i < g_page.list.item_count; i++) {
-            if (g_page.sensors[i].id == result.created_id) {
-                g_page.list.selected = i;
+        /* Select the newly added sensor after reload */
+        tui_list_page_load(&g_state);
+        sensor_item_t *sensors = (sensor_item_t *)g_state.items;
+        for (int i = 0; i < g_state.item_count; i++) {
+            if (sensors[i].id == result.created_id) {
+                g_state.list.selected = i;
                 break;
             }
         }
     }
 }
 
-static void handle_edit_sensor(void) {
-    if (g_page.list.selected >= g_page.list.item_count) return;
-
-    sensor_item_t *s = &g_page.sensors[g_page.list.selected];
+static void sensors_on_edit(void *item, int index) {
+    UNUSED(index);
+    sensor_item_t *s = (sensor_item_t *)item;
     int slot = s->slot;
+    char name[64];
+    SAFE_STRNCPY(name, s->name, sizeof(name));
 
     if (dialog_sensor_edit(s->id)) {
-        /* Sensor was updated - reload and notify */
-        load_sensors();
+        /* Sensor was updated - template will reload, notify PROFINET */
         tui_notify_sensor_changed(slot);
-        tui_set_status("Updated sensor: %s", s->name);
+        tui_set_status("Updated sensor: %s", name);
     }
 }
 
-static void handle_delete_sensor(void) {
-    if (g_page.list.selected >= g_page.list.item_count) return;
-
-    sensor_item_t *s = &g_page.sensors[g_page.list.selected];
+static void sensors_on_delete(void *item, int index) {
+    UNUSED(index);
+    sensor_item_t *s = (sensor_item_t *)item;
     int slot = s->slot;
     char name[64];
     SAFE_STRNCPY(name, s->name, sizeof(name));
 
     if (dialog_sensor_delete(s->id)) {
-        /* Sensor was deleted - reload and notify */
-        load_sensors();
+        /* Sensor was deleted - template will reload, notify PROFINET */
         tui_notify_sensor_changed(slot);
         tui_set_status("Deleted sensor: %s", name);
-        /* tui_list_set_count() in load_sensors() already adjusts selection */
     }
 }
 
+/* ============================================================================
+ * Page Interface Functions
+ * ========================================================================== */
+
 void page_sensors_init(WINDOW *win) {
-    g_page.win = win;
-    tui_list_init(&g_page.list, VISIBLE_ROWS);
-    load_sensors();
+    tui_list_page_init(&g_state, &sensors_config, win);
+    tui_list_page_load(&g_state);
 }
 
 void page_sensors_draw(WINDOW *win) {
-    draw_sensor_list(win);
-    draw_help(win);
+    UNUSED(win);
+
+    /* Reload if needed (after add/edit/delete) */
+    if (g_state.needs_reload) {
+        tui_list_page_load(&g_state);
+    }
+
+    tui_list_page_draw(&g_state);
 }
 
 void page_sensors_input(WINDOW *win, int ch) {
     UNUSED(win);
-
-    /* Let list widget handle navigation keys */
-    if (tui_list_input(&g_page.list, ch)) {
-        return;
-    }
-
-    /* Handle page-specific keys */
-    switch (ch) {
-        case '\n':
-        case KEY_ENTER:
-            if (g_page.list.item_count > 0) {
-                show_view_dialog();
-            }
-            break;
-
-        case 'a':
-        case 'A':
-            handle_add_sensor();
-            break;
-
-        case 'e':
-        case 'E':
-            if (g_page.list.item_count > 0) {
-                handle_edit_sensor();
-            }
-            break;
-
-        case 'd':
-        case 'D':
-            if (g_page.list.item_count > 0) {
-                handle_delete_sensor();
-            }
-            break;
-
-        case 'r':
-        case 'R':
-            load_sensors();
-            tui_set_status("Refreshed %d sensors", g_page.list.item_count);
-            break;
-    }
+    tui_list_page_input(&g_state, ch);
 }
 
 void page_sensors_cleanup(void) {
-    g_page.win = NULL;
+    tui_list_page_cleanup(&g_state);
 }
