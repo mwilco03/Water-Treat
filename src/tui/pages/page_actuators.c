@@ -21,7 +21,7 @@
 #include <ncurses.h>
 #include <string.h>
 
-#define MAX_ACTUATORS_DISPLAY 32
+#define MAX_ACTUATORS_DISPLAY 247
 #define VISIBLE_ROWS 12
 
 /* External actuator manager from main.c */

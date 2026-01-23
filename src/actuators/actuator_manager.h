@@ -51,10 +51,10 @@ typedef struct {
  * Actuator Configuration
  * ========================================================================== */
 
-#define MAX_ACTUATORS 16
+#define MAX_ACTUATORS 247
 
-/* Maximum slot number for O(1) lookup */
-#define ACTUATOR_MAX_SLOT 64
+/* Maximum slot number for O(1) lookup (matches Modbus address limit) */
+#define ACTUATOR_MAX_SLOT 247
 
 typedef struct {
     int id;

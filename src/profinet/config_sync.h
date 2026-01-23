@@ -21,8 +21,8 @@
  * ============================================================================ */
 
 #define CONFIG_SYNC_VERSION         1
-#define CONFIG_SYNC_MAX_SENSORS     8
-#define CONFIG_SYNC_MAX_ACTUATORS   7   /* Slots 9-15 */
+#define CONFIG_SYNC_MAX_SENSORS     246   /* Slots 1-246 (slot 0 = DAP) */
+#define CONFIG_SYNC_MAX_ACTUATORS   246   /* Any slot can be actuator */
 #define CONFIG_SYNC_NAME_LEN        16
 #define CONFIG_SYNC_UNIT_LEN        8
 #define CONFIG_SYNC_STATION_LEN     32

@@ -22,7 +22,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 
-#define MAX_IO_SLOTS 16
+#define MAX_IO_SLOTS 247
 
 typedef struct {
     int slot;

@@ -38,11 +38,11 @@
 #define MAX_MENU_ITEMS    32
 #define SCAN_DELAY_MS     50
 
-/* PROFINET slot ranges (from CONTROLLER_SPEC.md) */
+/* PROFINET slot ranges (slots 1-246 available, slot 0 = DAP) */
 #define SENSOR_SLOT_MIN   1
-#define SENSOR_SLOT_MAX   8
-#define ACTUATOR_SLOT_MIN 9
-#define ACTUATOR_SLOT_MAX 16
+#define SENSOR_SLOT_MAX   246
+#define ACTUATOR_SLOT_MIN 1
+#define ACTUATOR_SLOT_MAX 246
 
 /* ============================================================================
  * Wizard State Machine

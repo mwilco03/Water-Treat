@@ -14,7 +14,7 @@
 #include <string.h>
 #include <sys/sysinfo.h>
 
-#define MAX_DISPLAY_SENSORS 20
+#define MAX_DISPLAY_SENSORS 247
 #define REFRESH_INTERVAL_MS 1000
 
 typedef struct {

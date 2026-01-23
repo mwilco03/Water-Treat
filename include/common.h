@@ -18,8 +18,8 @@
 #define MAX_NAME_LEN 64
 #define MAX_PATH_LEN 256
 #define MAX_CONFIG_VALUE_LEN 512
-#define MAX_MODULES 64
-#define MAX_SENSOR_INSTANCES 64
+#define MAX_MODULES 247
+#define MAX_SENSOR_INSTANCES 247
 #define MAX_DATA_SIZE 256
 
 typedef enum {

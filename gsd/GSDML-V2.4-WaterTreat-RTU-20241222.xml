@@ -13,6 +13,9 @@
     Device ID: 0x0001
 
     CHANGE LOG:
+    2026-01-23: Expanded to 247 slots (0..246) for parity with controller Modbus capacity.
+                Slot 0 = DAP, Slots 1-246 available for any sensor/actuator type.
+                MaxInputLength=1536, MaxOutputLength=1024 to support full slot count.
     2024-12-22: Updated sensor modules to 5-byte format (Float32 + Quality byte)
                 per DEVELOPMENT_GUIDELINES.md and Water-Controller parity requirements.
                 Quality byte format: 0x00=Good, 0x40=Uncertain, 0x80=Bad, 0xC0=NotConnected
@@ -48,7 +51,7 @@
             <DeviceAccessPointList>
                 <DeviceAccessPointItem ID="DAP_1"
                                        PNIO_Version="V2.4"
-                                       PhysicalSlots="0..15"
+                                       PhysicalSlots="0..246"
                                        MinDeviceInterval="32"
                                        DNS_CompatibleName="water-treat-rtu"
                                        FixedInSlots="0"
@@ -70,22 +73,22 @@
 
                     <CertificationInfo ConformanceClass="B" ApplicationClass=""/>
 
-                    <IOConfigData MaxInputLength="512" MaxOutputLength="512"/>
+                    <IOConfigData MaxInputLength="1536" MaxOutputLength="1024"/>
 
                     <UseableModules>
-                        <!-- Sensor Input Modules (Slot 1-8) -->
-                        <ModuleItemRef ModuleItemTarget="MOD_pH_Sensor" AllowedInSlots="1..8"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_TDS_Sensor" AllowedInSlots="1..8"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_Turbidity_Sensor" AllowedInSlots="1..8"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_Temperature_Sensor" AllowedInSlots="1..8"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_Flow_Sensor" AllowedInSlots="1..8"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_Level_Sensor" AllowedInSlots="1..8"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_Generic_Analog_Input" AllowedInSlots="1..8"/>
+                        <!-- Sensor Input Modules (Any slot 1-246) -->
+                        <ModuleItemRef ModuleItemTarget="MOD_pH_Sensor" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_TDS_Sensor" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Turbidity_Sensor" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Temperature_Sensor" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Flow_Sensor" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Level_Sensor" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Generic_Analog_Input" AllowedInSlots="1..246"/>
 
-                        <!-- Actuator Output Modules (Slot 9-15) -->
-                        <ModuleItemRef ModuleItemTarget="MOD_Pump_Control" AllowedInSlots="9..15"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_Valve_Control" AllowedInSlots="9..15"/>
-                        <ModuleItemRef ModuleItemTarget="MOD_Generic_Digital_Output" AllowedInSlots="9..15"/>
+                        <!-- Actuator Output Modules (Any slot 1-246) -->
+                        <ModuleItemRef ModuleItemTarget="MOD_Pump_Control" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Valve_Control" AllowedInSlots="1..246"/>
+                        <ModuleItemRef ModuleItemTarget="MOD_Generic_Digital_Output" AllowedInSlots="1..246"/>
                     </UseableModules>
 
                     <VirtualSubmoduleList>

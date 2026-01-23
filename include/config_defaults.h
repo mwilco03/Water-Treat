@@ -43,7 +43,7 @@
 #define WT_PROFINET_DEVICE_ID       0x0001  /* Device type identifier */
 #define WT_PROFINET_MIN_INTERVAL    32      /* Minimum update interval (cycles) */
 #define WT_PROFINET_TICK_INTERVAL_US 1000   /* PROFINET stack tick rate (microseconds) */
-#define WT_PROFINET_MAX_SLOTS       64      /* Maximum I/O modules supported */
+#define WT_PROFINET_MAX_SLOTS       247     /* Maximum I/O modules supported (matches Modbus limit) */
 #define WT_PROFINET_DATA_SIZE       256     /* Maximum data payload size per slot */
 
 /* p-net non-volatile storage directory

@@ -116,6 +116,7 @@ set(SOURCES_SUBSYSTEMS
 set(SOURCES_TUI
     src/tui/tui_common.c
     src/tui/tui_main.c
+    src/tui/tui_templates.c
     src/tui/widgets/widget_dialog.c
     src/tui/dialogs/dialog_helpers.c
     src/tui/dialogs/dialog_sensor.c
