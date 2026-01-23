@@ -211,6 +211,7 @@ static void purge_pnet_nv_contamination(const char *data_dir) {
         LOG_DEBUG("No p-net NV contamination found");
     }
 }
+
 static void poll_output_slots(void) {
     /* Poll all output slots for new data from controller */
     for (int i = 0; i < g_pn.slot_count; i++) {
