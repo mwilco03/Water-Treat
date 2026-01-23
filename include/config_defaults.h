@@ -50,8 +50,10 @@
  * Station name, IP settings, and I&M data persist here.
  * This prevents p-net from using its compiled-in defaults (e.g., "rt-labs-dev")
  * when DCP Set Name or factory reset occurs.
+ *
+ * Configurable via [profinet] data_dir in config file.
+ * Default: /var/lib/water-treat/pnet (set in config.c)
  */
-#define WT_PNET_DATA_DIR            "/var/lib/water-treat/pnet"
 
 /* ============================================================================
  * Database Configuration

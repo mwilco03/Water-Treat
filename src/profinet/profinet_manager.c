@@ -16,7 +16,6 @@
 #include <errno.h>      /* errno, strerror for error reporting */
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <sys/stat.h>   /* mkdir for p-net NV storage directory */
-#include "config_defaults.h"  /* WT_PNET_DATA_DIR */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
 #include <net/if.h>     /* IFF_UP, IFF_RUNNING for interface detection */
 #include <ifaddrs.h>    /* getifaddrs, freeifaddrs for IP configuration */
@@ -216,7 +215,10 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     // Non-volatile storage directory for p-net
     // This controls where station_name, IP settings, and I&M data persist.
     // Without this, p-net uses CWD and may fall back to defaults like "rt-labs-dev".
-    strncpy(g_pn.pnet_cfg.file_directory, WT_PNET_DATA_DIR, sizeof(g_pn.pnet_cfg.file_directory) - 1);
+    // Configurable via [profinet] data_dir in config file
+    if (config->data_dir[0] != '\0') {
+        strncpy(g_pn.pnet_cfg.file_directory, config->data_dir, sizeof(g_pn.pnet_cfg.file_directory) - 1);
+    }
 
     // Device identity
     g_pn.pnet_cfg.device_id.vendor_id_hi = (config->vendor_id >> 8) & 0xFF;
@@ -651,10 +653,21 @@ result_t profinet_manager_start(const char *interface) {
         struct stat st = {0};
         if (stat(g_pn.pnet_cfg.file_directory, &st) == -1) {
             // Directory doesn't exist - create it with parent directories
-            // First ensure parent /var/lib/water-treat exists
-            if (mkdir("/var/lib/water-treat", 0755) == -1 && errno != EEXIST) {
-                LOG_WARNING("Could not create /var/lib/water-treat: %s", strerror(errno));
+            // Use mkdir -p equivalent: create each path component
+            char path_copy[256];
+            strncpy(path_copy, g_pn.pnet_cfg.file_directory, sizeof(path_copy) - 1);
+            path_copy[sizeof(path_copy) - 1] = '\0';
+
+            for (char *p = path_copy + 1; *p; p++) {
+                if (*p == '/') {
+                    *p = '\0';
+                    if (mkdir(path_copy, 0755) == -1 && errno != EEXIST) {
+                        LOG_WARNING("Could not create directory '%s': %s", path_copy, strerror(errno));
+                    }
+                    *p = '/';
+                }
             }
+            // Create final directory
             if (mkdir(g_pn.pnet_cfg.file_directory, 0755) == -1 && errno != EEXIST) {
                 LOG_WARNING("Could not create p-net data directory '%s': %s",
                             g_pn.pnet_cfg.file_directory, strerror(errno));

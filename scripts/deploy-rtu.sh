@@ -24,13 +24,14 @@ set -euo pipefail
 # Configuration
 # =============================================================================
 
-readonly INSTALL_DIR="/opt/water-treat"
-readonly CONFIG_DIR="/etc/water-treat"
-readonly DATA_DIR="/var/lib/water-treat"
-readonly PNET_DATA_DIR="/var/lib/water-treat/pnet"
-readonly LOG_DIR="/var/log/water-treat"
-readonly SERVICE_NAME="water-treat"
-readonly REPO_URL="https://github.com/mwilco03/Water-Treat.git"
+# Paths - can be overridden via environment variables
+INSTALL_DIR="${WT_INSTALL_DIR:-/opt/water-treat}"
+CONFIG_DIR="${WT_CONFIG_DIR:-/etc/water-treat}"
+DATA_DIR="${WT_DATA_DIR:-/var/lib/water-treat}"
+PNET_DATA_DIR="${WT_PNET_DATA_DIR:-${DATA_DIR}/pnet}"
+LOG_DIR="${WT_LOG_DIR:-/var/log/water-treat}"
+SERVICE_NAME="water-treat"
+REPO_URL="${WT_REPO_URL:-https://github.com/mwilco03/Water-Treat.git}"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -294,6 +295,8 @@ vendor_id = 0x0493
 device_id = 0x0001
 product_name = Water Treatment RTU
 min_device_interval = 32
+# p-net NV storage (prevents "rt-labs-dev" fallback)
+data_dir = $PNET_DATA_DIR
 
 [database]
 path = $DATA_DIR/water-treat.db
