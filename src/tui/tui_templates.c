@@ -377,7 +377,7 @@ int tui_form_input(tui_form_state_t *state, int ch) {
                 case TUI_FIELD_TEXT: {
                     char buf[256];
                     SAFE_STRNCPY(buf, state->values[state->current_field].text, sizeof(buf));
-                    if (dialog_input_string(field->label, buf, sizeof(buf))) {
+                    if (dialog_input_string(field->label, "Enter value:", buf, sizeof(buf))) {
                         SAFE_STRNCPY(state->values[state->current_field].text, buf,
                                      sizeof(state->values[state->current_field].text));
                     }
@@ -386,7 +386,7 @@ int tui_form_input(tui_form_state_t *state, int ch) {
 
                 case TUI_FIELD_NUMBER: {
                     int val = state->values[state->current_field].number;
-                    if (dialog_input_number(field->label, &val)) {
+                    if (dialog_input_int(field->label, "Enter value:", &val, -999999, 999999)) {
                         state->values[state->current_field].number = val;
                     }
                     break;
@@ -400,9 +400,10 @@ int tui_form_input(tui_form_state_t *state, int ch) {
                 case TUI_FIELD_SELECT:
                     if (field->options && field->option_count > 0) {
                         int sel = state->values[state->current_field].selected;
-                        if (dialog_select(field->label, field->options,
-                                          field->option_count, &sel)) {
-                            state->values[state->current_field].selected = sel;
+                        int result = dialog_select(field->label, field->options,
+                                                   field->option_count, sel);
+                        if (result >= 0) {
+                            state->values[state->current_field].selected = result;
                         }
                     }
                     break;
@@ -627,15 +628,16 @@ bool tui_config_page_input(tui_config_page_state_t *state, int ch) {
                         break;
                     }
                 }
-                if (dialog_select(field->label, field->options, field->option_count, &sel)) {
+                int result = dialog_select(field->label, field->options, field->option_count, sel);
+                if (result >= 0) {
                     SAFE_STRNCPY(state->values[state->current_field],
-                                 field->options[sel],
+                                 field->options[result],
                                  sizeof(state->values[state->current_field]));
                     state->modified = true;
                 }
             } else {
                 /* Show input dialog */
-                if (dialog_input_string(field->label, buf, sizeof(buf))) {
+                if (dialog_input_string(field->label, "Enter value:", buf, sizeof(buf))) {
                     SAFE_STRNCPY(state->values[state->current_field], buf,
                                  sizeof(state->values[state->current_field]));
                     state->modified = true;
