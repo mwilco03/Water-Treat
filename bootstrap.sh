@@ -1062,9 +1062,18 @@ do_wipe() {
     run_privileged rm -rf /tmp/water-treat-* 2>/dev/null || true
     run_privileged rm -rf /var/tmp/water-treat-* 2>/dev/null || true
 
-    # Remove any stale PID files or lock files
+    # Remove any stale PID files, lock files, and runtime logs
     run_privileged rm -f /var/run/water-treat.pid 2>/dev/null || true
     run_privileged rm -f /run/water-treat.pid 2>/dev/null || true
+    run_privileged rm -rf /run/water-treat 2>/dev/null || true
+
+    # Clean local development build if running from source tree
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "$script_dir/CMakeLists.txt" && -d "$script_dir/build" ]]; then
+        log_info "Cleaning local development build..."
+        rm -rf "$script_dir/build"
+    fi
 
     # Verify removal
     local remaining=()

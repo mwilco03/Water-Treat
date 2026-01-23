@@ -93,12 +93,27 @@ static profinet_slot_t* find_slot(int slot, int subslot) {
 
 static profinet_slot_t* add_slot(int slot, int subslot) {
     if (g_pn.slot_count >= MAX_PROFINET_SLOTS) return NULL;
-    
+
     profinet_slot_t *s = &g_pn.slots[g_pn.slot_count++];
     memset(s, 0, sizeof(*s));
     s->slot = slot;
     s->subslot = subslot;
     return s;
+}
+
+/**
+ * @brief Determine if a module is an actuator (output) based on GSDML ident
+ *
+ * Per gsdml_modules.h, module ID pattern is 0x0000XXYY where:
+ *   - Sensors:   0x00000010 - 0x00000070 (bit 8 = 0)
+ *   - Actuators: 0x00000100 - 0x00000120 (bit 8 = 1)
+ *
+ * @param module_ident GSDML module identifier
+ * @return true if actuator (output module), false if sensor (input module)
+ */
+static bool is_actuator_module(uint32_t module_ident) {
+    /* Actuator modules have bit 8 set (0x00000100 range) */
+    return (module_ident & 0x00000100) != 0;
 }
 
 #ifdef HAVE_PNET
@@ -175,11 +190,23 @@ static result_t load_modules_from_db(void) {
             slot->module_id = modules[i].id;
             slot->module_ident = modules[i].module_ident;
             slot->submodule_ident = modules[i].submodule_ident;
-            /* Use correct sizes per GSDML specification */
-            slot->input_size = GSDML_SENSOR_INPUT_SIZE;   /* 5 bytes: float + quality */
-            slot->output_size = GSDML_ACTUATOR_OUTPUT_SIZE; /* 4 bytes if output module */
-            LOG_DEBUG("Loaded slot %d: module_id=%d, ident=0x%08X",
-                      slot->slot, slot->module_id, slot->module_ident);
+
+            /*
+             * Set correct I/O sizes based on module type per GSDML specification.
+             * Sensors are INPUT-only (device → controller).
+             * Actuators are OUTPUT-only (controller → device).
+             */
+            if (is_actuator_module(slot->module_ident)) {
+                slot->input_size = 0;
+                slot->output_size = GSDML_ACTUATOR_OUTPUT_SIZE;  /* 4 bytes */
+            } else {
+                slot->input_size = GSDML_SENSOR_INPUT_SIZE;      /* 5 bytes */
+                slot->output_size = 0;
+            }
+
+            LOG_DEBUG("Loaded slot %d: module_id=%d, ident=0x%08X, %s",
+                      slot->slot, slot->module_id, slot->module_ident,
+                      is_actuator_module(slot->module_ident) ? "OUTPUT" : "INPUT");
         }
     }
     
@@ -680,9 +707,20 @@ result_t profinet_manager_start(const char *interface) {
             continue;
         }
         
+        /*
+         * Set PROFINET data direction based on module type:
+         * - Sensors (input modules):   PNET_DIR_INPUT  (device → controller)
+         * - Actuators (output modules): PNET_DIR_OUTPUT (controller → device)
+         *
+         * This MUST match the GSDML or the controller will reject the connection.
+         */
+        pnet_submodule_dir_t direction = is_actuator_module(slot->module_ident)
+                                             ? PNET_DIR_OUTPUT
+                                             : PNET_DIR_INPUT;
+
         ret = pnet_plug_submodule(g_pn.pnet, 0, slot->slot, slot->subslot,
                                   slot->module_ident, slot->submodule_ident,
-                                  PNET_DIR_INPUT,
+                                  direction,
                                   slot->input_size, slot->output_size);
         if (ret != 0) {
             LOG_WARNING("Failed to plug submodule at slot %d.%d", slot->slot, slot->subslot);
