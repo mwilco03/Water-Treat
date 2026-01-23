@@ -1176,6 +1176,9 @@ do_wipe() {
     run_privileged rm -f /var/run/water-treat.pid 2>/dev/null || true
     run_privileged rm -f /run/water-treat.pid 2>/dev/null || true
 
+    # Remove runtime directory and logs (created by systemd RuntimeDirectory=water-treat)
+    run_privileged rm -rf /run/water-treat 2>/dev/null || true
+
     # Verify removal
     local remaining=()
     [[ -d "$INSTALL_DIR" ]] && remaining+=("$INSTALL_DIR")
