@@ -443,3 +443,123 @@ i2c_device_type_t i2c_identify_device(int bus, uint8_t address)
     (void)bus;  /* Could add bus-specific identification in future */
     return info ? info->type : I2C_DEVICE_UNKNOWN;
 }
+
+/* ============================================================================
+ * Network Interface Discovery
+ * ========================================================================== */
+
+/**
+ * Read a sysfs attribute for a network interface
+ * Returns value or -1 on error
+ */
+static int netif_read_sysfs_int(const char *iface, const char *attr) {
+    char path[128];
+    snprintf(path, sizeof(path), "/sys/class/net/%s/%s", iface, attr);
+
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+
+    int val = -1;
+    if (fscanf(f, "%d", &val) != 1) val = -1;
+    fclose(f);
+    return val;
+}
+
+/**
+ * Check if interface is virtual (bridge, veth, docker, etc.)
+ */
+static bool netif_is_virtual(const char *iface) {
+    char path[128];
+    snprintf(path, sizeof(path), "/sys/class/net/%s/device", iface);
+
+    /* Real hardware interfaces have a 'device' symlink to PCI/USB/etc */
+    /* Virtual interfaces (bridges, veth, docker) don't */
+    return access(path, F_OK) != 0;
+}
+
+/**
+ * Score an interface for suitability as PROFINET interface
+ * Higher score = better candidate
+ */
+static int netif_score(const char *iface) {
+    int score = 0;
+
+    /* Must not be loopback */
+    if (strcmp(iface, "lo") == 0) return -1;
+
+    /* Skip obviously virtual interfaces by name */
+    if (strncmp(iface, "docker", 6) == 0) return -1;
+    if (strncmp(iface, "veth", 4) == 0) return -1;
+    if (strncmp(iface, "br-", 3) == 0) return -1;
+    if (strncmp(iface, "virbr", 5) == 0) return -1;
+
+    /* Prefer physical over virtual */
+    if (!netif_is_virtual(iface)) {
+        score += 100;
+    }
+
+    /* Prefer interfaces that are UP */
+    int flags = netif_read_sysfs_int(iface, "flags");
+    if (flags > 0 && (flags & 0x1)) {  /* IFF_UP */
+        score += 50;
+    }
+
+    /* Prefer interfaces with carrier (cable connected) */
+    int carrier = netif_read_sysfs_int(iface, "carrier");
+    if (carrier == 1) {
+        score += 30;
+    }
+
+    /* Prefer ethernet over wireless */
+    int type = netif_read_sysfs_int(iface, "type");
+    if (type == 1) {  /* ARPHRD_ETHER */
+        score += 20;
+    }
+
+    /* Prefer lower interface index (usually primary) */
+    int ifindex = netif_read_sysfs_int(iface, "ifindex");
+    if (ifindex > 0 && ifindex < 10) {
+        score += (10 - ifindex);
+    }
+
+    return score;
+}
+
+bool hw_detect_network_interface(char *iface_out, size_t size) {
+    if (!iface_out || size == 0) return false;
+    iface_out[0] = '\0';
+
+    DIR *dir = opendir("/sys/class/net");
+    if (!dir) {
+        LOG_ERROR("Cannot open /sys/class/net for interface discovery");
+        return false;
+    }
+
+    char best_iface[64] = {0};
+    int best_score = -1;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        int score = netif_score(entry->d_name);
+
+        LOG_DEBUG("Interface %s: score=%d", entry->d_name, score);
+
+        if (score > best_score) {
+            best_score = score;
+            strncpy(best_iface, entry->d_name, sizeof(best_iface) - 1);
+        }
+    }
+    closedir(dir);
+
+    if (best_iface[0] != '\0' && best_score >= 0) {
+        strncpy(iface_out, best_iface, size - 1);
+        iface_out[size - 1] = '\0';
+        LOG_INFO("Auto-detected network interface: %s (score=%d)", iface_out, best_score);
+        return true;
+    }
+
+    LOG_WARNING("No suitable network interface found");
+    return false;
+}

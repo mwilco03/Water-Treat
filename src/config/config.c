@@ -1,6 +1,7 @@
 #include "config.h"
 #include "config_defaults.h"
 #include "platform/board_detect.h"
+#include "platform/hw_discover.h"
 #include "utils/logger.h"
 #include <stdio.h>
 #include <ctype.h>
@@ -214,53 +215,6 @@ static void config_load_field(
  * Format: rtu-XXXX where XXXX is last 4 hex chars of primary MAC
  * Note: "rtu" aligns with control station / RTU architecture naming
  */
-/**
- * Find the best network interface for PROFINET/networking
- * Priority: eth* > enp* > ens* > wlan* > others
- * Skips: loopback, docker, veth, bridges
- */
-static void detect_best_interface(char *iface_out, size_t size) {
-    DIR *dir;
-    struct dirent *entry;
-    char *best_iface = NULL;
-    int best_priority = 0;
-
-    if (!iface_out || size == 0) return;
-    iface_out[0] = '\0';
-
-    dir = opendir("/sys/class/net");
-    if (!dir) return;
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-        if (strcmp(entry->d_name, "lo") == 0) continue;
-        /* Skip virtual interfaces */
-        if (strncmp(entry->d_name, "docker", 6) == 0) continue;
-        if (strncmp(entry->d_name, "veth", 4) == 0) continue;
-        if (strncmp(entry->d_name, "br-", 3) == 0) continue;
-        if (strncmp(entry->d_name, "virbr", 5) == 0) continue;
-
-        /* Priority: eth* > enp* > ens* > wlan* > others */
-        int priority = 1;
-        if (strncmp(entry->d_name, "eth", 3) == 0) priority = 5;
-        else if (strncmp(entry->d_name, "enp", 3) == 0) priority = 4;
-        else if (strncmp(entry->d_name, "ens", 3) == 0) priority = 3;
-        else if (strncmp(entry->d_name, "wlan", 4) == 0) priority = 2;
-
-        if (priority > best_priority) {
-            best_priority = priority;
-            free(best_iface);
-            best_iface = strdup(entry->d_name);
-        }
-    }
-    closedir(dir);
-
-    if (best_iface) {
-        SAFE_STRNCPY(iface_out, best_iface, size);
-        free(best_iface);
-    }
-}
-
 static void detect_station_id(char *station_name, size_t size) {
     char best_iface[64] = {0};
     char mac_path[256];
@@ -270,8 +224,7 @@ static void detect_station_id(char *station_name, size_t size) {
     /* Default fallback */
     SAFE_STRNCPY(station_name, "rtu-0000", size);
 
-    detect_best_interface(best_iface, sizeof(best_iface));
-    if (best_iface[0] == '\0') return;
+    if (!hw_detect_network_interface(best_iface, sizeof(best_iface))) return;
 
     /* Read MAC address */
     snprintf(mac_path, sizeof(mac_path), "/sys/class/net/%s/address", best_iface);
@@ -367,7 +320,7 @@ void config_get_defaults(app_config_t *c) {
     c->system.daemon_mode=false;
 
     /* Network defaults - auto-detect interface */
-    detect_best_interface(c->network.interface, sizeof(c->network.interface));
+    hw_detect_network_interface(c->network.interface, sizeof(c->network.interface));
     c->network.dhcp_enabled=true;
     /* ip_address, netmask, gateway left empty (DHCP) */
 

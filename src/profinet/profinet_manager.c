@@ -10,6 +10,7 @@
 #include "db/db_modules.h"
 #include "utils/logger.h"
 #include "gsdml_modules.h"
+#include "platform/hw_discover.h"
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
@@ -306,126 +307,6 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
 static char g_netif_name[64] = {0};
 
 /**
- * Read a sysfs attribute for a network interface
- * Returns value or -1 on error
- */
-static int read_sysfs_int(const char *iface, const char *attr) {
-    char path[128];
-    snprintf(path, sizeof(path), "/sys/class/net/%s/%s", iface, attr);
-
-    FILE *f = fopen(path, "r");
-    if (!f) return -1;
-
-    int val = -1;
-    if (fscanf(f, "%d", &val) != 1) val = -1;
-    fclose(f);
-    return val;
-}
-
-/**
- * Check if interface is virtual (bridge, veth, docker, etc.)
- */
-static bool is_virtual_interface(const char *iface) {
-    char path[128];
-    snprintf(path, sizeof(path), "/sys/class/net/%s/device", iface);
-
-    /* Real hardware interfaces have a 'device' symlink to PCI/USB/etc */
-    /* Virtual interfaces (bridges, veth, docker) don't */
-    return access(path, F_OK) != 0;
-}
-
-/**
- * Score an interface for suitability as PROFINET interface
- * Higher score = better candidate
- */
-static int score_interface(const char *iface) {
-    int score = 0;
-
-    /* Must not be loopback */
-    if (strcmp(iface, "lo") == 0) return -1;
-
-    /* Skip obviously virtual interfaces by name */
-    if (strncmp(iface, "docker", 6) == 0) return -1;
-    if (strncmp(iface, "veth", 4) == 0) return -1;
-    if (strncmp(iface, "br-", 3) == 0) return -1;
-    if (strncmp(iface, "virbr", 5) == 0) return -1;
-
-    /* Prefer physical over virtual */
-    if (!is_virtual_interface(iface)) {
-        score += 100;
-    }
-
-    /* Prefer interfaces that are UP */
-    int flags = read_sysfs_int(iface, "flags");
-    if (flags > 0 && (flags & 0x1)) {  /* IFF_UP */
-        score += 50;
-    }
-
-    /* Prefer interfaces with carrier (cable connected) */
-    int carrier = read_sysfs_int(iface, "carrier");
-    if (carrier == 1) {
-        score += 30;
-    }
-
-    /* Prefer ethernet over wireless */
-    int type = read_sysfs_int(iface, "type");
-    if (type == 1) {  /* ARPHRD_ETHER */
-        score += 20;
-    }
-
-    /* Prefer lower interface index (usually primary) */
-    int ifindex = read_sysfs_int(iface, "ifindex");
-    if (ifindex > 0 && ifindex < 10) {
-        score += (10 - ifindex);
-    }
-
-    return score;
-}
-
-/**
- * Discover and select best network interface for PROFINET
- * Scans all interfaces, scores them, returns highest scoring
- */
-static bool detect_network_interface(char *buf, size_t buf_size) {
-    DIR *dir = opendir("/sys/class/net");
-    if (!dir) {
-        LOG_ERROR("Cannot open /sys/class/net for interface discovery");
-        return false;
-    }
-
-    char best_iface[64] = {0};
-    int best_score = -1;
-    int iface_count = 0;
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-
-        iface_count++;
-        int score = score_interface(entry->d_name);
-
-        LOG_DEBUG("Interface %s: score=%d", entry->d_name, score);
-
-        if (score > best_score) {
-            best_score = score;
-            strncpy(best_iface, entry->d_name, sizeof(best_iface) - 1);
-        }
-    }
-    closedir(dir);
-
-    LOG_INFO("Discovered %d network interfaces, best candidate: %s (score=%d)",
-             iface_count, best_iface[0] ? best_iface : "none", best_score);
-
-    if (best_iface[0] != '\0' && best_score >= 0) {
-        strncpy(buf, best_iface, buf_size - 1);
-        buf[buf_size - 1] = '\0';
-        return true;
-    }
-
-    return false;
-}
-
-/**
  * @brief Enable promiscuous mode on network interface
  *
  * PROFINET requires promiscuous mode for raw Ethernet frame handling.
@@ -471,9 +352,7 @@ static bool enable_promiscuous_mode(const char *iface) {
     LOG_INFO("Enabled promiscuous mode on %s", iface);
     return true;
 }
-#endif
 
-#ifdef HAVE_PNET
 /**
  * Get the default gateway from /proc/net/route
  * Returns: gateway IP in network byte order, or 0 on failure
@@ -617,7 +496,7 @@ result_t profinet_manager_start(const char *interface) {
 
     if (!use_configured) {
         // Auto-detect network interface
-        if (detect_network_interface(g_netif_name, sizeof(g_netif_name))) {
+        if (hw_detect_network_interface(g_netif_name, sizeof(g_netif_name))) {
             LOG_INFO("PROFINET auto-detected interface: %s", g_netif_name);
         } else {
             // No interface found - fail with clear error
