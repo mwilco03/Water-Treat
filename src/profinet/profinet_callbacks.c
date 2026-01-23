@@ -148,42 +148,28 @@ int profinet_state_callback(pnet_t *net, void *arg,
 
     if (event == PNET_EVENT_PRMEND) {
         /*
-         * Parameterization complete - signal application ready to controller.
-         * This is REQUIRED for the connection handshake to complete.
-         * Without this call, the controller never receives a response
-         * and the connection times out.
+         * Parameterization complete - RTU must send ApplicationReady TO controller.
+         * Protocol sequence:
+         *   1. Controller sends PrmEnd to RTU (we just received it)
+         *   2. RTU sends ApplicationReady to Controller (this call)
+         *   3. Controller responds with acknowledgment
+         *   4. RTU gets PNET_EVENT_APPLRDY
          *
-         * CRITICAL: Before calling pnet_application_ready(), we MUST initialize
-         * all input subslots with data and IOPS. The p-net library checks that
-         * all plugged INPUT subslots have valid data set via pnet_input_set_data_and_iops()
-         * before it will send the CControl (APPL_RDY) response to the controller.
-         *
-         * If pnet_application_ready() returns -1, it means:
-         *   - Not all input data is set, OR
-         *   - Not all IOPS values are set, OR
-         *   - Internal p-net error
+         * CRITICAL: Initialize all inputs before signaling ready.
          */
         int inputs_initialized = profinet_manager_init_all_inputs();
-        LOG_DEBUG("Initialized %d input subslots before application_ready", inputs_initialized);
+        LOG_DEBUG("Initialized %d input subslots", inputs_initialized);
 
         int ret = pnet_application_ready(net, arep);
         if (ret != 0) {
-            LOG_ERROR("pnet_application_ready() failed: %d", ret);
-            LOG_ERROR("This usually means input data/IOPS not set for all plugged input subslots.");
-            LOG_ERROR("Controller will timeout waiting for CControl response.");
-            /*
-             * Note: We don't abort here - p-net may still recover in some cases.
-             * The controller will timeout and may retry the connection.
-             */
+            LOG_WARNING("pnet_application_ready() failed: %d - clearing state for retry", ret);
+            profinet_manager_clear_ar_state();
         } else {
-            LOG_INFO("Application ready signaled to controller (arep=%u)", arep);
+            LOG_INFO("Sent ApplicationReady to controller (arep=%u)", arep);
         }
     } else if (event == PNET_EVENT_APPLRDY) {
-        /*
-         * Controller acknowledged our APPL_RDY - connection is now established.
-         * Cyclic data exchange can begin.
-         */
-        LOG_INFO("Controller acknowledged APPL_RDY - connection established");
+        /* Controller acknowledged our ApplicationReady - connection established */
+        LOG_INFO("Connection established (arep=%u)", arep);
         profinet_manager_set_connected(true, arep);
     } else if (event == PNET_EVENT_DATA) {
         /*
@@ -228,17 +214,31 @@ int profinet_dcontrol_callback(pnet_t *net, void *arg,
                                uint32_t arep, pnet_control_command_t command,
                                pnet_result_t *result) {
     UNUSED(net); UNUSED(arg); UNUSED(result);
-    
-    const char *cmd_str;
+
     switch (command) {
-        case PNET_CONTROL_COMMAND_PRM_BEGIN: cmd_str = "PRM_BEGIN"; break;
-        case PNET_CONTROL_COMMAND_PRM_END: cmd_str = "PRM_END"; break;
-        case PNET_CONTROL_COMMAND_APP_RDY: cmd_str = "APP_RDY"; break;
-        case PNET_CONTROL_COMMAND_RELEASE: cmd_str = "RELEASE"; break;
-        default: cmd_str = "UNKNOWN"; break;
+        case PNET_CONTROL_COMMAND_PRM_BEGIN:
+            LOG_DEBUG("DControl: PRM_BEGIN (arep=%u)", arep);
+            break;
+        case PNET_CONTROL_COMMAND_PRM_END:
+            LOG_DEBUG("DControl: PRM_END (arep=%u)", arep);
+            break;
+        case PNET_CONTROL_COMMAND_APP_RDY:
+            /*
+             * Controller sent APP_RDY to us - this is BACKWARDS.
+             * Per PROFINET spec: RTU sends ApplicationReady TO controller.
+             * Controller should be LISTENING, not sending.
+             * This indicates controller bug.
+             */
+            LOG_WARNING("Controller sent APP_RDY to RTU - protocol violation!");
+            LOG_WARNING("RTU sends ApplicationReady TO controller, not vice versa");
+            break;
+        case PNET_CONTROL_COMMAND_RELEASE:
+            LOG_DEBUG("DControl: RELEASE (arep=%u)", arep);
+            break;
+        default:
+            LOG_DEBUG("DControl: UNKNOWN (arep=%u, cmd=%d)", arep, command);
+            break;
     }
-    
-    LOG_DEBUG("PROFINET DControl: %s (arep=%u)", cmd_str, arep);
     return 0;
 }
 
