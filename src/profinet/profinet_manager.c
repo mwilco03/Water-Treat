@@ -1028,6 +1028,76 @@ result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
 #endif
 }
 
+/**
+ * @brief Initialize all input subslots with default data and GOOD IOPS
+ *
+ * This function is CRITICAL for successful connection establishment.
+ * The p-net library requires all plugged input subslots to have:
+ *   1. Valid data set via pnet_input_set_data_and_iops()
+ *   2. IOPS set to GOOD (or BAD if sensor not ready)
+ *
+ * Without this, pnet_application_ready() will return -1 and the
+ * controller connection will timeout waiting for CControl response.
+ *
+ * Called from profinet_state_callback() when PNET_EVENT_PRMEND is received,
+ * BEFORE calling pnet_application_ready().
+ */
+int profinet_manager_init_all_inputs(void) {
+    int initialized = 0;
+
+#ifdef HAVE_PNET
+    if (!g_pn.pnet) {
+        LOG_ERROR("Cannot init inputs: pnet handle is NULL");
+        return 0;
+    }
+
+    pthread_mutex_lock(&g_pn.mutex);
+
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        profinet_slot_t *slot = &g_pn.slots[i];
+
+        /* Only initialize plugged INPUT subslots (sensors) */
+        if (!slot->plugged || slot->input_size == 0) {
+            continue;
+        }
+
+        /*
+         * Initialize with default data:
+         * - Float32 value: 0.0 (4 bytes, big-endian)
+         * - Quality: DATA_QUALITY_BAD (0x00) - will update when real data arrives
+         *
+         * Using BAD quality initially is correct - we haven't read the sensor yet.
+         * The sensor manager will update with GOOD quality once real data is available.
+         */
+        uint8_t init_data[PROFINET_DATA_SIZE] = {0};
+
+        /* Set IOPS to GOOD so p-net accepts our data
+         * Note: IOPS indicates the provider status (are we providing valid structure),
+         * not the data quality (which is in byte 4 of the payload) */
+        uint8_t iops = PNET_IOXS_GOOD;
+
+        int ret = pnet_input_set_data_and_iops(g_pn.pnet, 0,
+                                                slot->slot, slot->subslot,
+                                                init_data, slot->input_size, iops);
+        if (ret == 0) {
+            slot->input_iops = iops;
+            initialized++;
+            LOG_DEBUG("Initialized input slot %d.%d with %zu bytes, IOPS=GOOD",
+                      slot->slot, slot->subslot, slot->input_size);
+        } else {
+            LOG_WARNING("Failed to initialize input slot %d.%d: ret=%d",
+                        slot->slot, slot->subslot, ret);
+        }
+    }
+
+    pthread_mutex_unlock(&g_pn.mutex);
+
+    LOG_INFO("Initialized %d input subslots for PROFINET connection", initialized);
+#endif
+
+    return initialized;
+}
+
 /* Called from callbacks */
 void profinet_manager_set_connected(bool connected, uint32_t arep) {
     g_pn.connected = connected;
