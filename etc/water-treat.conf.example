@@ -23,6 +23,8 @@ vendor_id = 0x0493
 device_id = 0x0001
 product_name = Water Treatment RTU
 min_device_interval = 32
+# p-net NV storage for station_name persistence (prevents "rt-labs-dev" fallback)
+# data_dir = /var/lib/water-treat/pnet
 
 [database]
 path = /var/lib/water-treat/data.db

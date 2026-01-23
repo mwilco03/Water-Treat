@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <errno.h>      /* errno, strerror for error reporting */
 #include <dirent.h>     /* opendir, readdir for interface detection */
+#include <sys/stat.h>   /* mkdir for p-net NV storage directory */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
 #include <net/if.h>     /* IFF_UP, IFF_RUNNING for interface detection */
 #include <ifaddrs.h>    /* getifaddrs, freeifaddrs for IP configuration */
@@ -237,6 +238,14 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
 
     // Station name
     strncpy(g_pn.pnet_cfg.station_name, config->station_name, sizeof(g_pn.pnet_cfg.station_name) - 1);
+
+    // Non-volatile storage directory for p-net
+    // This controls where station_name, IP settings, and I&M data persist.
+    // Without this, p-net uses CWD and may fall back to defaults like "rt-labs-dev".
+    // Configurable via [profinet] data_dir in config file
+    if (config->data_dir[0] != '\0') {
+        strncpy(g_pn.pnet_cfg.file_directory, config->data_dir, sizeof(g_pn.pnet_cfg.file_directory) - 1);
+    }
 
     // Device identity
     g_pn.pnet_cfg.device_id.vendor_id_hi = (config->vendor_id >> 8) & 0xFF;
@@ -665,6 +674,39 @@ result_t profinet_manager_start(const char *interface) {
         return RESULT_ERROR;
     }
 
+    // 6. Ensure p-net NV storage directory exists
+    // This prevents p-net from falling back to defaults (e.g., "rt-labs-dev")
+    if (g_pn.pnet_cfg.file_directory[0] != '\0') {
+        struct stat st = {0};
+        if (stat(g_pn.pnet_cfg.file_directory, &st) == -1) {
+            // Directory doesn't exist - create it with parent directories
+            // Use mkdir -p equivalent: create each path component
+            char path_copy[256];
+            strncpy(path_copy, g_pn.pnet_cfg.file_directory, sizeof(path_copy) - 1);
+            path_copy[sizeof(path_copy) - 1] = '\0';
+
+            for (char *p = path_copy + 1; *p; p++) {
+                if (*p == '/') {
+                    *p = '\0';
+                    if (mkdir(path_copy, 0755) == -1 && errno != EEXIST) {
+                        LOG_WARNING("Could not create directory '%s': %s", path_copy, strerror(errno));
+                    }
+                    *p = '/';
+                }
+            }
+            // Create final directory
+            if (mkdir(g_pn.pnet_cfg.file_directory, 0755) == -1 && errno != EEXIST) {
+                LOG_WARNING("Could not create p-net data directory '%s': %s",
+                            g_pn.pnet_cfg.file_directory, strerror(errno));
+                LOG_WARNING("p-net NV storage may not persist across reboots");
+            } else {
+                LOG_INFO("Created p-net NV storage directory: %s", g_pn.pnet_cfg.file_directory);
+            }
+        } else {
+            LOG_DEBUG("p-net NV storage directory exists: %s", g_pn.pnet_cfg.file_directory);
+        }
+    }
+
     // Log validated configuration
     LOG_DEBUG("pnet_init() config: interface=%s, station=%s, vendor=0x%02X%02X, device=0x%02X%02X",
               g_pn.pnet_cfg.if_cfg.main_netif_name,
@@ -681,6 +723,8 @@ result_t profinet_manager_start(const char *interface) {
     LOG_DEBUG("pnet_init() timing: tick_us=%u, num_ports=%u, port[0]=%s",
               g_pn.pnet_cfg.tick_us, g_pn.pnet_cfg.num_physical_ports,
               g_pn.pnet_cfg.if_cfg.physical_ports[0].netif_name);
+    LOG_DEBUG("pnet_init() NV storage: %s",
+              g_pn.pnet_cfg.file_directory[0] ? g_pn.pnet_cfg.file_directory : "(current directory)");
 
     // Initialize p-net (all pre-conditions verified)
     g_pn.pnet = pnet_init(&g_pn.pnet_cfg);
