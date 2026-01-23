@@ -325,7 +325,19 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
     switch (instance->type) {
         case SENSOR_INSTANCE_PHYSICAL:
             if (instance->driver_handle) {
-                result = driver_ds18b20_read(instance->driver_handle, &raw_value);
+                /* Dispatch to correct driver based on driver_type */
+                switch (instance->driver_type) {
+                    case PHYSICAL_DRIVER_DS18B20:
+                        result = driver_ds18b20_read(instance->driver_handle, &raw_value);
+                        break;
+                    case PHYSICAL_DRIVER_DHT22:
+                        result = driver_dht22_read(instance->driver_handle, &raw_value);
+                        break;
+                    default:
+                        LOG_ERROR("Unknown physical driver type: %d", instance->driver_type);
+                        result = RESULT_NOT_SUPPORTED;
+                        break;
+                }
             } else {
                 result = RESULT_NOT_INITIALIZED;
             }
@@ -333,7 +345,19 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
 
         case SENSOR_INSTANCE_ADC:
             if (instance->driver_handle) {
-                result = driver_ads1115_read(instance->driver_handle, &raw_value);
+                /* Dispatch to correct driver based on driver_type */
+                switch (instance->driver_type) {
+                    case ADC_DRIVER_ADS1115:
+                        result = driver_ads1115_read(instance->driver_handle, &raw_value);
+                        break;
+                    case ADC_DRIVER_MCP3008:
+                        result = driver_mcp3008_read(instance->driver_handle, &raw_value);
+                        break;
+                    default:
+                        LOG_ERROR("Unknown ADC driver type: %d", instance->driver_type);
+                        result = RESULT_NOT_SUPPORTED;
+                        break;
+                }
                 if (result == RESULT_OK) {
                     instance->current_raw_value = (int32_t)(raw_value * 1000);  // Store as mV
                     raw_value = apply_calibration(instance, instance->current_raw_value);
