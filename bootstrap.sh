@@ -294,6 +294,45 @@ detect_station_name() {
 }
 
 # =============================================================================
+# p-net NV Storage Contamination Purge
+# =============================================================================
+# CRITICAL: The p-net library has "rt-labs-dev" as its compiled-in default
+# station name. If p-net's NV (non-volatile) storage files exist with this
+# default, p-net will IGNORE our configured station name and use the cached
+# "rt-labs-dev" value instead.
+#
+# This function scans and deletes any files containing "rt-labs-dev" in the
+# p-net data directory, forcing p-net to use our configured station name.
+# =============================================================================
+purge_pnet_contamination() {
+    local pnet_dir="$1"
+
+    if [[ -z "$pnet_dir" || ! -d "$pnet_dir" ]]; then
+        return 0
+    fi
+
+    local purged=0
+    local file
+
+    for file in "$pnet_dir"/*; do
+        [[ -f "$file" ]] || continue
+
+        # Check if file contains "rt-labs-dev" (binary-safe grep)
+        if grep -q "rt-labs-dev" "$file" 2>/dev/null; then
+            log_warn "PURGING contaminated p-net NV file: $file"
+            run_privileged rm -f "$file" && ((purged++))
+        fi
+    done
+
+    if [[ $purged -gt 0 ]]; then
+        log_warn "Purged $purged contaminated p-net NV file(s) containing 'rt-labs-dev'"
+        log_info "Station name will be reset to configured value on next start"
+    fi
+
+    return 0
+}
+
+# =============================================================================
 # System Detection
 # =============================================================================
 
@@ -806,6 +845,11 @@ install_files() {
     run_privileged mkdir -p "$DATA_DIR"
     run_privileged mkdir -p "$PNET_DATA_DIR"
     run_privileged mkdir -p "$LOG_DIR"
+
+    # CRITICAL: Purge any p-net NV files contaminated with "rt-labs-dev"
+    # The p-net library has "rt-labs-dev" as its compiled-in default station name.
+    # If NV files exist with this value, p-net ignores our configured station name.
+    purge_pnet_contamination "$PNET_DATA_DIR"
 
     # Copy source to install location
     run_privileged cp -a "$source_dir/." "$INSTALL_DIR/"
