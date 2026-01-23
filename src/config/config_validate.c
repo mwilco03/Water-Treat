@@ -173,11 +173,11 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
         add_message(result, "WARNING: degraded_alarm_delay_ms > command_timeout_ms may delay alerts");
     }
 
-    /* Validate network interface */
+    /* Validate network interface - should be auto-detected, empty means no interfaces found */
     if (strlen(config->network.interface) == 0) {
         result->flags |= CONFIG_ERROR_MISSING_INTERFACE;
         result->error_count++;
-        add_message(result, "ERROR: Network interface not specified");
+        add_message(result, "ERROR: No network interface found (check /sys/class/net)");
     }
 
     /* Validate database path */

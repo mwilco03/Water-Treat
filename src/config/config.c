@@ -1,6 +1,7 @@
 #include "config.h"
 #include "config_defaults.h"
 #include "platform/board_detect.h"
+#include "platform/hw_discover.h"
 #include "utils/logger.h"
 #include <stdio.h>
 #include <ctype.h>
@@ -215,8 +216,7 @@ static void config_load_field(
  * Note: "rtu" aligns with control station / RTU architecture naming
  */
 static void detect_station_id(char *station_name, size_t size) {
-    DIR *dir;
-    struct dirent *entry;
+    char best_iface[64] = {0};
     char mac_path[256];
     char mac_addr[18] = {0};
     FILE *f;
@@ -224,37 +224,10 @@ static void detect_station_id(char *station_name, size_t size) {
     /* Default fallback */
     SAFE_STRNCPY(station_name, "rtu-0000", size);
 
-    dir = opendir("/sys/class/net");
-    if (!dir) return;
-
-    /* Find first physical network interface (prefer eth or enp over wlan/lo) */
-    char *best_iface = NULL;
-    int best_priority = 0;
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-        if (strcmp(entry->d_name, "lo") == 0) continue;
-
-        /* Priority: eth* > enp* > ens* > wlan* > others */
-        int priority = 1;
-        if (strncmp(entry->d_name, "eth", 3) == 0) priority = 5;
-        else if (strncmp(entry->d_name, "enp", 3) == 0) priority = 4;
-        else if (strncmp(entry->d_name, "ens", 3) == 0) priority = 3;
-        else if (strncmp(entry->d_name, "wlan", 4) == 0) priority = 2;
-
-        if (priority > best_priority) {
-            best_priority = priority;
-            free(best_iface);
-            best_iface = strdup(entry->d_name);
-        }
-    }
-    closedir(dir);
-
-    if (!best_iface) return;
+    if (!hw_detect_network_interface(best_iface, sizeof(best_iface))) return;
 
     /* Read MAC address */
     snprintf(mac_path, sizeof(mac_path), "/sys/class/net/%s/address", best_iface);
-    free(best_iface);
 
     f = fopen(mac_path, "r");
     if (!f) return;
@@ -346,8 +319,8 @@ void config_get_defaults(app_config_t *c) {
     SAFE_STRNCPY(c->system.log_file,"/var/log/water-treat/monitor.log",sizeof(c->system.log_file));
     c->system.daemon_mode=false;
 
-    /* Network defaults - empty triggers auto-detection */
-    c->network.interface[0] = '\0';
+    /* Network defaults - auto-detect interface */
+    hw_detect_network_interface(c->network.interface, sizeof(c->network.interface));
     c->network.dhcp_enabled=true;
     /* ip_address, netmask, gateway left empty (DHCP) */
 

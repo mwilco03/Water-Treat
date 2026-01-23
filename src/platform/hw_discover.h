@@ -123,4 +123,24 @@ const char* onewire_device_type_name(onewire_device_type_t type);
  */
 i2c_device_type_t i2c_identify_device(int bus, uint8_t address);
 
+/* ============================================================================
+ * Network Interface Discovery
+ * ========================================================================== */
+
+/**
+ * Detect the best network interface for PROFINET/networking
+ *
+ * Scoring criteria:
+ * - Physical interfaces preferred over virtual (docker, bridge, veth)
+ * - Interfaces that are UP get higher score
+ * - Interfaces with carrier (cable connected) get higher score
+ * - Ethernet preferred over wireless
+ * - Lower interface index preferred (usually primary)
+ *
+ * @param iface_out Buffer to store interface name
+ * @param size Size of buffer
+ * @return true if interface found, false otherwise
+ */
+bool hw_detect_network_interface(char *iface_out, size_t size);
+
 #endif /* HW_DISCOVER_H */
