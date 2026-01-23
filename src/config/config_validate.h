@@ -17,7 +17,6 @@ typedef enum {
     CONFIG_WARN_NO_SENSORS           = (1 << 3),
     CONFIG_WARN_HEALTH_DISABLED      = (1 << 4),
     CONFIG_WARN_WATCHDOG_TIMING      = (1 << 5),
-    CONFIG_WARN_INTERFACE_AUTO       = (1 << 6),
     CONFIG_ERROR_INVALID_PORT        = (1 << 8),
     CONFIG_ERROR_INVALID_INTERVAL    = (1 << 9),
     CONFIG_ERROR_MISSING_INTERFACE   = (1 << 10),

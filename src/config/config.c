@@ -214,26 +214,31 @@ static void config_load_field(
  * Format: rtu-XXXX where XXXX is last 4 hex chars of primary MAC
  * Note: "rtu" aligns with control station / RTU architecture naming
  */
-static void detect_station_id(char *station_name, size_t size) {
+/**
+ * Find the best network interface for PROFINET/networking
+ * Priority: eth* > enp* > ens* > wlan* > others
+ * Skips: loopback, docker, veth, bridges
+ */
+static void detect_best_interface(char *iface_out, size_t size) {
     DIR *dir;
     struct dirent *entry;
-    char mac_path[256];
-    char mac_addr[18] = {0};
-    FILE *f;
+    char *best_iface = NULL;
+    int best_priority = 0;
 
-    /* Default fallback */
-    SAFE_STRNCPY(station_name, "rtu-0000", size);
+    if (!iface_out || size == 0) return;
+    iface_out[0] = '\0';
 
     dir = opendir("/sys/class/net");
     if (!dir) return;
 
-    /* Find first physical network interface (prefer eth or enp over wlan/lo) */
-    char *best_iface = NULL;
-    int best_priority = 0;
-
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
         if (strcmp(entry->d_name, "lo") == 0) continue;
+        /* Skip virtual interfaces */
+        if (strncmp(entry->d_name, "docker", 6) == 0) continue;
+        if (strncmp(entry->d_name, "veth", 4) == 0) continue;
+        if (strncmp(entry->d_name, "br-", 3) == 0) continue;
+        if (strncmp(entry->d_name, "virbr", 5) == 0) continue;
 
         /* Priority: eth* > enp* > ens* > wlan* > others */
         int priority = 1;
@@ -250,11 +255,26 @@ static void detect_station_id(char *station_name, size_t size) {
     }
     closedir(dir);
 
-    if (!best_iface) return;
+    if (best_iface) {
+        SAFE_STRNCPY(iface_out, best_iface, size);
+        free(best_iface);
+    }
+}
+
+static void detect_station_id(char *station_name, size_t size) {
+    char best_iface[64] = {0};
+    char mac_path[256];
+    char mac_addr[18] = {0};
+    FILE *f;
+
+    /* Default fallback */
+    SAFE_STRNCPY(station_name, "rtu-0000", size);
+
+    detect_best_interface(best_iface, sizeof(best_iface));
+    if (best_iface[0] == '\0') return;
 
     /* Read MAC address */
     snprintf(mac_path, sizeof(mac_path), "/sys/class/net/%s/address", best_iface);
-    free(best_iface);
 
     f = fopen(mac_path, "r");
     if (!f) return;
@@ -346,8 +366,8 @@ void config_get_defaults(app_config_t *c) {
     SAFE_STRNCPY(c->system.log_file,"/var/log/water-treat/monitor.log",sizeof(c->system.log_file));
     c->system.daemon_mode=false;
 
-    /* Network defaults - empty triggers auto-detection */
-    c->network.interface[0] = '\0';
+    /* Network defaults - auto-detect interface */
+    detect_best_interface(c->network.interface, sizeof(c->network.interface));
     c->network.dhcp_enabled=true;
     /* ip_address, netmask, gateway left empty (DHCP) */
 
