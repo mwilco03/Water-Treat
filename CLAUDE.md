@@ -40,6 +40,56 @@
 
 This ensures centrally-managed users take precedence while maintaining local fallback.
 
+## PROFINET Station Name Requirements
+
+**CRITICAL**: Station names must comply with IEC 61158-6 (PROFINET naming standard).
+
+### Format: `rtu-XXXX`
+
+Where `XXXX` is the **last 4 hex characters of the MAC address** (lowercase).
+
+**Example**: MAC `aa:bb:cc:dd:ee:ff` → station name `rtu-eeff`
+
+### Validation Rules (Regex: `^[a-z0-9][a-z0-9-]{0,62}$`)
+
+| Rule | Requirement |
+|------|-------------|
+| First character | Lowercase letter (a-z) or digit (0-9) |
+| Remaining characters | Lowercase letters, digits, or hyphens only |
+| Maximum length | 63 characters |
+| **FORBIDDEN** | Uppercase letters, underscores, dots, spaces |
+
+### Code Locations
+
+| File | Function | Purpose |
+|------|----------|---------|
+| `bootstrap.sh` | `detect_station_name()` | Auto-generates `rtu-XXXX` from MAC |
+| `src/config/config_validate.c` | `validate_station_name()` | Validates format at runtime |
+
+### Examples
+
+```
+VALID:
+  rtu-eeff          (auto-generated from MAC)
+  rtu-tank-1        (custom descriptive name)
+  pump-station-01   (custom name)
+  water-treat-rtu   (custom name)
+
+INVALID:
+  RTU-EEFF          (uppercase NOT allowed)
+  rtu_tank_1        (underscores NOT allowed)
+  water-rtu-XXXX    (uppercase NOT allowed)
+  rtu.tank.1        (dots NOT allowed)
+  -rtu-tank         (cannot start with hyphen)
+```
+
+### Why This Matters
+
+The PROFINET controller uses the station name for **DCP (Discovery and Configuration Protocol)** to identify and connect to RTUs. An invalid station name will cause:
+- DCP discovery failure
+- Controller unable to establish AR (Application Relationship)
+- Connection timeout
+
 ## Build Requirements
 
 - C11 standard
