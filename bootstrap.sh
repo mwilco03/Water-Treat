@@ -1078,6 +1078,15 @@ do_install() {
             ;;
     esac
 
+    # Kill any rogue water-treat processes before install
+    # Prevents duplicate p-net instances causing duplicate DCP responses
+    if pgrep -x "water-treat" >/dev/null 2>&1; then
+        log_warn "Found running water-treat process(es), stopping..."
+        run_privileged systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+        run_privileged pkill -9 -x "water-treat" 2>/dev/null || true
+        sleep 1
+    fi
+
     # Check build dependencies
     check_build_deps || return 1
 
@@ -1173,6 +1182,21 @@ do_upgrade() {
     log_info "Stopping service..."
     run_privileged systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
 
+    # Kill any rogue water-treat processes not managed by systemd
+    # This catches manually-started instances, containers, or stale processes
+    # that would cause duplicate DCP responses (two p-net instances = two station names)
+    if pgrep -x "water-treat" >/dev/null 2>&1; then
+        log_warn "Found rogue water-treat process(es) not managed by systemd"
+        run_privileged pkill -9 -x "water-treat" 2>/dev/null || true
+        sleep 1
+        if pgrep -x "water-treat" >/dev/null 2>&1; then
+            log_error "Could not kill all water-treat processes"
+            log_error "Run: sudo pkill -9 water-treat"
+            return 1
+        fi
+        log_info "Killed rogue water-treat process(es)"
+    fi
+
     # Check build dependencies
     check_build_deps || return 1
 
@@ -1219,6 +1243,10 @@ do_wipe() {
     run_privileged systemctl disable "${SERVICE_NAME}.service" 2>/dev/null || true
     run_privileged rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
     run_privileged systemctl daemon-reload
+
+    # Kill ALL water-treat processes (including rogue/manual instances)
+    run_privileged pkill -9 -x "water-treat" 2>/dev/null || true
+    sleep 1
 
     # Remove binary
     run_privileged rm -f /usr/local/bin/water-treat
