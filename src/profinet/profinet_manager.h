@@ -23,6 +23,17 @@ typedef struct {
     uint32_t cycle_count;
     int slot_count;
     int plugged_modules;
+
+    /* Connection resilience statistics */
+    uint32_t connection_count;       /**< Total successful connections */
+    uint32_t disconnect_count;       /**< Total disconnections */
+    uint32_t error_count;            /**< Total recoverable errors */
+    uint32_t stuck_state_recoveries; /**< Times recovered from stuck state */
+    uint64_t state_duration_ms;      /**< Time in current state (ms) */
+
+    /* Output polling efficiency (change detection) */
+    uint64_t output_polls;           /**< Total output slot polls */
+    uint64_t output_changes;         /**< Polls that detected actual changes */
 } profinet_stats_t;
 
 // PROFINET IOXS values (only define when p-net is not available)
@@ -141,5 +152,18 @@ void profinet_manager_clear_ar_state(void);
  * @return Number of input subslots initialized
  */
 int profinet_manager_init_all_inputs(void);
+
+/**
+ * @brief Dump all plugged slots to log for debugging
+ *
+ * Logs comprehensive slot configuration including:
+ * - DAP subslots (slot 0)
+ * - All application modules with idents, directions, sizes
+ * - Current IOPS status per slot
+ *
+ * Call after profinet_manager_start() to verify what's registered.
+ * Useful for diagnosing IOCR mismatch errors from controller.
+ */
+void profinet_manager_dump_slots(void);
 
 #endif

@@ -23,11 +23,13 @@ extern app_config_t g_app_config;
 #define DEFAULT_WATCHDOG_INTERVAL_MS    1000
 #define DEFAULT_COMMAND_TIMEOUT_MS      5000    // Consider disconnected if no command for 5s
 #define DEFAULT_DEGRADED_ALARM_DELAY_MS 3000    // Wait before declaring degraded mode
+#define DEFAULT_SAFE_STATE_TIMEOUT_MS   30000   // Apply safe state after 30s in degraded mode
 
 /* Runtime configurable timeouts (initialized from config on start) */
 static int g_watchdog_interval_ms = DEFAULT_WATCHDOG_INTERVAL_MS;
 static int g_command_timeout_ms = DEFAULT_COMMAND_TIMEOUT_MS;
 static int g_degraded_alarm_delay_ms = DEFAULT_DEGRADED_ALARM_DELAY_MS;
+static int g_safe_state_timeout_ms = DEFAULT_SAFE_STATE_TIMEOUT_MS;
 
 /* ============================================================================
  * Internal Structures
@@ -155,6 +157,7 @@ static void exit_degraded_mode(actuator_manager_t *mgr) {
     if (!mgr->degraded_mode) return;
 
     mgr->degraded_mode = false;
+    mgr->safe_state_applied = false;  // Reset for next disconnect cycle
 
     uint64_t degraded_duration_ms = get_time_ms() - mgr->disconnect_time_ms;
 
@@ -216,6 +219,50 @@ static void check_safety_limits(actuator_manager_t *mgr) {
     }
 }
 
+/**
+ * @brief Apply safe state (OFF) to all actuators after prolonged disconnect
+ *
+ * Called when the RTU has been in degraded mode longer than safe_state_timeout_ms.
+ * This prevents actuators from running indefinitely on stale commands.
+ *
+ * Safe state is OFF for all actuators (pumps stop, valves close).
+ */
+static void apply_safe_state(actuator_manager_t *mgr) {
+    if (mgr->safe_state_applied) return;  // Already done
+
+    LOG_WARNING("SAFE STATE: Applying safe state to all actuators after %d ms disconnect",
+                g_safe_state_timeout_ms);
+
+    int stopped_count = 0;
+    for (int i = 0; i < mgr->actuator_count; i++) {
+        actuator_instance_t *act = &mgr->actuators[i];
+
+        if (act->state == ACTUATOR_STATE_ON) {
+            LOG_WARNING("SAFE STATE: Stopping actuator '%s' (slot %d) - was ON for %lu ms",
+                        act->config.name,
+                        act->config.profinet_slot,
+                        (unsigned long)(get_time_ms() - act->last_state_change_ms));
+
+            act->state = ACTUATOR_STATE_OFF;
+            act->pwm_duty = 0;
+            apply_actuator_state(act);
+            stopped_count++;
+        }
+    }
+
+    mgr->safe_state_applied = true;
+
+    if (mgr->db) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "SAFE STATE APPLIED: %d actuators stopped after %d ms disconnect timeout",
+                 stopped_count, g_safe_state_timeout_ms);
+        DB_EVENT_WARNING(mgr->db, "safe_state", msg);
+    }
+
+    LOG_WARNING("SAFE STATE: %d actuators stopped", stopped_count);
+}
+
 static void* watchdog_thread(void *arg) {
     actuator_manager_t *mgr = (actuator_manager_t *)arg;
 
@@ -261,6 +308,14 @@ static void* watchdog_thread(void *arg) {
 
         // Check safety limits
         check_safety_limits(mgr);
+
+        // Check for safe state timeout in degraded mode
+        if (mgr->degraded_mode && !mgr->safe_state_applied && g_safe_state_timeout_ms > 0) {
+            uint64_t degraded_duration = now - mgr->disconnect_time_ms;
+            if (degraded_duration >= (uint64_t)g_safe_state_timeout_ms) {
+                apply_safe_state(mgr);
+            }
+        }
 
         pthread_mutex_unlock(&mgr->mutex);
 
@@ -351,8 +406,8 @@ result_t actuator_manager_start(actuator_manager_t *mgr) {
         g_degraded_alarm_delay_ms = g_app_config.watchdog.degraded_alarm_delay_ms;
     }
 
-    LOG_INFO("Actuator watchdog config: interval=%dms, command_timeout=%dms, degraded_delay=%dms",
-             g_watchdog_interval_ms, g_command_timeout_ms, g_degraded_alarm_delay_ms);
+    LOG_INFO("Actuator watchdog config: interval=%dms, command_timeout=%dms, degraded_delay=%dms, safe_state_timeout=%dms",
+             g_watchdog_interval_ms, g_command_timeout_ms, g_degraded_alarm_delay_ms, g_safe_state_timeout_ms);
 
     // Register PROFINET callbacks
     result_t r = profinet_manager_set_callbacks(

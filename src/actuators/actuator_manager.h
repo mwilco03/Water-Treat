@@ -122,6 +122,7 @@ typedef struct {
     // PROFINET connection state
     bool profinet_connected;
     bool degraded_mode;
+    bool safe_state_applied;       // True if safe state was applied due to timeout
     uint64_t disconnect_time_ms;
     uint64_t no_command_start_ms;  // Watchdog: tracks when commands stopped arriving
 
