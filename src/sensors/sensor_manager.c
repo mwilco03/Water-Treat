@@ -13,6 +13,137 @@ extern led_status_manager_t g_led_mgr;
 
 #include <unistd.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+/* ============================================================================
+ * Default CPU Temperature Sensor
+ *
+ * Every Linux board has CPU temperature available via sysfs thermal zone.
+ * This provides a guaranteed sensor for PROFINET testing without requiring
+ * any external hardware. Registered as slot 1, temperature sensor type.
+ * ========================================================================== */
+
+#define CPU_TEMP_SLOT           1
+#define THERMAL_ZONE_BASE       "/sys/class/thermal/thermal_zone"
+#define THERMAL_ZONE_MAX        10  /* Check zones 0-9 */
+
+/**
+ * @brief Find available thermal zone for CPU temperature
+ *
+ * Scans /sys/class/thermal/thermal_zone0 through thermal_zone9 to find
+ * an available zone. Different boards use different zone numbers.
+ *
+ * @param path_out Buffer to store the found path (min 128 bytes)
+ * @return true if a thermal zone was found
+ */
+static bool find_thermal_zone(char *path_out) {
+    for (int i = 0; i < THERMAL_ZONE_MAX; i++) {
+        snprintf(path_out, 128, "%s%d/temp", THERMAL_ZONE_BASE, i);
+        if (access(path_out, R_OK) == 0) {
+            LOG_DEBUG("Found thermal zone: %s", path_out);
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Read CPU temperature from sysfs thermal zone
+ *
+ * Works on all Linux SBCs (Raspberry Pi, BeagleBone, etc.)
+ * Returns temperature in degrees Celsius.
+ *
+ * @param temp_path Path to thermal zone temp file (e.g., /sys/class/thermal/thermal_zone0/temp)
+ * @param temperature Output temperature in Celsius
+ * @return RESULT_OK on success
+ */
+static result_t read_cpu_temperature(const char *temp_path, float *temperature) {
+    FILE *fp = fopen(temp_path, "r");
+    if (!fp) {
+        return RESULT_ERROR;
+    }
+
+    int millidegrees;
+    if (fscanf(fp, "%d", &millidegrees) != 1) {
+        fclose(fp);
+        return RESULT_ERROR;
+    }
+    fclose(fp);
+
+    /* Convert millidegrees to Celsius */
+    *temperature = (float)millidegrees / 1000.0f;
+    return RESULT_OK;
+}
+
+/**
+ * @brief Create default CPU temperature sensor
+ *
+ * Called when no sensors are configured in database.
+ * Provides a guaranteed sensor for PROFINET connectivity testing.
+ */
+static sensor_instance_t* create_cpu_temp_sensor(void) {
+    /* Find available thermal zone */
+    char thermal_path[128];
+    if (!find_thermal_zone(thermal_path)) {
+        LOG_WARNING("No thermal zone available for CPU temperature sensor");
+        return NULL;
+    }
+
+    sensor_instance_t *instance = calloc(1, sizeof(sensor_instance_t));
+    if (!instance) {
+        return NULL;
+    }
+
+    /* Initialize sensor instance */
+    instance->id = -1;  /* Not from database */
+    instance->module_id = -1;
+    instance->slot = CPU_TEMP_SLOT;
+    strncpy(instance->name, "CPU Temperature", sizeof(instance->name) - 1);
+    instance->type = SENSOR_INSTANCE_SYSTEM;
+    instance->driver_type = PHYSICAL_DRIVER_NONE;
+
+    /* Set thermal zone path (from auto-detection) */
+    strncpy(instance->driver.system_temp.thermal_zone_path,
+            thermal_path,
+            sizeof(instance->driver.system_temp.thermal_zone_path) - 1);
+    instance->driver.system_temp.initialized = true;
+
+    /* Calibration - no adjustment needed for CPU temp */
+    instance->cal_scale = 1.0f;
+    instance->cal_offset = 0.0f;
+    instance->scale_factor = 1.0f;
+    instance->offset = 0.0f;
+
+    /* Quality settings */
+    instance->quality = QUALITY_GOOD;
+    instance->stale_timeout_ms = 5000;
+    instance->failure_threshold = 3;
+    instance->range_min = -40.0f;   /* Valid CPU temp range */
+    instance->range_max = 125.0f;
+
+    /* Timing */
+    instance->poll_rate_ms = 1000;  /* Read every second */
+    instance->timeout_ms = 500;
+
+    pthread_mutex_init(&instance->mutex, NULL);
+
+    /* Do initial read to verify sensor works */
+    float temp;
+    if (read_cpu_temperature(thermal_path, &temp) == RESULT_OK) {
+        instance->current_value = temp;
+        instance->driver.system_temp.last_temp = temp;
+        instance->driver.system_temp.last_read_time = get_time_ms();
+        instance->connected = true;
+        strncpy(instance->status, "OK", sizeof(instance->status));
+        LOG_INFO("CPU temperature sensor initialized: %.1f°C", temp);
+    } else {
+        instance->connected = false;
+        strncpy(instance->status, "ERROR", sizeof(instance->status));
+    }
+
+    return instance;
+}
 
 /* Data collected from sensor reads - used to process outside mutex */
 typedef struct {
@@ -323,9 +454,42 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
     }
     
     free(modules);
-    
+
+    /*
+     * If no sensors configured in database, create default CPU temperature sensor.
+     * This ensures every RTU has at least one sensor for PROFINET connectivity testing.
+     * CPU temperature is available on all Linux boards via sysfs thermal zone.
+     */
+    if (mgr->instance_count == 0) {
+        LOG_INFO("No sensors in database, creating default CPU temperature sensor");
+
+        sensor_instance_t *cpu_sensor = create_cpu_temp_sensor();
+        if (cpu_sensor) {
+            mgr->instances[mgr->instance_count++] = cpu_sensor;
+
+            /* Update slot_map for O(1) lookup */
+            if (cpu_sensor->slot >= 0 && cpu_sensor->slot <= SENSOR_MAX_SLOT) {
+                mgr->slot_map[cpu_sensor->slot] = cpu_sensor;
+            }
+
+            /* Register with PROFINET as temperature sensor module */
+            if (mgr->profinet_mgr) {
+                profinet_manager_add_module(
+                    mgr->profinet_mgr,
+                    cpu_sensor->slot,           /* slot 1 */
+                    GSDML_MOD_SENSOR_TEMP,      /* 0x00000040 */
+                    0,                          /* subslot */
+                    GSDML_MOD_SENSOR_TEMP + 1,  /* 0x00000041 */
+                    GSDML_SENSOR_INPUT_SIZE,    /* 5 bytes: float + quality */
+                    0                           /* output_length */
+                );
+                LOG_INFO("Registered CPU temp sensor with PROFINET at slot %d", cpu_sensor->slot);
+            }
+        }
+    }
+
     pthread_mutex_unlock(&mgr->mutex);
-    
+
     LOG_INFO("Reloaded %d sensors", mgr->instance_count);
     DB_EVENT_INFO(mgr->db, "sensor_manager", "Reloaded sensor configuration");
     

@@ -13,7 +13,8 @@ typedef enum {
     SENSOR_INSTANCE_ADC,
     SENSOR_INSTANCE_CALCULATED,
     SENSOR_INSTANCE_WEB_POLL,
-    SENSOR_INSTANCE_STATIC
+    SENSOR_INSTANCE_STATIC,
+    SENSOR_INSTANCE_SYSTEM      /* CPU/board temperature from /sys/class/thermal */
 } sensor_instance_type_t;
 
 typedef enum {
@@ -57,6 +58,13 @@ typedef union {
     } mcp3008;
 
     web_poll_device_t web_poll;
+
+    struct {
+        char thermal_zone_path[128];  /* e.g., /sys/class/thermal/thermal_zone0/temp */
+        bool initialized;
+        float last_temp;
+        uint64_t last_read_time;
+    } system_temp;
 
 } sensor_driver_ctx_t;
 

@@ -384,6 +384,30 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
             raw_value = instance->current_value;
             result = RESULT_OK;
             break;
+
+        case SENSOR_INSTANCE_SYSTEM:
+            /* Read CPU/board temperature from sysfs thermal zone */
+            if (instance->driver.system_temp.initialized &&
+                instance->driver.system_temp.thermal_zone_path[0] != '\0') {
+                FILE *fp = fopen(instance->driver.system_temp.thermal_zone_path, "r");
+                if (fp) {
+                    int millidegrees;
+                    if (fscanf(fp, "%d", &millidegrees) == 1) {
+                        raw_value = (float)millidegrees / 1000.0f;
+                        instance->driver.system_temp.last_temp = raw_value;
+                        instance->driver.system_temp.last_read_time = get_time_ms();
+                        result = RESULT_OK;
+                    } else {
+                        result = RESULT_ERROR;
+                    }
+                    fclose(fp);
+                } else {
+                    result = RESULT_ERROR;
+                }
+            } else {
+                result = RESULT_NOT_INITIALIZED;
+            }
+            break;
     }
 
     if (result == RESULT_OK) {
