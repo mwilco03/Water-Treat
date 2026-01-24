@@ -1280,6 +1280,43 @@ const char* profinet_manager_get_init_error(void) {
     return g_pn_init_error[0] ? g_pn_init_error : NULL;
 }
 
+/**
+ * @brief Dump all plugged slots for debugging
+ *
+ * Logs all slots registered with p-net, including:
+ * - Slot/subslot numbers
+ * - Module/submodule identifiers
+ * - I/O direction and sizes
+ * - Current IOPS status
+ *
+ * Call this after profinet_manager_start() to verify configuration.
+ */
+void profinet_manager_dump_slots(void) {
+    LOG_INFO("=== PROFINET Slot Configuration ===");
+    LOG_INFO("Total application slots: %d", g_pn.slot_count);
+
+    /* DAP (always slot 0) */
+    LOG_INFO("Slot 0 (DAP):");
+    LOG_INFO("  0.1     : module=0x%08X submod=0x%08X (DAP)", GSDML_MOD_DAP, GSDML_SUBMOD_DAP);
+    LOG_INFO("  0.0x8000: module=0x%08X submod=0x%08X (Interface)", GSDML_MOD_DAP, GSDML_SUBMOD_DAP_INTERFACE);
+    LOG_INFO("  0.0x8001: module=0x%08X submod=0x%08X (Port)", GSDML_MOD_DAP, GSDML_SUBMOD_DAP_PORT);
+
+    /* Application modules */
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        profinet_slot_t *slot = &g_pn.slots[i];
+        const char *dir = is_actuator_module(slot->module_ident) ? "OUTPUT" : "INPUT";
+        const char *plugged = slot->plugged ? "PLUGGED" : "NOT_PLUGGED";
+
+        LOG_INFO("Slot %d.%d: module=0x%08X submod=0x%08X dir=%s in=%zu out=%zu iops=0x%02X [%s]",
+                 slot->slot, slot->subslot,
+                 slot->module_ident, slot->submodule_ident,
+                 dir, slot->input_size, slot->output_size,
+                 slot->input_iops, plugged);
+    }
+
+    LOG_INFO("=== End Slot Configuration ===");
+}
+
 bool profinet_manager_is_disabled_by_config(void) {
     return g_pn_disabled_by_config;
 }

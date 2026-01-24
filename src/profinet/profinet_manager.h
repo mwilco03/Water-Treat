@@ -142,4 +142,17 @@ void profinet_manager_clear_ar_state(void);
  */
 int profinet_manager_init_all_inputs(void);
 
+/**
+ * @brief Dump all plugged slots to log for debugging
+ *
+ * Logs comprehensive slot configuration including:
+ * - DAP subslots (slot 0)
+ * - All application modules with idents, directions, sizes
+ * - Current IOPS status per slot
+ *
+ * Call after profinet_manager_start() to verify what's registered.
+ * Useful for diagnosing IOCR mismatch errors from controller.
+ */
+void profinet_manager_dump_slots(void);
+
 #endif
