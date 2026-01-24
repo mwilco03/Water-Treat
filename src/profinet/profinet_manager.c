@@ -975,6 +975,21 @@ result_t profinet_manager_start(const char *interface) {
     
     set_state(PROFINET_STATE_READY);
     LOG_INFO("PROFINET stack started on interface %s", g_netif_name);
+
+    /* Dump slot configuration for debugging connection issues */
+    profinet_manager_dump_slots();
+
+    /* Log p-net configuration for debugging empty Connect Response */
+    LOG_INFO("=== PROFINET Config Summary (for debugging) ===");
+    LOG_INFO("Station name: '%s' (len=%zu)", g_pn.pnet_cfg.station_name,
+             strlen(g_pn.pnet_cfg.station_name));
+    LOG_INFO("Vendor ID: 0x%02X%02X, Device ID: 0x%02X%02X",
+             g_pn.pnet_cfg.device_id.vendor_id_hi, g_pn.pnet_cfg.device_id.vendor_id_lo,
+             g_pn.pnet_cfg.device_id.device_id_hi, g_pn.pnet_cfg.device_id.device_id_lo);
+    LOG_INFO("Product: '%s'", g_pn.pnet_cfg.product_name);
+    LOG_INFO("Slots plugged: DAP + %d application modules", g_pn.slot_count);
+    LOG_INFO("If connect_callback is NOT called, p-net rejects before app layer");
+    LOG_INFO("=== End Config Summary ===");
 #else
     UNUSED(interface);
     LOG_WARNING("PROFINET support not compiled in (HAVE_PNET not defined)");
@@ -1451,6 +1466,13 @@ void profinet_manager_dump_slots(void) {
                  slot->module_ident, slot->submodule_ident,
                  dir, slot->input_size, slot->output_size,
                  slot->input_iops, plugged);
+    }
+
+    if (g_pn.slot_count == 0) {
+        LOG_WARNING("No application modules plugged (only DAP).");
+        LOG_WARNING("Controller expects slots 1-%d but RTU has none configured.",
+                    MAX_PROFINET_SLOTS - 1);
+        LOG_WARNING("This WILL cause module mismatch if controller has sensors/actuators.");
     }
 
     LOG_INFO("=== End Slot Configuration ===");

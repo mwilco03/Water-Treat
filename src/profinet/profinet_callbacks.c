@@ -194,13 +194,21 @@ int profinet_connect_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
     UNUSED(net); UNUSED(arg);
 
-    LOG_INFO("PROFINET connect (arep=%u)", arep);
+    LOG_INFO(">>> CALLBACK: connect_callback arep=%u (RPC Connect Request accepted by p-net!)", arep);
 
     /* Track connection attempt in state machine */
     profinet_manager_set_connecting();
 
     /* Auto-recover from transient errors - controller will retry */
     if (result) {
+        if (result->pnio_status.error_code != 0 ||
+            result->pnio_status.error_code_1 != 0 ||
+            result->pnio_status.error_code_2 != 0) {
+            LOG_WARNING(">>> connect_callback result: err=0x%02X, err1=0x%02X, err2=0x%04X",
+                        result->pnio_status.error_code,
+                        result->pnio_status.error_code_1,
+                        result->pnio_status.error_code_2);
+        }
         handle_pnio_error(result);
     }
 
@@ -439,9 +447,10 @@ int profinet_exp_module_callback(pnet_t *net, void *arg,
                                  uint32_t api, uint16_t slot,
                                  uint32_t module_ident) {
     UNUSED(net); UNUSED(arg); UNUSED(api);
-    
-    LOG_INFO("PROFINET expected module: slot=%u, ident=0x%08X", slot, module_ident);
-    
+
+    LOG_INFO(">>> CALLBACK: exp_module slot=%u, ident=0x%08X (p-net reached app layer!)",
+             slot, module_ident);
+
     // Accept the module - actual plugging is done in profinet_manager_start
     return 0;
 }
@@ -452,10 +461,10 @@ int profinet_exp_submodule_callback(pnet_t *net, void *arg,
                                     const pnet_data_cfg_t *exp_data_cfg) {
     UNUSED(net); UNUSED(arg); UNUSED(api);
     UNUSED(module_ident); UNUSED(exp_data_cfg);
-    
-    LOG_INFO("PROFINET expected submodule: slot=%u.%u, ident=0x%08X", 
+
+    LOG_INFO(">>> CALLBACK: exp_submodule slot=%u.%u, submod=0x%08X (module processing OK)",
              slot, subslot, submodule_ident);
-    
+
     return 0;
 }
 
