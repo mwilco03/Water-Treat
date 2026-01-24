@@ -25,7 +25,28 @@ extern led_status_manager_t g_led_mgr;
  * ========================================================================== */
 
 #define CPU_TEMP_SLOT           1
-#define CPU_TEMP_THERMAL_ZONE   "/sys/class/thermal/thermal_zone0/temp"
+#define THERMAL_ZONE_BASE       "/sys/class/thermal/thermal_zone"
+#define THERMAL_ZONE_MAX        10  /* Check zones 0-9 */
+
+/**
+ * @brief Find available thermal zone for CPU temperature
+ *
+ * Scans /sys/class/thermal/thermal_zone0 through thermal_zone9 to find
+ * an available zone. Different boards use different zone numbers.
+ *
+ * @param path_out Buffer to store the found path (min 128 bytes)
+ * @return true if a thermal zone was found
+ */
+static bool find_thermal_zone(char *path_out) {
+    for (int i = 0; i < THERMAL_ZONE_MAX; i++) {
+        snprintf(path_out, 128, "%s%d/temp", THERMAL_ZONE_BASE, i);
+        if (access(path_out, R_OK) == 0) {
+            LOG_DEBUG("Found thermal zone: %s", path_out);
+            return true;
+        }
+    }
+    return false;
+}
 
 /**
  * @brief Read CPU temperature from sysfs thermal zone
@@ -62,9 +83,10 @@ static result_t read_cpu_temperature(const char *temp_path, float *temperature) 
  * Provides a guaranteed sensor for PROFINET connectivity testing.
  */
 static sensor_instance_t* create_cpu_temp_sensor(void) {
-    /* Verify thermal zone exists */
-    if (access(CPU_TEMP_THERMAL_ZONE, R_OK) != 0) {
-        LOG_WARNING("CPU temperature sensor not available: %s", CPU_TEMP_THERMAL_ZONE);
+    /* Find available thermal zone */
+    char thermal_path[128];
+    if (!find_thermal_zone(thermal_path)) {
+        LOG_WARNING("No thermal zone available for CPU temperature sensor");
         return NULL;
     }
 
@@ -81,9 +103,9 @@ static sensor_instance_t* create_cpu_temp_sensor(void) {
     instance->type = SENSOR_INSTANCE_SYSTEM;
     instance->driver_type = PHYSICAL_DRIVER_NONE;
 
-    /* Set thermal zone path */
+    /* Set thermal zone path (from auto-detection) */
     strncpy(instance->driver.system_temp.thermal_zone_path,
-            CPU_TEMP_THERMAL_ZONE,
+            thermal_path,
             sizeof(instance->driver.system_temp.thermal_zone_path) - 1);
     instance->driver.system_temp.initialized = true;
 
@@ -106,9 +128,9 @@ static sensor_instance_t* create_cpu_temp_sensor(void) {
 
     pthread_mutex_init(&instance->mutex, NULL);
 
-    /* Do initial read */
+    /* Do initial read to verify sensor works */
     float temp;
-    if (read_cpu_temperature(CPU_TEMP_THERMAL_ZONE, &temp) == RESULT_OK) {
+    if (read_cpu_temperature(thermal_path, &temp) == RESULT_OK) {
         instance->current_value = temp;
         instance->driver.system_temp.last_temp = temp;
         instance->driver.system_temp.last_read_time = get_time_ms();
