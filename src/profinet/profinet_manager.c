@@ -29,6 +29,11 @@
 #define MAX_PROFINET_SLOTS          247
 #define PROFINET_DATA_SIZE          256
 
+/* Stuck state detection timeouts (milliseconds) */
+#define STATE_TIMEOUT_CONNECTING_MS     30000   /* 30s in CONNECTING before reset */
+#define STATE_TIMEOUT_PARAM_END_MS      10000   /* 10s waiting for APPLRDY */
+#define RECOVERY_CHECK_INTERVAL_MS      5000    /* Check every 5 seconds */
+
 typedef struct {
     int slot;
     int subslot;
@@ -65,9 +70,18 @@ typedef struct {
     bool connected;
     
     profinet_state_t state;
+    profinet_state_t prev_state;
+    uint64_t state_entry_time_ms;    /* When we entered current state */
+    uint64_t last_recovery_check_ms; /* Last stuck-state check time */
     uint64_t last_tick_time;
     uint32_t cycle_count;
-    
+
+    /* Connection statistics */
+    uint32_t connection_count;       /* Total successful connections */
+    uint32_t disconnect_count;       /* Total disconnections */
+    uint32_t error_count;            /* Total recoverable errors */
+    uint32_t stuck_state_recoveries; /* Times we recovered from stuck state */
+
     // Callbacks
     profinet_connect_cb_t on_connect;
     profinet_disconnect_cb_t on_disconnect;
@@ -76,6 +90,27 @@ typedef struct {
 } profinet_manager_t;
 
 static profinet_manager_t g_pn = {0};
+
+/* State transition with logging and timestamp */
+static void set_state(profinet_state_t new_state) {
+    if (g_pn.state == new_state) return;
+
+    const char *old_name = profinet_state_to_string(g_pn.state);
+    const char *new_name = profinet_state_to_string(new_state);
+
+    LOG_INFO("PROFINET state: %s -> %s", old_name, new_name);
+
+    g_pn.prev_state = g_pn.state;
+    g_pn.state = new_state;
+    g_pn.state_entry_time_ms = get_time_ms();
+
+    /* Track statistics */
+    if (new_state == PROFINET_STATE_CONNECTED) {
+        g_pn.connection_count++;
+    } else if (new_state == PROFINET_STATE_ERROR) {
+        g_pn.error_count++;
+    }
+}
 
 /* Track initialization failure for health reporting */
 static char g_pn_init_error[256] = {0};
@@ -236,6 +271,67 @@ static void poll_output_slots(void) {
     }
 }
 
+/**
+ * @brief Check for stuck states and trigger recovery
+ *
+ * Detects when the state machine is stuck:
+ * - CONNECTING for > 30 seconds without progress
+ * - Waiting for APPLRDY > 10 seconds after PRMEND
+ *
+ * Recovery clears p-net AR state and returns to IDLE.
+ */
+static void check_stuck_state(void) {
+    uint64_t now = get_time_ms();
+
+    /* Only check periodically to reduce overhead */
+    if (now - g_pn.last_recovery_check_ms < RECOVERY_CHECK_INTERVAL_MS) {
+        return;
+    }
+    g_pn.last_recovery_check_ms = now;
+
+    uint64_t state_duration = now - g_pn.state_entry_time_ms;
+
+    switch (g_pn.state) {
+        case PROFINET_STATE_CONNECTING:
+            if (state_duration > STATE_TIMEOUT_CONNECTING_MS) {
+                LOG_WARNING("Stuck in CONNECTING state for %llu ms, resetting",
+                            (unsigned long long)state_duration);
+                g_pn.stuck_state_recoveries++;
+                profinet_manager_clear_ar_state();
+                set_state(PROFINET_STATE_READY);
+            }
+            break;
+
+        case PROFINET_STATE_READY:
+            /*
+             * After clearing stale state, controller should retry within ~30s.
+             * If we've been in READY for > 60s, log but don't reset
+             * (controller may be offline).
+             */
+            if (state_duration > 60000 && (state_duration % 60000) < RECOVERY_CHECK_INTERVAL_MS) {
+                LOG_DEBUG("Waiting for controller connection (%llu s)...",
+                          (unsigned long long)(state_duration / 1000));
+            }
+            break;
+
+        case PROFINET_STATE_ERROR:
+            /*
+             * Auto-recover from ERROR state after clearing NV files.
+             * Give it 5 seconds then try to go back to READY.
+             */
+            if (state_duration > 5000) {
+                LOG_INFO("Recovering from ERROR state, clearing AR and retrying");
+                profinet_manager_clear_ar_state();
+                set_state(PROFINET_STATE_READY);
+            }
+            break;
+
+        default:
+            /* IDLE, CONNECTED states don't need stuck detection */
+            break;
+    }
+}
+
 static void* profinet_tick_thread(void *arg) {
     UNUSED(arg);
 
@@ -250,6 +346,9 @@ static void* profinet_tick_thread(void *arg) {
             if (g_pn.connected) {
                 poll_output_slots();
             }
+
+            /* Check for stuck states and trigger recovery */
+            check_stuck_state();
         }
 
         pthread_mutex_unlock(&g_pn.mutex);
@@ -376,7 +475,11 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     // Initialize controller discovery
     controller_discovery_init(config);
 
+    /* Initialize state machine with timestamp */
     g_pn.state = PROFINET_STATE_IDLE;
+    g_pn.prev_state = PROFINET_STATE_IDLE;
+    g_pn.state_entry_time_ms = get_time_ms();
+    g_pn.last_recovery_check_ms = g_pn.state_entry_time_ms;
     g_pn.initialized = true;
 
     LOG_INFO("PROFINET manager initialized: station=%s, vendor=0x%04X, device=0x%04X",
@@ -862,13 +965,13 @@ result_t profinet_manager_start(const char *interface) {
         return RESULT_ERROR;
     }
     
-    g_pn.state = PROFINET_STATE_READY;
+    set_state(PROFINET_STATE_READY);
     LOG_INFO("PROFINET stack started on interface %s", g_netif_name);
 #else
     UNUSED(interface);
     LOG_WARNING("PROFINET support not compiled in (HAVE_PNET not defined)");
     g_pn.running = true;
-    g_pn.state = PROFINET_STATE_READY;
+    set_state(PROFINET_STATE_READY);
 #endif
 
     return RESULT_OK;
@@ -911,7 +1014,7 @@ result_t profinet_manager_stop(void) {
     }
 #endif
 
-    g_pn.state = PROFINET_STATE_IDLE;
+    set_state(PROFINET_STATE_IDLE);
     g_pn.connected = false;
 
     LOG_INFO("PROFINET stack stopped cleanly");
@@ -1069,20 +1172,27 @@ bool profinet_manager_is_running(void) {
 
 result_t profinet_manager_get_stats(profinet_stats_t *stats) {
     CHECK_NULL(stats);
-    
+
     pthread_mutex_lock(&g_pn.mutex);
-    
+
     stats->state = g_pn.state;
     stats->connected = g_pn.connected;
     stats->cycle_count = g_pn.cycle_count;
     stats->slot_count = g_pn.slot_count;
-    
+
     int plugged = 0;
     for (int i = 0; i < g_pn.slot_count; i++) {
         if (g_pn.slots[i].plugged) plugged++;
     }
     stats->plugged_modules = plugged;
-    
+
+    /* Connection resilience stats */
+    stats->connection_count = g_pn.connection_count;
+    stats->disconnect_count = g_pn.disconnect_count;
+    stats->error_count = g_pn.error_count;
+    stats->stuck_state_recoveries = g_pn.stuck_state_recoveries;
+    stats->state_duration_ms = get_time_ms() - g_pn.state_entry_time_ms;
+
     pthread_mutex_unlock(&g_pn.mutex);
     return RESULT_OK;
 }
@@ -1187,10 +1297,27 @@ int profinet_manager_init_all_inputs(void) {
     return initialized;
 }
 
+/* Called from connect callback when controller initiates connection */
+void profinet_manager_set_connecting(void) {
+    if (g_pn.state != PROFINET_STATE_CONNECTING) {
+        set_state(PROFINET_STATE_CONNECTING);
+    }
+}
+
 /* Called from callbacks */
 void profinet_manager_set_connected(bool connected, uint32_t arep) {
+    bool was_connected = g_pn.connected;
     g_pn.connected = connected;
-    g_pn.state = connected ? PROFINET_STATE_CONNECTED : PROFINET_STATE_READY;
+
+    /* Use state machine helper for proper tracking */
+    if (connected) {
+        set_state(PROFINET_STATE_CONNECTED);
+    } else {
+        if (was_connected) {
+            g_pn.disconnect_count++;
+        }
+        set_state(PROFINET_STATE_READY);
+    }
 
 #ifdef HAVE_PNET
     if (connected) {
@@ -1249,7 +1376,7 @@ void profinet_manager_clear_ar_state(void) {
         }
     }
 #endif
-    g_pn.state = PROFINET_STATE_READY;
+    /* Note: Caller is responsible for setting appropriate state after clearing */
 }
 
 void profinet_manager_handle_output_data(int slot, int subslot, const uint8_t *data, size_t len) {

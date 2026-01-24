@@ -187,11 +187,17 @@ int profinet_state_callback(pnet_t *net, void *arg,
     return 0;
 }
 
+/* Forward declaration for state tracking */
+void profinet_manager_set_connecting(void);
+
 int profinet_connect_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
     UNUSED(net); UNUSED(arg);
 
     LOG_INFO("PROFINET connect (arep=%u)", arep);
+
+    /* Track connection attempt in state machine */
+    profinet_manager_set_connecting();
 
     /* Auto-recover from transient errors - controller will retry */
     if (result) {
