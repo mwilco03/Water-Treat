@@ -30,6 +30,10 @@ typedef struct {
     uint32_t error_count;            /**< Total recoverable errors */
     uint32_t stuck_state_recoveries; /**< Times recovered from stuck state */
     uint64_t state_duration_ms;      /**< Time in current state (ms) */
+
+    /* Output polling efficiency (change detection) */
+    uint64_t output_polls;           /**< Total output slot polls */
+    uint64_t output_changes;         /**< Polls that detected actual changes */
 } profinet_stats_t;
 
 // PROFINET IOXS values (only define when p-net is not available)

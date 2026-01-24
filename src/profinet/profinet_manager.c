@@ -82,6 +82,10 @@ typedef struct {
     uint32_t error_count;            /* Total recoverable errors */
     uint32_t stuck_state_recoveries; /* Times we recovered from stuck state */
 
+    /* Output polling statistics (for efficiency monitoring) */
+    uint64_t output_polls;           /* Total output slot polls */
+    uint64_t output_changes;         /* Polls that detected actual data change */
+
     // Callbacks
     profinet_connect_cb_t on_connect;
     profinet_disconnect_cb_t on_disconnect;
@@ -255,12 +259,16 @@ static void poll_output_slots(void) {
 
         int ret = pnet_output_get_data_and_iops(g_pn.pnet, 0, slot->slot, slot->subslot,
                                                  &new_data, data, &len, &iops);
+
+        g_pn.output_polls++;  /* Track all poll attempts */
+
         if (ret == 0 && new_data && iops == PNET_IOXS_GOOD) {
             /* Check if data actually changed to avoid redundant callbacks */
             if (len > 0 && memcmp(data, slot->output_data, len) != 0) {
                 /* New data received - cache and dispatch to listeners */
                 memcpy(slot->output_data, data, len);
                 slot->output_valid = true;
+                g_pn.output_changes++;  /* Track actual changes */
 
                 /* Call the data callback (actuator manager handler) */
                 if (g_pn.on_data_received) {
@@ -1192,6 +1200,10 @@ result_t profinet_manager_get_stats(profinet_stats_t *stats) {
     stats->error_count = g_pn.error_count;
     stats->stuck_state_recoveries = g_pn.stuck_state_recoveries;
     stats->state_duration_ms = get_time_ms() - g_pn.state_entry_time_ms;
+
+    /* Output polling efficiency stats */
+    stats->output_polls = g_pn.output_polls;
+    stats->output_changes = g_pn.output_changes;
 
     pthread_mutex_unlock(&g_pn.mutex);
     return RESULT_OK;
