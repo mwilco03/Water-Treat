@@ -151,6 +151,15 @@ New record indices must be added to both `config_sync.h` and `profinet_callbacks
 
 See `docs/CONTROLLER_IMPLEMENTATION_GUIDE.md` for full controller integration spec.
 
+### Related Repositories
+
+| Repository | Purpose |
+|------------|---------|
+| [Water-Controller](https://github.com/mwilco03/Water-Controller) | PROFINET IO Controller (consumes this RTU's API) |
+| [p-net](https://github.com/mwilco03/p-net) | p-net PROFINET stack (fork, used by this RTU) |
+
+The controller repo implements the other side of the connection described in `docs/CONTROLLER_IMPLEMENTATION_GUIDE.md`. The p-net fork is the PROFINET device stack this RTU links against (pinned to v0.2.0 in `scripts/install-deps.sh`).
+
 ## Build Requirements
 
 - C11 standard
