@@ -141,12 +141,15 @@ Returns **503** if PROFINET subsystem is unavailable.
 
 ### Controller Discovery Priority
 
-The `/api/v1/slots` endpoint is **fallback #3** in the controller's discovery chain:
+The controller's discovery chain has 5 steps. `/api/v1/gsdml` is preferred
+over `/api/v1/slots` because GSDML is the standard device description (only
+the HTTP transport is non-standard), and once cached it becomes step 1.
 
-1. Parse GSDML file (standard, offline)
-2. Cached config from previous successful connection
-3. `GET /api/v1/slots` (this endpoint -- non-standard)
-4. DAP-only connect + Record Read 0xF844 (standard PROFINET)
+1. Local GSDML file on disk (standard, offline)
+2. `GET /api/v1/gsdml` -- fetch GSDML via HTTP, cache locally (non-standard transport)
+3. Cached config from previous successful connection
+4. `GET /api/v1/slots` -- proprietary JSON slot list (non-standard)
+5. DAP-only connect + Record Read 0xF844 (standard PROFINET)
 
 ### PROFINET Record Index Allocation
 
