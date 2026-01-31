@@ -101,8 +101,14 @@
                             <IOData/>
                         </VirtualSubmoduleItem>
 
-                        <!-- Port Submodules -->
-                        <VirtualSubmoduleItem ID="VSM_Port1" SubmoduleIdentNumber="0x00008000"
+                        <!--
+                             Port submodule in VirtualSubmoduleList.
+                             SubmoduleIdentNumber must match the PortSubmoduleItem
+                             in SystemDefinedSubmoduleList (0x00000200), NOT the
+                             subslot number (0x8000/0x8001).
+                             Fixed: was 0x00008000 (subslot number, not ident).
+                        -->
+                        <VirtualSubmoduleItem ID="VSM_Port1" SubmoduleIdentNumber="0x00000200"
                                              MayIssueProcessAlarm="false">
                             <ModuleInfo>
                                 <Name TextId="IDT_Port1"/>

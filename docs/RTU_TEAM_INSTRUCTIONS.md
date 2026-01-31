@@ -58,12 +58,11 @@ Current code:
 
 These are standard PROFINET subslot assignments. Confirm the defines match.
 
-**GSDML note**: Line 105 of the GSDML has a VirtualSubmoduleItem "VSM_Port1"
-with `SubmoduleIdentNumber="0x00008000"`. This is in the VirtualSubmoduleList,
-separate from the SystemDefinedSubmoduleList entries (0x00000100 and 0x00000200).
-The code correctly uses the SystemDefined values. The 0x00008000 virtual
-submodule may be vestigial — verify it's intentional or remove it from the GSDML
-to avoid controller confusion.
+**GSDML note**: Line 105 of the GSDML had a VirtualSubmoduleItem "VSM_Port1"
+with `SubmoduleIdentNumber="0x00008000"`. This was the subslot number, not a
+valid submodule ident. **FIXED**: Changed to `0x00000200` to match the
+PortSubmoduleItem in SystemDefinedSubmoduleList (line 130). The code at
+profinet_manager.c:917 correctly uses `GSDML_SUBMOD_DAP_PORT = 0x00000200`.
 
 ---
 
@@ -362,17 +361,11 @@ fetching from the RTU. This separation means:
    Standard p-net uses 0x00000001 for DAP. Verify this matches.
 
 4. **VirtualSubmoduleItem "VSM_Port1"** (line 105):
-   `SubmoduleIdentNumber="0x00008000"`. This value (0x00008000) is
-   the standard PROFINET subslot number for the interface, NOT a
-   submodule ident. This may be a GSDML authoring error:
-   - The actual interface submodule ident is 0x00000100 (line 116)
-   - The actual port submodule ident is 0x00000200 (line 130)
-   - 0x00008000 as a submodule ident in VirtualSubmoduleList is
-     potentially confusing to GSDML parsers
-
-   **Recommendation**: Review whether line 105 should use 0x00000200
-   (matching the PortSubmoduleItem) or be removed if it's redundant
-   with the SystemDefinedSubmoduleList.
+   **FIXED**: Was `SubmoduleIdentNumber="0x00008000"` (the subslot number,
+   not a submodule ident). Changed to `0x00000200` to match the
+   PortSubmoduleItem in SystemDefinedSubmoduleList (line 130).
+   This prevents GSDML parsers from seeing a phantom submodule with
+   ident 0x00008000 that doesn't correspond to any plugged submodule.
 
 5. **Module UsableModules** definitions: Verify each sensor/actuator
    module type listed in the GSDML has a corresponding entry in the
@@ -438,25 +431,47 @@ the cyclic handler writes/reads.
 
 ### Before first connection attempt
 
-- [ ] DAP submodule idents match GSDML (0x00000001, 0x00000100, 0x00000200)
-- [ ] Station name is set and NV storage is cleaned on boot
-- [ ] Network interface has IPv4 address (DHCP or static)
-- [ ] Health check HTTP server is running and reachable
+- [x] DAP submodule idents match GSDML (0x00000001, 0x00000100, 0x00000200)
+      Verified: gsdml_modules.h constants match GSDML XML lines 95, 116, 130.
+      Code at profinet_manager.c:885-919 uses correct constants and subslots.
+- [x] Station name is set and NV storage is cleaned on boot
+      Verified: clear_pnet_nv_station() at profinet_manager.c:185 deletes all pf_* files.
+      bootstrap.sh:277 detect_station_name() generates rtu-XXXX from MAC.
+      config_validate.c:32 validate_station_name() enforces IEC 61158-6.
+- [x] Network interface has IPv4 address (DHCP or static)
+      Verified: configure_pnet_ip() at profinet_manager.c:608 reads from getifaddrs().
+- [x] Health check HTTP server is running and reachable
+      Verified: main.c:480 health_check_init(), main.c:486 health_check_start().
+      Default port 9081 from config_defaults.h:27 WT_HTTP_PORT_DEFAULT.
 - [ ] `CAP_NET_RAW` capability is available for p-net
+      Requires runtime verification on target hardware.
 - [ ] p-net NV directory exists and is writable
+      Requires runtime verification on target hardware.
 
 ### For Phase 1 (DAP-only connect)
 
-- [ ] Database can be empty (only DAP plugged)
+- [x] Database can be empty (only DAP plugged)
+      Verified: load_modules_from_db() returns RESULT_OK with count=0.
+      profinet_manager.c:930 loop skips when slot_count==0. Only DAP is plugged.
 - [ ] RTU responds to DCP Identify with correct station name and vendor/device ID
+      Requires live connection test.
 - [ ] RTU accepts Connect Request and returns Connect Response (not just error)
+      Requires live connection test (blocked by controller DREP fix).
 
 ### For Phase 2+ (full connect)
 
-- [ ] Database populated with correct module idents
-- [ ] All modules in database match GSDML module definitions
-- [ ] `is_actuator_module()` correctly classifies all module idents
-- [ ] Input/output sizes match GSDML data lengths (5 bytes sensor, 4 bytes actuator)
+- [x] Database populated with correct module idents
+      Verified: db_module_list() returns modules ordered by slot.
+      Module idents are integers matching GSDML (all 10 types verified).
+- [x] All modules in database match GSDML module definitions
+      Verified: All 7 sensor types (0x10-0x70) and 3 actuator types (0x100-0x120)
+      have matching entries in gsdml_modules.h and GSDML XML.
+- [x] `is_actuator_module()` correctly classifies all module idents
+      Verified: (ident & 0x100) != 0 correctly separates sensors (0x10-0x70)
+      from actuators (0x100-0x120). profinet_manager.c:157.
+- [x] Input/output sizes match GSDML data lengths (5 bytes sensor, 4 bytes actuator)
+      Verified: GSDML_SENSOR_INPUT_SIZE=5 (Float32+quality), GSDML_ACTUATOR_OUTPUT_SIZE=4
+      (cmd+duty+reserved*2). load_modules_from_db() at profinet_manager.c:392-398.
 
 ### For HTTP endpoints
 
@@ -467,6 +482,19 @@ the cyclic handler writes/reads.
 - [x] Returns HTTP 503 when database unavailable
 - [x] Direction derived from `(module_ident & 0x100) != 0`
 - [x] `GET /api/v1/gsdml` returns raw XML with `Content-Type: application/xml`
-- [ ] `GET /api/v1/gsdml` returns HTTP 404 when GSDML file missing
-- [ ] GSDML file exists at `/opt/water-treat/gsd/` (installed) or `gsd/` (dev)
-- [ ] Port matches controller's expected RTU health port (9081)
+- [x] `GET /api/v1/gsdml` returns HTTP 404 when GSDML file missing
+      Verified: serve_gsdml_file() at health_check.c:660 sends 404 JSON if fopen fails.
+- [x] GSDML file exists at `/opt/water-treat/gsd/` (installed) or `gsd/` (dev)
+      Verified: gsd/ directory in source tree, bootstrap.sh copies to INSTALL_DIR.
+- [x] Port matches controller's expected RTU health port (9081)
+      Verified: config_defaults.h:27 WT_HTTP_PORT_DEFAULT=9081. Consistent across
+      bootstrap.sh:947, etc/water-treat.conf.example:48, etc/water-treat.env:23.
+
+### GSDML consistency
+
+- [x] VSM_Port1 SubmoduleIdentNumber fixed: was 0x00008000 (subslot number),
+      changed to 0x00000200 (matching PortSubmoduleItem ident).
+- [x] All 10 module types in GSDML match gsdml_modules.h constants
+- [x] PhysicalSlots="0..246", MinDeviceInterval="32" verified
+- [x] Record indices 0xF840-0xF845 implemented in profinet_callbacks.c
+      (0xF844 planned for slot map read, not yet needed)
