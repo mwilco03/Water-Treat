@@ -27,6 +27,14 @@ extern led_status_manager_t g_led_mgr;
 
 #ifdef HAVE_PNET
 #include <pnet_api.h>
+#include "gsdml_modules.h"
+
+/* Static buffer for 0xF844 slot map record read response.
+ * Must persist until controller completes the read, so it's static.
+ * Max: 2-byte header + 246 slots * 15 bytes each = 3692 bytes */
+#define SLOT_MAP_RECORD_MAX_SIZE (2 + 246 * 15)
+static uint8_t g_slot_map_buffer[SLOT_MAP_RECORD_MAX_SIZE];
+static uint16_t g_slot_map_length = 0;
 
 /* I&M0 (Identification & Maintenance) data - mandatory for PROFINET compliance */
 #pragma pack(push, 1)
@@ -290,14 +298,39 @@ int profinet_read_callback(pnet_t *net, void *arg,
         case 0x8002:  // Identification & Maintenance 2 (optional - date)
         case 0x8003:  // Identification & Maintenance 3 (optional - descriptor)
         case 0x8004:  // Identification & Maintenance 4 (optional - signature)
-            // Optional I&M records not implemented
-            LOG_DEBUG("I&M%d read: not implemented", idx - 0x8000);
+            LOG_DEBUG("I&M%d read: optional, not supported", idx - 0x8000);
             *data = NULL;
             *length = 0;
             break;
 
+        case 0xF844: {
+            /*
+             * Slot map record read - PROFINET fallback for slot discovery.
+             * Step 5 in the controller's discovery chain (used when HTTP
+             * endpoints are unreachable on isolated L2 networks).
+             *
+             * Wire format: 2-byte count + 15 bytes per slot (all BE).
+             * See profinet_manager_build_slot_map() for format details.
+             */
+            int ret = profinet_manager_build_slot_map(
+                g_slot_map_buffer, sizeof(g_slot_map_buffer));
+            if (ret > 0) {
+                g_slot_map_length = (uint16_t)ret;
+                *data = g_slot_map_buffer;
+                *length = g_slot_map_length;
+                LOG_INFO("Slot map read (0xF844): providing %u bytes", *length);
+            } else {
+                /* No application modules or error - return empty response */
+                g_slot_map_length = 0;
+                *data = NULL;
+                *length = 0;
+                LOG_INFO("Slot map read (0xF844): no application modules");
+            }
+            break;
+        }
+
         default:
-            // Application-specific read
+            LOG_DEBUG("Unhandled read index 0x%04X on slot %u.%u", idx, slot, subslot);
             *data = NULL;
             *length = 0;
             break;
@@ -427,13 +460,20 @@ int profinet_write_callback(pnet_t *net, void *arg,
             return 0;
 
         default:
-            break;
-    }
-
-    /* Handle standard parameterization data */
-    if (idx <= 0x7FFF) {
-        LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
-                 slot, subslot, idx, write_length);
+            /* Standard parameterization data (0x0000-0x7FFF) is accepted */
+            if (idx <= 0x7FFF) {
+                LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
+                         slot, subslot, idx, write_length);
+                return 0;
+            }
+            /* Unknown vendor-specific index — reject with error */
+            LOG_WARNING("Unknown write index 0x%04X on slot %u.%u, rejecting",
+                        idx, slot, subslot);
+            if (result) {
+                result->pnio_status.error_code = 0xDE;   /* IODWriteRes */
+                result->pnio_status.error_code_1 = 0x80; /* Application write error */
+            }
+            return -1;
     }
 
     return 0;
@@ -632,6 +672,20 @@ int profinet_write_callback(void *net, void *arg, uint32_t arep, uint32_t api,
     if (idx == USER_SYNC_PROFINET_INDEX && data && len > 0) {
         LOG_INFO("User sync packet received (stub mode): %u bytes", len);
         user_sync_process_packet(data, len);
+    }
+
+    /* Handle config sync in stub mode (for testing) */
+    if (idx == RTU_CONFIG_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("Device config received (stub mode): %u bytes", len);
+        config_sync_process_device(data, len);
+    }
+    if (idx == RTU_SENSOR_CONFIG_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("Sensor config received (stub mode): %u bytes", len);
+        config_sync_process_sensors(data, len);
+    }
+    if (idx == RTU_ACTUATOR_CONFIG_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("Actuator config received (stub mode): %u bytes", len);
+        config_sync_process_actuators(data, len);
     }
 
     /* Handle enrollment in stub mode (for testing) */

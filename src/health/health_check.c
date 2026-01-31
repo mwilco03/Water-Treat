@@ -29,6 +29,7 @@ static int config_to_json(char *buffer, size_t buffer_size);
 #include <arpa/inet.h>
 #include <sys/sysinfo.h>
 #include <fcntl.h>
+#include <errno.h>
 
 /* ============================================================================
  * Module State
@@ -621,14 +622,33 @@ static int slots_to_json(char *buffer, size_t buffer_size) {
         return -1;
     }
 
-    int pos = snprintf(buffer, buffer_size,
-        "{\"slot_count\": %d, \"slots\": [", count);
+    /*
+     * Build JSON in two passes:
+     * 1. Write slot entries into the array portion
+     * 2. Prepend the header with the actual number of entries emitted
+     *
+     * This ensures slot_count always matches the array length, even if
+     * the buffer is too small to hold all entries.
+     */
+    int emitted = 0;
 
-    for (int i = 0; i < count && (size_t)pos < buffer_size - 128; i++) {
+    /* Reserve space for the header — write a placeholder, fill in later */
+    int header_len = snprintf(buffer, buffer_size,
+        "{\"slot_count\": %d, \"slots\": [", count);
+    int pos = header_len;
+
+    for (int i = 0; i < count; i++) {
         /* Actuator modules have bit 8 set (0x100 range) per gsdml_modules.h */
         bool is_actuator = (modules[i].module_ident & 0x00000100) != 0;
 
-        if (i > 0) {
+        /* Pre-check: need at least ~140 bytes for one entry + closing ]} */
+        if ((size_t)pos >= buffer_size - 160) {
+            LOG_WARNING("Slot JSON truncated: buffer full at %d of %d entries",
+                        emitted, count);
+            break;
+        }
+
+        if (emitted > 0) {
             pos += snprintf(buffer + pos, buffer_size - pos, ", ");
         }
 
@@ -641,9 +661,26 @@ static int slots_to_json(char *buffer, size_t buffer_size) {
             (unsigned)modules[i].submodule_ident,
             is_actuator ? "output" : "input",
             is_actuator ? GSDML_ACTUATOR_OUTPUT_SIZE : GSDML_SENSOR_INPUT_SIZE);
+
+        emitted++;
     }
 
     pos += snprintf(buffer + pos, buffer_size - pos, "]}");
+
+    /* If truncation occurred, rewrite the header with actual emitted count */
+    if (emitted != count) {
+        char new_header[64];
+        int new_header_len = snprintf(new_header, sizeof(new_header),
+            "{\"slot_count\": %d, \"slots\": [", emitted);
+        /* Only patch if the new header is same length or shorter (padding with spaces) */
+        if (new_header_len <= header_len) {
+            memcpy(buffer, new_header, new_header_len);
+            /* Pad any difference with spaces (valid in JSON) */
+            for (int j = new_header_len; j < header_len; j++) {
+                buffer[j] = ' ';
+            }
+        }
+    }
 
     free(modules);
     return pos;
@@ -700,11 +737,22 @@ static void serve_gsdml_file(int client_fd) {
         "\r\n", file_size);
     send(client_fd, header, header_len, 0);
 
-    /* Stream file contents in chunks */
+    /* Stream file contents in chunks with partial-send handling */
     char chunk[4096];
     size_t n;
     while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
-        send(client_fd, chunk, n, 0);
+        size_t sent = 0;
+        while (sent < n) {
+            ssize_t ret = send(client_fd, chunk + sent, n - sent, MSG_NOSIGNAL);
+            if (ret <= 0) {
+                LOG_WARNING("GSDML send failed at offset %ld: %s",
+                            ftell(fp), (ret == 0) ? "connection closed" : strerror(errno));
+                fclose(fp);
+                close(client_fd);
+                return;
+            }
+            sent += (size_t)ret;
+        }
     }
 
     fclose(fp);

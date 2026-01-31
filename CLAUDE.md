@@ -160,7 +160,7 @@ the HTTP transport is non-standard), and once cached it becomes step 1.
 | 0xF841 | W | Device config | Implemented |
 | 0xF842 | W | Sensor config | Implemented |
 | 0xF843 | W | Actuator config | Implemented |
-| 0xF844 | R | Slot map (PROFINET fallback) | Planned |
+| 0xF844 | R | Slot map (PROFINET fallback) | Implemented |
 | 0xF845 | W | Enrollment/binding | Implemented |
 
 New record indices must be added to both `config_sync.h` and `profinet_callbacks.c` read/write handlers.

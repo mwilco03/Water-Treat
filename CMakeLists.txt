@@ -401,10 +401,11 @@ if(BUILD_TESTS)
         tests/test_config.c
     )
 
-    # Tests that need formula evaluator
+    # Tests that need formula evaluator + logger dependency stubs
     set(TEST_DEPS
         src/sensors/formula_evaluator.c
         src/utils/logger.c
+        tests/test_stubs.c
     )
 
     add_executable(run_tests ${TEST_SOURCES} ${TEST_DEPS})

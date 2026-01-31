@@ -496,5 +496,6 @@ the cyclic handler writes/reads.
       changed to 0x00000200 (matching PortSubmoduleItem ident).
 - [x] All 10 module types in GSDML match gsdml_modules.h constants
 - [x] PhysicalSlots="0..246", MinDeviceInterval="32" verified
-- [x] Record indices 0xF840-0xF845 implemented in profinet_callbacks.c
-      (0xF844 planned for slot map read, not yet needed)
+- [x] Record indices 0xF840-0xF845 all implemented in profinet_callbacks.c
+      (0xF844 slot map read implemented: profinet_manager_build_slot_map()
+      returns BE-packed binary with 2-byte count + 15 bytes per slot)

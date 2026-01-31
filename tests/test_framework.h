@@ -10,13 +10,13 @@
 #include <string.h>
 #include <math.h>
 
-/* Test counters */
-static int g_tests_run = 0;
-static int g_tests_passed = 0;
-static int g_tests_failed = 0;
+/* Test counters (static per TU — each test file has its own copy) */
+static int g_tests_run __attribute__((unused)) = 0;
+static int g_tests_passed __attribute__((unused)) = 0;
+static int g_tests_failed __attribute__((unused)) = 0;
 
 /* Current test name for error reporting */
-static const char *g_current_test = NULL;
+static const char *g_current_test __attribute__((unused)) = NULL;
 
 #define TEST_EPSILON 0.0001f
 

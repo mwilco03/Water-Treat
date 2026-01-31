@@ -128,6 +128,28 @@ bool profinet_manager_is_disabled_by_config(void);
  */
 bool profinet_manager_init_attempted(void);
 
+/**
+ * @brief Build binary slot map for PROFINET Record Read 0xF844
+ *
+ * Serializes current slot configuration into big-endian packed binary
+ * for the controller's PROFINET-only fallback discovery (step 5).
+ *
+ * Wire format (all multi-byte fields big-endian):
+ *   Bytes 0-1:  uint16_t slot_count (application slots, excludes DAP)
+ *   Per slot (15 bytes each):
+ *     uint16_t slot_number
+ *     uint16_t subslot_number
+ *     uint32_t module_ident
+ *     uint32_t submodule_ident
+ *     uint8_t  direction (1=input, 2=output)
+ *     uint16_t data_size (5 for sensors, 4 for actuators)
+ *
+ * @param buffer      Output buffer (min 2 + slot_count * 15 bytes)
+ * @param buffer_size Buffer capacity
+ * @return Bytes written on success, 0 if no slots configured, -1 on error
+ */
+int profinet_manager_build_slot_map(uint8_t *buffer, size_t buffer_size);
+
 // Internal callbacks used by profinet_callbacks.c
 void profinet_manager_set_connected(bool connected, uint32_t arep);
 void profinet_manager_handle_output_data(int slot, int subslot, const uint8_t *data, size_t len);
