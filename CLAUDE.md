@@ -90,6 +90,67 @@ The PROFINET controller uses the station name for **DCP (Discovery and Configura
 - Controller unable to establish AR (Application Relationship)
 - Connection timeout
 
+## RTU HTTP API Contract
+
+The RTU exposes an HTTP API on port **9081** (configurable via `[health] http_port`). The controller queries these endpoints for slot discovery before issuing a PROFINET Connect.
+
+**Code Location:** `src/health/health_check.c` -- HTTP server and route handler.
+
+### Slot Discovery Endpoints
+
+| Endpoint | Method | Content-Type | Purpose |
+|----------|--------|-------------|---------|
+| `/api/v1/slots` | GET | `application/json` | Current PROFINET slot configuration |
+| `/api/v1/gsdml` | GET | `application/xml` | Raw GSDML XML file |
+
+These endpoints are the **authoritative source** of the RTU's module layout. The controller MUST query `/api/v1/slots` before building its `ExpectedSubmoduleBlockReq`.
+
+### `/api/v1/slots` Response Format
+
+```json
+{
+  "station_name": "rtu-4b64",
+  "vendor_id": "0x0493",
+  "device_id": "0x0001",
+  "gsdml_version": "V2.4",
+  "slot_count": 2,
+  "slots": [
+    {
+      "slot": 0, "subslot": 1,
+      "module_ident": "0x00000001", "submodule_ident": "0x00000001",
+      "type": "DAP", "direction": "none",
+      "input_size": 0, "output_size": 0
+    }
+  ]
+}
+```
+
+Returns **503** if PROFINET stack is still initializing. Controller should retry.
+
+### Implementation Rules
+
+1. `/api/v1/slots` must NOT be served until `profinet_manager_start()` completes (return 503 before)
+2. Slot data is read-only via `profinet_manager_get_slots()` accessor
+3. DAP (slot 0) is always present in the response
+4. Module ident values must match the GSDML (`include/gsdml_modules.h`)
+5. `/api/v1/gsdml` serves the file from `gsd/` directory
+
+### PROFINET Record Index Allocation
+
+| Index | Dir | Purpose | Status |
+|-------|-----|---------|--------|
+| 0x8000 | R | I&M0 | Implemented |
+| 0xF840 | W | User sync | Implemented |
+| 0xF841 | W | Device config | Implemented |
+| 0xF842 | W | Sensor config | Implemented |
+| 0xF843 | W | Actuator config | Implemented |
+| 0xF844 | R | Slot map (PROFINET fallback) | Planned |
+| 0xF845 | W | Enrollment/binding | Implemented |
+
+New record indices must be added to both `config_sync.h` and `profinet_callbacks.c` read/write handlers.
+
+See `docs/CONTROLLER_IMPLEMENTATION_GUIDE.md` for full controller integration spec.
+
 ## Build Requirements
 
 - C11 standard
