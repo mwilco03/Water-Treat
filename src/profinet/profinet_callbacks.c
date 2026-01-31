@@ -15,10 +15,19 @@
 #include "rtu_registration.h"
 #include "config_sync.h"
 #include "auth/user_sync.h"
+#include "config/config.h"
 #include "utils/logger.h"
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <errno.h>
+
+/* Global config from main.c — needed for factory reset backup paths */
+extern config_manager_t g_config_mgr;
+extern app_config_t g_app_config;
 
 #ifdef LED_SUPPORT
 #include "hal/led_status.h"
@@ -564,6 +573,120 @@ int profinet_alarm_ack_cnf_callback(pnet_t *net, void *arg,
  * System Callbacks
  * ========================================================================== */
 
+#define BACKUP_DIR "/var/backup/water-treat"
+
+/**
+ * @brief Copy a file to a destination path.
+ * @return true on success, false on failure (logged).
+ */
+static bool backup_copy_file(const char *src, const char *dst) {
+    FILE *src_fp = fopen(src, "rb");
+    if (!src_fp) {
+        LOG_ERROR("Backup: cannot open source %s: %s", src, strerror(errno));
+        return false;
+    }
+
+    FILE *dst_fp = fopen(dst, "wb");
+    if (!dst_fp) {
+        LOG_ERROR("Backup: cannot create %s: %s", dst, strerror(errno));
+        fclose(src_fp);
+        return false;
+    }
+
+    char buf[8192];
+    size_t n;
+    bool ok = true;
+
+    while ((n = fread(buf, 1, sizeof(buf), src_fp)) > 0) {
+        if (fwrite(buf, 1, n, dst_fp) != n) {
+            LOG_ERROR("Backup: write failed to %s: %s", dst, strerror(errno));
+            ok = false;
+            break;
+        }
+    }
+
+    fclose(src_fp);
+    fclose(dst_fp);
+    return ok;
+}
+
+/**
+ * @brief Factory reset with backup (PROFINET reset mode 2).
+ *
+ * 1. Back up config file and database to /var/backup/water-treat/
+ * 2. Delete originals (will regenerate defaults on restart)
+ * 3. Clear p-net NV state
+ * 4. SIGTERM to trigger clean shutdown (systemd restarts the service)
+ */
+static void factory_reset_with_backup(void) {
+    /* Create backup directory */
+    mkdir("/var/backup", 0755);
+    mkdir(BACKUP_DIR, 0755);
+
+    /* Timestamp for backup filenames */
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char ts[20];
+    snprintf(ts, sizeof(ts), "%04d%02d%02d_%02d%02d%02d",
+             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+             tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+    bool backup_ok = true;
+
+    /* Backup config file */
+    const char *config_path = g_config_mgr.config_path;
+    if (config_path[0] && access(config_path, R_OK) == 0) {
+        char dst[MAX_PATH_LEN];
+        snprintf(dst, sizeof(dst), "%s/config_%s.conf", BACKUP_DIR, ts);
+        if (backup_copy_file(config_path, dst)) {
+            LOG_INFO("Factory reset: config backed up to %s", dst);
+        } else {
+            backup_ok = false;
+        }
+    }
+
+    /* Backup database */
+    const char *db_path = g_app_config.database.path;
+    if (db_path[0] && access(db_path, R_OK) == 0) {
+        char dst[MAX_PATH_LEN];
+        snprintf(dst, sizeof(dst), "%s/database_%s.db", BACKUP_DIR, ts);
+        if (backup_copy_file(db_path, dst)) {
+            LOG_INFO("Factory reset: database backed up to %s", dst);
+        } else {
+            backup_ok = false;
+        }
+    }
+
+    if (!backup_ok) {
+        LOG_ERROR("Factory reset: backup incomplete — aborting reset to protect data");
+        return;
+    }
+
+    /* Delete originals so application regenerates defaults on restart */
+    if (config_path[0] && access(config_path, F_OK) == 0) {
+        if (remove(config_path) == 0) {
+            LOG_INFO("Factory reset: removed %s", config_path);
+        } else {
+            LOG_ERROR("Factory reset: failed to remove %s: %s",
+                      config_path, strerror(errno));
+        }
+    }
+
+    if (db_path[0] && access(db_path, F_OK) == 0) {
+        if (remove(db_path) == 0) {
+            LOG_INFO("Factory reset: removed %s", db_path);
+        } else {
+            LOG_ERROR("Factory reset: failed to remove %s: %s",
+                      db_path, strerror(errno));
+        }
+    }
+
+    LOG_WARNING("Factory reset with backup complete — restarting application");
+
+    /* SIGTERM triggers clean shutdown; systemd restarts the service */
+    kill(getpid(), SIGTERM);
+}
+
 int profinet_reset_callback(pnet_t *net, void *arg,
                             bool should_reset_application,
                             uint16_t reset_mode) {
@@ -588,9 +711,11 @@ int profinet_reset_callback(pnet_t *net, void *arg,
                 break;
 
             case 2:
-                /* Reset mode 2: Reset to factory with backup (not implemented) */
-                LOG_WARNING("Factory reset with backup not implemented, performing soft reset");
-                kill(getpid(), SIGHUP);
+                /* Reset mode 2: Factory reset with backup
+                 * Backs up config + database, then deletes originals so
+                 * application regenerates defaults on systemd restart. */
+                LOG_WARNING("Factory reset with backup requested");
+                factory_reset_with_backup();
                 break;
 
             default:

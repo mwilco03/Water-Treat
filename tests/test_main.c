@@ -6,6 +6,12 @@
 #include <stdio.h>
 #include "test_framework.h"
 
+/* Test counter definitions (declared extern in test_framework.h) */
+int g_tests_run = 0;
+int g_tests_passed = 0;
+int g_tests_failed = 0;
+const char *g_current_test = NULL;
+
 /* External test suite runners */
 extern void run_formula_tests(void);
 extern void run_calibration_tests(void);
