@@ -103,37 +103,50 @@ The RTU exposes an HTTP API on port **9081** (configurable via `[health] http_po
 | `/api/v1/slots` | GET | `application/json` | Current PROFINET slot configuration |
 | `/api/v1/gsdml` | GET | `application/xml` | Raw GSDML XML file |
 
-These endpoints are the **authoritative source** of the RTU's module layout. The controller MUST query `/api/v1/slots` before building its `ExpectedSubmoduleBlockReq`.
+These endpoints answer: "what application modules are plugged in slots 1-246?" DAP (slot 0) is NOT included -- its configuration is fixed and defined in the GSDML.
 
 ### `/api/v1/slots` Response Format
 
 ```json
 {
-  "station_name": "rtu-4b64",
-  "vendor_id": "0x0493",
-  "device_id": "0x0001",
-  "gsdml_version": "V2.4",
-  "slot_count": 2,
+  "slot_count": 1,
   "slots": [
     {
-      "slot": 0, "subslot": 1,
-      "module_ident": "0x00000001", "submodule_ident": "0x00000001",
-      "type": "DAP", "direction": "none",
-      "input_size": 0, "output_size": 0
+      "slot": 1, "subslot": 1,
+      "module_ident": 64, "submodule_ident": 65,
+      "direction": "input", "data_size": 5
     }
   ]
 }
 ```
 
-Returns **503** if PROFINET stack is still initializing. Controller should retry.
+Field details:
+- `slot_count`: number of application modules (excludes DAP)
+- `module_ident`, `submodule_ident`: integers (e.g., 64 = 0x40 = Temperature). Hex is for docs only.
+- `direction`: `"input"` (sensor) or `"output"` (actuator)
+- `data_size`: `input_size` for sensors (5), `output_size` for actuators (4)
+- No device-level metadata (`vendor_id`, `gsdml_version`) -- that belongs in `/config`
+- No `module_type` or `name` -- controller derives type from ident
+
+Returns **200** with empty `"slots": []` if no modules configured.
+Returns **503** if PROFINET subsystem is unavailable.
 
 ### Implementation Rules
 
-1. `/api/v1/slots` must NOT be served until `profinet_manager_start()` completes (return 503 before)
-2. Slot data is read-only via `profinet_manager_get_slots()` accessor
-3. DAP (slot 0) is always present in the response
-4. Module ident values must match the GSDML (`include/gsdml_modules.h`)
-5. `/api/v1/gsdml` serves the file from `gsd/` directory
+1. Data source: `db_module_list()` (database), NOT p-net runtime state. Available before `pnet_init()`.
+2. DAP is NOT included. GSDML is the single source of truth for DAP.
+3. Module ident values are integers matching the GSDML (`include/gsdml_modules.h`)
+4. `/api/v1/gsdml` serves the file from `gsd/` directory
+5. Six fields per slot only: `slot`, `subslot`, `module_ident`, `submodule_ident`, `direction`, `data_size`
+
+### Controller Discovery Priority
+
+The `/api/v1/slots` endpoint is **fallback #3** in the controller's discovery chain:
+
+1. Parse GSDML file (standard, offline)
+2. Cached config from previous successful connection
+3. `GET /api/v1/slots` (this endpoint -- non-standard)
+4. DAP-only connect + Record Read 0xF844 (standard PROFINET)
 
 ### PROFINET Record Index Allocation
 

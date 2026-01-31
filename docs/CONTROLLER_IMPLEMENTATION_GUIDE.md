@@ -19,6 +19,19 @@ Establish a PROFINET IO connection to an RTU whose slot configuration is **dynam
 - MinDeviceInterval: 32 (1ms at 31.25us base)
 - API number: 0 (always)
 
+## Discovery Priority (Slot Configuration)
+
+You must discover the RTU's application modules before building a Connect Request. Try these sources in order. Use the first one that succeeds.
+
+```
+1. GSDML file      -- parse locally if you have the file (standard PROFINET)
+2. Cached config   -- from a previous successful connection to this station_name
+3. HTTP query      -- GET http://{rtu_ip}:9081/api/v1/slots (non-standard fallback)
+4. DAP-only + Read -- PROFINET Record Read 0xF844 after DAP-only connect
+```
+
+**DAP (slot 0) is always known.** It is defined in the GSDML. You never need to discover it. All discovery methods return only application modules (slots 1-246).
+
 ## Connection State Machine
 
 Implement this exact state machine. Every transition is described.
@@ -27,34 +40,27 @@ Implement this exact state machine. Every transition is described.
 [IDLE]
   |
   v
-[DCP_DISCOVERY] ----> send DCP Identify multicast
+[DCP_DISCOVERY] ----------> send DCP Identify multicast
   |
   | DCP Identify Response received (got RTU IP + station_name)
   v
-[HTTP_QUERY] -------> GET http://{rtu_ip}:9081/api/v1/slots
-  |                         |
-  | 200 OK (got slots JSON) | Connection refused / timeout / 503
-  v                         v
-[BUILD_CONNECT]       [DAP_FALLBACK] ---> Connect with DAP-only
-  |                         |
-  |                         | Connect OK
-  |                         v
-  |                   [RECORD_READ] ---> Read index 0xF844
-  |                         |
-  |                         | Got slot map
-  |                         v
-  |                   [RELEASE] ------> Release DAP-only AR
-  |                         |
-  |                         | Release confirmed, wait 2 seconds
-  |                         v
-  |                   [BUILD_CONNECT] (now with correct slots)
-  |                         |
-  v                         v
-[CONNECT] -----------> Send PROFINET Connect Request
+[RESOLVE_SLOTS] ----------> try sources 1-4 in order:
+  |                           1. local GSDML parse
+  |                           2. cached config for this station_name
+  |                           3. HTTP GET /api/v1/slots
+  |                           4. DAP-only connect + Record Read 0xF844
+  |
+  | Got application slot list (may be empty)
+  v
+[BUILD_CONNECT] ----------> construct Connect Request from:
+  |                           - DAP (always, from GSDML)
+  |                           - application slots (from discovery)
+  v
+[CONNECT] -----------------> Send PROFINET Connect Request
   |
   | Connect Response received
   v
-[PARSE_RESPONSE] ----> Check for errors and ModuleDiffBlock
+[PARSE_RESPONSE] ----------> Check for errors and ModuleDiffBlock
   |                         |
   | No errors               | ModuleDiffBlock present
   v                         v
@@ -78,9 +84,19 @@ Proceed to Step 2.
 
 ---
 
-## Step 2: HTTP Slot Query (Primary Path)
+## Step 2: Slot Discovery
 
-### Request
+Try each source in order. Use the first one that returns a valid slot list.
+
+### Source 1: Local GSDML Parse (Standard)
+
+If you have the GSDML file (`GSDML-V2.4-WaterTreat-RTU-20241222.xml`), parse the `UseableModules` section (lines 78-92) to know what module types exist. However, the GSDML defines the **menu of possible types**, not which slots are populated. For a fresh/unconfigured RTU, use this combined with cached knowledge or skip to source 3.
+
+### Source 2: Cached Config
+
+If you have previously connected to this `station_name` and stored its slot configuration, use that. This avoids any network round-trip.
+
+### Source 3: HTTP Query (Fallback)
 
 ```
 GET /api/v1/slots HTTP/1.1
@@ -88,58 +104,56 @@ Host: {rtu_ip}:9081
 Accept: application/json
 ```
 
-### Success Response (HTTP 200)
+**Success Response (HTTP 200):**
 
 ```json
 {
-  "station_name": "rtu-4b64",
-  "vendor_id": "0x0493",
-  "device_id": "0x0001",
-  "gsdml_version": "V2.4",
   "slot_count": 2,
   "slots": [
     {
-      "slot": 0,
-      "subslot": 1,
-      "module_ident": "0x00000001",
-      "submodule_ident": "0x00000001",
-      "type": "DAP",
-      "direction": "none",
-      "input_size": 0,
-      "output_size": 0
-    },
-    {
       "slot": 1,
       "subslot": 1,
-      "module_ident": "0x00000040",
-      "submodule_ident": "0x00000041",
-      "type": "Temperature",
+      "module_ident": 16,
+      "submodule_ident": 17,
       "direction": "input",
-      "input_size": 5,
-      "output_size": 0
+      "data_size": 5
+    },
+    {
+      "slot": 2,
+      "subslot": 1,
+      "module_ident": 256,
+      "submodule_ident": 257,
+      "direction": "output",
+      "data_size": 4
     }
   ]
 }
 ```
 
 **Parse rules:**
-- `slot_count` is the total count including DAP (slot 0)
+- `slot_count` is the number of application modules. DAP is NOT included.
 - `slots` array is ordered by slot number
-- Slot 0 is always DAP, always present
-- `module_ident` and `submodule_ident` are hex strings -- parse to uint32
-- `direction` is one of: `"none"`, `"input"`, `"output"`
-- `input_size` is how many bytes the RTU sends to you per cycle (sensor data)
-- `output_size` is how many bytes you send to the RTU per cycle (actuator commands)
+- `module_ident` and `submodule_ident` are **integers** (not hex strings). 16 = 0x10 = pH, 64 = 0x40 = Temperature, 256 = 0x100 = Pump, etc.
+- `direction` is `"input"` (sensor) or `"output"` (actuator)
+- `data_size` is the IO data length: 5 for sensors (Float32 BE + Quality), 4 for actuators (Cmd + Duty + Reserved*2)
+- No device-level metadata. Get `vendor_id`, `station_name`, etc. from DCP or `/config`.
+- Six fields per slot only. No `type`, `name`, or `module_type` strings. Derive type from `module_ident`.
 
-### Error Handling
+**Mapping `data_size` to IOCR construction:**
+- If `direction == "input"`: `input_size = data_size`, `output_size = 0`
+- If `direction == "output"`: `input_size = 0`, `output_size = data_size`
+
+**Error Handling:**
 
 | HTTP Status | Meaning | Action |
 |-------------|---------|--------|
 | 200 | Success | Parse JSON, go to Step 3 |
-| 503 | RTU PROFINET stack still starting | Wait 2 seconds, retry up to 5 times |
-| Connection refused | HTTP server not running | Go to Step 2B (DAP fallback) |
-| Timeout (>5s) | Network issue | Go to Step 2B (DAP fallback) |
-| Any other error | Unexpected | Go to Step 2B (DAP fallback) |
+| 200 + empty slots | No modules configured | Only DAP connect (valid for Phase 1 testing) |
+| 503 | PROFINET subsystem unavailable | Wait 2 seconds, retry up to 5 times, then try source 4 |
+| Connection refused | HTTP server not running | Try source 4 (DAP fallback) |
+| Timeout (>5s) | Network issue | Try source 4 (DAP fallback) |
+
+**Data source note:** This endpoint reads from the RTU's SQLite database (`db_module_list()`), not from p-net runtime state. It returns the configured intent, available even before `pnet_init()` completes.
 
 ### GSDML Fetch (Do Once, Cache)
 
@@ -149,15 +163,15 @@ Host: {rtu_ip}:9081
 Accept: application/xml
 ```
 
-Response is the raw GSDML XML file (~32KB, Content-Type: application/xml). Cache it keyed by `station_name`. Only refetch on firmware version change. This file defines the **menu** of possible module types. The `/api/v1/slots` response tells you which ones are actually plugged right now.
+Response is the raw GSDML XML file (~32KB, Content-Type: application/xml). Cache it keyed by `station_name`. Only refetch on firmware version change. This file defines the **menu** of possible module types.
 
 ---
 
-## Step 2B: DAP-Only Fallback (When HTTP Fails)
+### Source 4: DAP-Only Fallback (When HTTP Fails)
 
 If HTTP is unreachable, discover slots through PROFINET itself.
 
-### 2B.1: Connect with DAP Only
+### 4.1: Connect with DAP Only
 
 Build a Connect Request containing ONLY the DAP at slot 0. The RTU always has DAP plugged so this will succeed (once the DREP encoding issue is fixed -- see Known Issues at the end).
 
@@ -181,7 +195,7 @@ API: 0
 
 No application data flows in a DAP-only AR.
 
-### 2B.2: Record Read Index 0xF844
+### 4.2: Record Read Index 0xF844
 
 After the DAP-only AR is established, issue an acyclic Record Read:
 
@@ -218,13 +232,13 @@ Hex: 00 01 00 01 00 01 00 00 00 40 00 00 00 41 01 00 05
                                                   ^^^^^ size=5
 ```
 
-### 2B.3: Release the DAP-Only AR
+### 4.3: Release the DAP-Only AR
 
 Send a Release Request to cleanly tear down the AR.
 
 **CRITICAL: Wait 2 seconds after Release before attempting the second Connect.** p-net v0.2.0's AR state machine needs time to fully reset. Without this delay, the second Connect may be silently dropped.
 
-### 2B.4: Continue to Step 3
+### 4.4: Continue to Step 3
 
 You now have the slot data. Build the full Connect Request as described in Step 3.
 
@@ -232,7 +246,7 @@ You now have the slot data. Build the full Connect Request as described in Step 
 
 ## Step 3: Build the Connect Request
 
-You now have the RTU's slot configuration from either HTTP (Step 2) or Record Read (Step 2B). Build the PROFINET Connect Request.
+You now have the RTU's application slot list from one of the four discovery sources. DAP (slot 0) is always included from your GSDML knowledge -- it is never part of the discovery response. Build the PROFINET Connect Request.
 
 ### ARBlockReq
 
@@ -265,7 +279,7 @@ For each slot where direction == "input" (ordered by slot number):
         subslot:     slot.subslot,
         frame_offset: frame_offset
     })
-    frame_offset += slot.input_size    # sensor data bytes
+    frame_offset += slot.data_size     # sensor data bytes (5 for all sensors)
     frame_offset += 1                  # IOPS byte (RTU's provider status)
 
 For each slot where direction == "output" (ordered by slot number):
@@ -295,7 +309,7 @@ For each slot where direction == "output" (ordered by slot number):
         subslot:     slot.subslot,
         frame_offset: frame_offset
     })
-    frame_offset += slot.output_size   # actuator command bytes
+    frame_offset += slot.data_size     # actuator command bytes (4 for all actuators)
     frame_offset += 1                  # IOPS byte (your provider status)
 
 For each slot where direction == "input" (ordered by slot number):
@@ -311,7 +325,7 @@ output_cr_data_length = frame_offset
 
 ### ExpectedSubmoduleBlockReq
 
-One block listing ALL modules the RTU reported. This MUST match exactly what the RTU has plugged.
+One block listing ALL modules. DAP comes from the GSDML (always the same). Application slots come from your discovery result. This MUST match exactly what the RTU has plugged.
 
 **Structure:**
 
@@ -319,7 +333,7 @@ One block listing ALL modules the RTU reported. This MUST match exactly what the
 NumberOfAPIs: 1
 API: 0
 
-  NumberOfSlots: {number of unique slot numbers from RTU response}
+  NumberOfSlots: 1 + {number of application slots from discovery}
 
   Slot 0 (DAP -- ALWAYS include this, every RTU has it):
     ModuleIdentNumber: 0x00000001
@@ -331,7 +345,7 @@ API: 0
       Subslot 0x8001: SubmoduleIdentNumber 0x00000200
         SubmoduleProperties: 0x0000 (no IO)
 
-  For each application slot (from slots array, slot > 0):
+  For each application slot (from discovery result):
     SlotNumber: {slot.slot}
     ModuleIdentNumber: {slot.module_ident}
     NumberOfSubmodules: 1
@@ -340,13 +354,13 @@ API: 0
         If direction == "input":
           SubmoduleProperties: 0x0001 (input only)
           InputDataDescription:
-            SubmoduleDataLength: {slot.input_size}
+            SubmoduleDataLength: {slot.data_size}
             LengthIOPS: 1
             LengthIOCS: 1
         If direction == "output":
           SubmoduleProperties: 0x0002 (output only)
           OutputDataDescription:
-            SubmoduleDataLength: {slot.output_size}
+            SubmoduleDataLength: {slot.data_size}
             LengthIOPS: 1
             LengthIOCS: 1
 ```
@@ -562,33 +576,40 @@ For each output slot:
 
 These are ALL the module types the RTU supports. The GSDML defines this complete set. Any application slot on the RTU will be one of these.
 
-### Sensor Modules (direction = "input", input_size = 5, output_size = 0)
+### Sensor Modules (direction = "input", data_size = 5)
 
-| type string in JSON | module_ident | submodule_ident | What it measures |
-|---------------------|-------------|-----------------|------------------|
-| `"pH"` | `0x00000010` | `0x00000011` | pH sensor, 0-14 scale |
-| `"TDS"` | `0x00000020` | `0x00000021` | Total dissolved solids, ppm |
-| `"Turbidity"` | `0x00000030` | `0x00000031` | Water turbidity, NTU |
-| `"Temperature"` | `0x00000040` | `0x00000041` | Temperature, degrees Celsius |
-| `"Flow"` | `0x00000050` | `0x00000051` | Flow rate, liters/minute |
-| `"Level"` | `0x00000060` | `0x00000061` | Tank level, percentage |
-| `"Generic Analog Input"` | `0x00000070` | `0x00000071` | Generic analog, raw float |
-
-Pattern: `submodule_ident` is always `module_ident + 1`.
-
-All sensor modules have identical wire format: 5 bytes (Float32 BE + Quality).
-
-### Actuator Modules (direction = "output", input_size = 0, output_size = 4)
-
-| type string in JSON | module_ident | submodule_ident | What it controls |
-|---------------------|-------------|-----------------|------------------|
-| `"Pump"` | `0x00000100` | `0x00000101` | Peristaltic pump, ON/OFF/PWM |
-| `"Valve"` | `0x00000110` | `0x00000111` | Solenoid valve, OPEN/CLOSE |
-| `"Generic Digital Output"` | `0x00000120` | `0x00000121` | Generic digital output |
+| module_ident (dec) | module_ident (hex) | submodule_ident | What it measures |
+|------|-------------|-----------------|------------------|
+| 16 | `0x00000010` | 17 | pH sensor, 0-14 scale |
+| 32 | `0x00000020` | 33 | Total dissolved solids, ppm |
+| 48 | `0x00000030` | 49 | Water turbidity, NTU |
+| 64 | `0x00000040` | 65 | Temperature, degrees Celsius |
+| 80 | `0x00000050` | 81 | Flow rate, liters/minute |
+| 96 | `0x00000060` | 97 | Tank level, percentage |
+| 112 | `0x00000070` | 113 | Generic analog, raw float |
 
 Pattern: `submodule_ident` is always `module_ident + 1`.
 
-All actuator modules have identical wire format: 4 bytes (Cmd + Duty + Reserved + Reserved).
+All sensor modules have identical wire format: 5 bytes (Float32 BE + Quality). `data_size` = 5.
+
+### Actuator Modules (direction = "output", data_size = 4)
+
+| module_ident (dec) | module_ident (hex) | submodule_ident | What it controls |
+|------|-------------|-----------------|------------------|
+| 256 | `0x00000100` | 257 | Peristaltic pump, ON/OFF/PWM |
+| 272 | `0x00000110` | 273 | Solenoid valve, OPEN/CLOSE |
+| 288 | `0x00000120` | 289 | Generic digital output |
+
+Pattern: `submodule_ident` is always `module_ident + 1`.
+
+All actuator modules have identical wire format: 4 bytes (Cmd + Duty + Reserved + Reserved). `data_size` = 4.
+
+### How to determine type from ident
+
+The JSON API does not return type strings. Derive the type from `module_ident`:
+- `module_ident < 256` → sensor (direction will be `"input"`)
+- `module_ident >= 256` → actuator (direction will be `"output"`)
+- Specific type within category: see hex table above
 
 ### DAP (always slot 0, always present, no IO data)
 
@@ -613,7 +634,7 @@ Once an AR is established, you can issue acyclic Record Read/Write to these vend
 | `0xF841` | Write | 0 | 1 | Device configuration | 52 bytes |
 | `0xF842` | Write | 0 | 1 | Sensor configuration | Variable (header + 42 bytes/sensor) |
 | `0xF843` | Write | 0 | 1 | Actuator configuration | Variable (header + 22 bytes/actuator) |
-| `0xF844` | Read | 0 | 1 | Slot map (binary, see Step 2B.2) | 2 + 15*N bytes |
+| `0xF844` | Read | 0 | 1 | Slot map (binary, see Source 4.2) | 2 + 15*N bytes |
 | `0xF845` | Write | 0 | 1 | Enrollment/binding | 80 bytes |
 
 ---
@@ -622,41 +643,31 @@ Once an AR is established, you can issue acyclic Record Read/Write to these vend
 
 This is what a fresh, unconfigured RTU looks like. It auto-creates one CPU temperature sensor at slot 1.
 
-### HTTP Response from /api/v1/slots
+### Discovery Result (from any source)
 
+From HTTP `/api/v1/slots`:
 ```json
 {
-  "station_name": "rtu-4b64",
-  "vendor_id": "0x0493",
-  "device_id": "0x0001",
-  "gsdml_version": "V2.4",
-  "slot_count": 2,
+  "slot_count": 1,
   "slots": [
-    {
-      "slot": 0, "subslot": 1,
-      "module_ident": "0x00000001", "submodule_ident": "0x00000001",
-      "type": "DAP", "direction": "none",
-      "input_size": 0, "output_size": 0
-    },
-    {
-      "slot": 1, "subslot": 1,
-      "module_ident": "0x00000040", "submodule_ident": "0x00000041",
-      "type": "Temperature", "direction": "input",
-      "input_size": 5, "output_size": 0
-    }
+    {"slot": 1, "subslot": 1, "module_ident": 64, "submodule_ident": 65, "direction": "input", "data_size": 5}
   ]
 }
 ```
 
+Note: `module_ident` 64 = 0x40 = Temperature sensor. DAP is not in the response.
+
 ### ExpectedSubmoduleBlockReq You Build
+
+DAP comes from GSDML knowledge (always the same). Slot 1 comes from discovery.
 
 ```
 API 0:
-  Slot 0, Module 0x00000001 (DAP):
+  Slot 0, Module 0x00000001 (DAP -- from GSDML, always include):
     Subslot 0x0001, Submod 0x00000001, NO_IO
     Subslot 0x8000, Submod 0x00000100, NO_IO
     Subslot 0x8001, Submod 0x00000200, NO_IO
-  Slot 1, Module 0x00000040 (Temperature):
+  Slot 1, Module 0x00000040 (Temperature -- from discovery):
     Subslot 0x0001, Submod 0x00000041, INPUT, DataLength=5, LengthIOPS=1, LengthIOCS=1
 ```
 
@@ -707,41 +718,35 @@ Hex: 80
 
 ## Worked Example: RTU With 2 Sensors + 1 Pump (Typical)
 
-### HTTP Response
+### Discovery Result
 
+From HTTP `/api/v1/slots`:
 ```json
 {
-  "station_name": "rtu-eeff",
-  "vendor_id": "0x0493",
-  "device_id": "0x0001",
-  "gsdml_version": "V2.4",
-  "slot_count": 4,
+  "slot_count": 3,
   "slots": [
-    {"slot": 0, "subslot": 1, "module_ident": "0x00000001", "submodule_ident": "0x00000001",
-     "type": "DAP", "direction": "none", "input_size": 0, "output_size": 0},
-    {"slot": 1, "subslot": 1, "module_ident": "0x00000010", "submodule_ident": "0x00000011",
-     "type": "pH", "direction": "input", "input_size": 5, "output_size": 0},
-    {"slot": 2, "subslot": 1, "module_ident": "0x00000040", "submodule_ident": "0x00000041",
-     "type": "Temperature", "direction": "input", "input_size": 5, "output_size": 0},
-    {"slot": 3, "subslot": 1, "module_ident": "0x00000100", "submodule_ident": "0x00000101",
-     "type": "Pump", "direction": "output", "input_size": 0, "output_size": 4}
+    {"slot": 1, "subslot": 1, "module_ident": 16,  "submodule_ident": 17,  "direction": "input",  "data_size": 5},
+    {"slot": 2, "subslot": 1, "module_ident": 64,  "submodule_ident": 65,  "direction": "input",  "data_size": 5},
+    {"slot": 3, "subslot": 1, "module_ident": 256, "submodule_ident": 257, "direction": "output", "data_size": 4}
   ]
 }
 ```
+
+Ident decoding: 16=0x10=pH, 64=0x40=Temperature, 256=0x100=Pump.
 
 ### ExpectedSubmoduleBlockReq
 
 ```
 API 0:
-  Slot 0, Module 0x00000001 (DAP):
+  Slot 0, Module 0x00000001 (DAP -- from GSDML):
     Subslot 0x0001, Submod 0x00000001, NO_IO
     Subslot 0x8000, Submod 0x00000100, NO_IO
     Subslot 0x8001, Submod 0x00000200, NO_IO
-  Slot 1, Module 0x00000010 (pH):
+  Slot 1, Module 0x00000010 (pH -- from discovery):
     Subslot 0x0001, Submod 0x00000011, INPUT, DataLength=5, LengthIOPS=1, LengthIOCS=1
-  Slot 2, Module 0x00000040 (Temperature):
+  Slot 2, Module 0x00000040 (Temperature -- from discovery):
     Subslot 0x0001, Submod 0x00000041, INPUT, DataLength=5, LengthIOPS=1, LengthIOCS=1
-  Slot 3, Module 0x00000100 (Pump):
+  Slot 3, Module 0x00000100 (Pump -- from discovery):
     Subslot 0x0001, Submod 0x00000101, OUTPUT, DataLength=4, LengthIOPS=1, LengthIOCS=1
 ```
 
@@ -833,20 +838,36 @@ The current controller sends ExpectedSubmoduleBlockReq with 16 hardcoded slots (
 
 ## Implementation Checklist
 
-### Phase 1: HTTP Slot Discovery (Do First -- Unblocks Development)
+### Prerequisites (Do First)
 
 - [ ] Fix DREP encoding to match declaration (all LE or all BE throughout stub)
-- [ ] After DCP Identify: extract RTU IP address from DCP response
-- [ ] HTTP GET `http://{rtu_ip}:9081/api/v1/slots`, timeout 5 seconds
-- [ ] Handle HTTP 503: wait 2s, retry, max 5 retries
-- [ ] Handle connection refused / timeout: go to Phase 3 DAP fallback
-- [ ] Parse JSON response body
-- [ ] Extract `slots` array, iterate each entry
-- [ ] For each slot: parse `module_ident` and `submodule_ident` hex strings to uint32 values
-- [ ] Validate: slot 0 must be DAP (module_ident 0x00000001)
+- [ ] Remove hardcoded 16-slot layout; replace with dynamic construction
+- [ ] Import GSDML and hardcode DAP config: slot 0, module 0x00000001, submodules 0x00000001/0x00000100/0x00000200
+
+### Phase 1: Slot Discovery Chain
+
+- [ ] Source 1: Parse local GSDML `UseableModules` for module type menu
+- [ ] Source 2: Cache slot config per `station_name` after each successful connection
+- [ ] Source 3: HTTP GET `http://{rtu_ip}:9081/api/v1/slots`, timeout 5 seconds
+  - [ ] Handle HTTP 503: wait 2s, retry, max 5 retries
+  - [ ] Handle connection refused / timeout: try source 4
+  - [ ] Parse JSON: `module_ident` and `submodule_ident` are integers (not hex strings)
+  - [ ] `data_size` = input bytes for sensors, output bytes for actuators
+  - [ ] DAP is NOT in the response -- you always add it yourself from GSDML
+- [ ] Source 4: DAP-only connect + Record Read 0xF844
+  - [ ] Build DAP-only ExpectedSubmoduleBlockReq (1 slot, 3 submodules)
+  - [ ] Build minimal IOCRBlockReq (no app data)
+  - [ ] Send Connect, accept ModuleDiffBlock
+  - [ ] Issue Record Read: API=0, Slot=0, Subslot=1, Index=0xF844
+  - [ ] Parse binary response: uint16 BE count, then 15-byte BE entries
+  - [ ] Send Release, wait 2 seconds for p-net AR reset
+
+### Phase 2: Build and Send Connect
+
+- [ ] Combine DAP (from GSDML) + application slots (from discovery) into full layout
 - [ ] Build ExpectedSubmoduleBlockReq:
   - [ ] Slot 0 DAP with 3 submodules (0x0001, 0x8000, 0x8001), all NO_IO
-  - [ ] Each app slot with 1 submodule, correct DataDescription per direction
+  - [ ] Each app slot with 1 submodule, DataDescription per direction, DataLength = data_size
 - [ ] Build Input IOCRBlockReq:
   - [ ] IODataObjects for each input submodule with cumulative FrameOffset
   - [ ] IOCSObjects for each output submodule after input data
@@ -859,10 +880,10 @@ The current controller sends ExpectedSubmoduleBlockReq with 16 hardcoded slots (
 - [ ] Encode ALL stub fields consistent with DREP declaration
 - [ ] Send Connect Request
 - [ ] Parse Connect Response for error blocks
-- [ ] On success: enter cyclic exchange
+- [ ] On success: cache this slot config for source 2 next time
 - [ ] Optional: HTTP GET `/api/v1/gsdml` once, cache the XML by station_name
 
-### Phase 2: ModuleDiff Tolerance (Implement for Robustness)
+### Phase 3: ModuleDiff Tolerance (Implement for Robustness)
 
 - [ ] After every Connect Response: check for ModuleDiffBlock
 - [ ] If present: parse each module/submodule entry
@@ -871,20 +892,3 @@ The current controller sends ExpectedSubmoduleBlockReq with 16 hardcoded slots (
 - [ ] For SUBSTITUTE: accept, do not error
 - [ ] Recalculate frame offsets after removing slots
 - [ ] Enter cyclic exchange with adjusted IO map
-
-### Phase 3: DAP Fallback (When HTTP Unavailable)
-
-- [ ] Build DAP-only ExpectedSubmoduleBlockReq (1 slot, 3 submodules)
-- [ ] Build minimal IOCRBlockReq (no app data)
-- [ ] Send Connect
-- [ ] Accept ModuleDiffBlock (expected: many missing modules)
-- [ ] Issue Record Read: API=0, Slot=0, Subslot=1, Index=0xF844
-- [ ] Parse binary response: uint16 BE count, then 15-byte BE entries
-- [ ] Map parsed entries to slot config (same as HTTP JSON fields)
-- [ ] Send Release
-- [ ] Wait 2 seconds (p-net AR reset time)
-- [ ] Build full ExpectedSubmoduleBlockReq from parsed data
-- [ ] Build full IOCRBlockReqs from parsed data
-- [ ] Send second Connect
-- [ ] Parse response (check errors + ModuleDiff)
-- [ ] Enter cyclic exchange
