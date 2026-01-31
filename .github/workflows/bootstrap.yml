@@ -1,0 +1,127 @@
+# ============================================================
+# Bootstrap Fresh Install Workflow
+# ============================================================
+# Triggers: Push to main, manual dispatch
+# Purpose: Validate that bootstrap.sh can do a complete fresh
+#          install from scratch on a clean system, exactly as
+#          a field technician would run it.
+#
+# This runs: bootstrap.sh fresh --verbose
+#   1. Wipe (no-op on clean runner)
+#   2. Validate environment (root, tools, network, disk)
+#   3. Install build dependencies via apt
+#   4. Clone repository from GitHub
+#   5. Fetch shared protocol headers from Water-Controller
+#   6. Build from source (cmake + make)
+#   7. Install binary, config, data dirs, systemd service
+#   8. Start service (may fail without real hardware - expected)
+#
+# The service start is expected to fail on CI runners since
+# there is no GPIO hardware, PROFINET network, or real sensors.
+# The workflow validates that the full install pipeline succeeds.
+# ============================================================
+name: Bootstrap Fresh Install
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to install from (bootstrap --branch)'
+        type: string
+        default: 'main'
+
+jobs:
+  bootstrap-fresh:
+    name: Fresh Install from Bootstrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run bootstrap fresh install
+        run: |
+          BRANCH="${{ github.event.inputs.branch || 'main' }}"
+          echo "=== Running bootstrap.sh fresh --branch ${BRANCH} --verbose ==="
+          sudo bash bootstrap.sh fresh --branch "${BRANCH}" --verbose
+
+      - name: Verify binary installed
+        run: |
+          echo "--- Binary ---"
+          test -f /usr/local/bin/water-treat
+          test -x /usr/local/bin/water-treat
+          ls -la /usr/local/bin/water-treat
+          file /usr/local/bin/water-treat
+
+      - name: Verify configuration
+        run: |
+          echo "--- Configuration ---"
+          test -f /etc/water-treat/water-treat.conf
+          # Verify config has required sections
+          grep -q '^\[system\]'   /etc/water-treat/water-treat.conf
+          grep -q '^\[network\]'  /etc/water-treat/water-treat.conf
+          grep -q '^\[profinet\]' /etc/water-treat/water-treat.conf
+          grep -q '^\[database\]' /etc/water-treat/water-treat.conf
+          grep -q '^\[logging\]'  /etc/water-treat/water-treat.conf
+          grep -q '^\[health\]'   /etc/water-treat/water-treat.conf
+          echo "Config sections validated"
+          # Verify station name follows PROFINET IEC 61158-6 format
+          STATION=$(grep '^station_name' /etc/water-treat/water-treat.conf | head -1 | awk '{print $3}')
+          echo "Station name: ${STATION}"
+          if echo "${STATION}" | grep -qE '^[a-z0-9][a-z0-9-]{0,62}$'; then
+            echo "Station name format valid (IEC 61158-6)"
+          else
+            echo "WARNING: Station name '${STATION}' may not comply with IEC 61158-6"
+          fi
+
+      - name: Verify version file
+        run: |
+          echo "--- Version File ---"
+          test -f /opt/water-treat/.version
+          cat /opt/water-treat/.version
+          # Verify JSON structure
+          grep -q '"commit_sha"' /opt/water-treat/.version
+          grep -q '"installed_by".*"bootstrap.sh"' /opt/water-treat/.version
+          echo "Version file validated"
+
+      - name: Verify data directories
+        run: |
+          echo "--- Data Directories ---"
+          test -d /opt/water-treat
+          test -d /etc/water-treat
+          test -d /var/lib/water-treat
+          test -d /var/lib/water-treat/pnet
+          test -d /var/log/water-treat
+          echo "All directories present"
+
+      - name: Verify systemd service
+        run: |
+          echo "--- Systemd Service ---"
+          test -f /etc/systemd/system/water-treat.service
+          systemctl is-enabled water-treat
+          echo "Service is enabled"
+          # Service may not be running (no hardware) - informational only
+          systemctl status water-treat --no-pager || true
+
+      - name: Installation summary
+        if: always()
+        run: |
+          echo "========================================"
+          echo "  Bootstrap Fresh Install Summary"
+          echo "========================================"
+          echo ""
+          echo "Binary:    $(test -f /usr/local/bin/water-treat && echo 'PASS' || echo 'FAIL')"
+          echo "Config:    $(test -f /etc/water-treat/water-treat.conf && echo 'PASS' || echo 'FAIL')"
+          echo "Version:   $(test -f /opt/water-treat/.version && echo 'PASS' || echo 'FAIL')"
+          echo "Data dir:  $(test -d /var/lib/water-treat && echo 'PASS' || echo 'FAIL')"
+          echo "PNET dir:  $(test -d /var/lib/water-treat/pnet && echo 'PASS' || echo 'FAIL')"
+          echo "Log dir:   $(test -d /var/log/water-treat && echo 'PASS' || echo 'FAIL')"
+          echo "Service:   $(systemctl is-enabled water-treat 2>/dev/null && echo 'PASS (enabled)' || echo 'FAIL')"
+          echo "Running:   $(systemctl is-active water-treat 2>/dev/null || echo 'not running (expected in CI)')"
+          echo ""
+          if [ -f /opt/water-treat/.version ]; then
+            echo "Installed version:"
+            cat /opt/water-treat/.version
+          fi
