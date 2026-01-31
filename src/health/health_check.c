@@ -12,6 +12,8 @@
 #include "profinet/profinet_manager.h"
 #include "logging/data_logger.h"
 #include "config/config.h"
+#include "db/db_modules.h"
+#include "gsdml_modules.h"
 
 #ifdef LED_SUPPORT
 #include "hal/led_status.h"
@@ -27,6 +29,7 @@ static int config_to_json(char *buffer, size_t buffer_size);
 #include <arpa/inet.h>
 #include <sys/sysinfo.h>
 #include <fcntl.h>
+#include <errno.h>
 
 /* ============================================================================
  * Module State
@@ -590,6 +593,173 @@ static int config_to_json(char *buffer, size_t buffer_size) {
 }
 
 /* ============================================================================
+ * Slot Discovery API
+ * Per CLAUDE.md: /api/v1/slots returns application modules from database.
+ * DAP (slot 0) is NOT included — its configuration is fixed in the GSDML.
+ * ========================================================================== */
+
+/* GSDML file search paths (installed, then development) */
+#define GSDML_INSTALL_PATH "/opt/water-treat/gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml"
+#define GSDML_DEV_PATH     "gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml"
+
+/**
+ * @brief Build JSON response for /api/v1/slots endpoint
+ *
+ * Queries db_module_list() for all configured application modules.
+ * Each module is emitted with 6 fields: slot, subslot, module_ident,
+ * submodule_ident, direction, data_size.
+ *
+ * @param buffer Output buffer for JSON
+ * @param buffer_size Size of output buffer
+ * @return Bytes written on success, -1 on database error
+ */
+static int slots_to_json(char *buffer, size_t buffer_size) {
+    db_module_t *modules = NULL;
+    int count = 0;
+
+    result_t rc = db_module_list(g_health.db, &modules, &count);
+    if (rc != RESULT_OK) {
+        return -1;
+    }
+
+    /*
+     * Build JSON in two passes:
+     * 1. Write slot entries into the array portion
+     * 2. Prepend the header with the actual number of entries emitted
+     *
+     * This ensures slot_count always matches the array length, even if
+     * the buffer is too small to hold all entries.
+     */
+    int emitted = 0;
+
+    /* Reserve space for the header — write a placeholder, fill in later */
+    int header_len = snprintf(buffer, buffer_size,
+        "{\"slot_count\": %d, \"slots\": [", count);
+    int pos = header_len;
+
+    for (int i = 0; i < count; i++) {
+        /* Actuator modules have bit 8 set (0x100 range) per gsdml_modules.h */
+        bool is_actuator = (modules[i].module_ident & 0x00000100) != 0;
+
+        /* Pre-check: need at least ~140 bytes for one entry + closing ]} */
+        if ((size_t)pos >= buffer_size - 160) {
+            LOG_WARNING("Slot JSON truncated: buffer full at %d of %d entries",
+                        emitted, count);
+            break;
+        }
+
+        if (emitted > 0) {
+            pos += snprintf(buffer + pos, buffer_size - pos, ", ");
+        }
+
+        pos += snprintf(buffer + pos, buffer_size - pos,
+            "{\"slot\": %d, \"subslot\": %d, "
+            "\"module_ident\": %u, \"submodule_ident\": %u, "
+            "\"direction\": \"%s\", \"data_size\": %d}",
+            modules[i].slot, modules[i].subslot,
+            (unsigned)modules[i].module_ident,
+            (unsigned)modules[i].submodule_ident,
+            is_actuator ? "output" : "input",
+            is_actuator ? GSDML_ACTUATOR_OUTPUT_SIZE : GSDML_SENSOR_INPUT_SIZE);
+
+        emitted++;
+    }
+
+    pos += snprintf(buffer + pos, buffer_size - pos, "]}");
+
+    /* If truncation occurred, rewrite the header with actual emitted count */
+    if (emitted != count) {
+        char new_header[64];
+        int new_header_len = snprintf(new_header, sizeof(new_header),
+            "{\"slot_count\": %d, \"slots\": [", emitted);
+        /* Only patch if the new header is same length or shorter (padding with spaces) */
+        if (new_header_len <= header_len) {
+            memcpy(buffer, new_header, new_header_len);
+            /* Pad any difference with spaces (valid in JSON) */
+            for (int j = new_header_len; j < header_len; j++) {
+                buffer[j] = ' ';
+            }
+        }
+    }
+
+    free(modules);
+    return pos;
+}
+
+/**
+ * @brief Serve GSDML XML file directly to client socket
+ *
+ * Streams the file in chunks since it exceeds the normal response buffer.
+ * Tries installed path first, then development path.
+ *
+ * @param client_fd Client socket file descriptor (will be closed)
+ */
+static void serve_gsdml_file(int client_fd) {
+    const char *paths[] = {
+        GSDML_INSTALL_PATH,
+        GSDML_DEV_PATH,
+        NULL
+    };
+
+    FILE *fp = NULL;
+    for (int i = 0; paths[i]; i++) {
+        fp = fopen(paths[i], "r");
+        if (fp) break;
+    }
+
+    if (!fp) {
+        const char *body = "{\"error\": \"GSDML file not found\"}";
+        char resp[512];
+        int len = snprintf(resp, sizeof(resp),
+            "HTTP/1.1 404 Not Found\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %zu\r\n"
+            "Connection: close\r\n"
+            "\r\n%s", strlen(body), body);
+        send(client_fd, resp, len, 0);
+        close(client_fd);
+        return;
+    }
+
+    /* Get file size */
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    /* Send HTTP headers */
+    char header[256];
+    int header_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/xml\r\n"
+        "Content-Length: %ld\r\n"
+        "Connection: close\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n", file_size);
+    send(client_fd, header, header_len, 0);
+
+    /* Stream file contents in chunks with partial-send handling */
+    char chunk[4096];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
+        size_t sent = 0;
+        while (sent < n) {
+            ssize_t ret = send(client_fd, chunk + sent, n - sent, MSG_NOSIGNAL);
+            if (ret <= 0) {
+                LOG_WARNING("GSDML send failed at offset %ld: %s",
+                            ftell(fp), (ret == 0) ? "connection closed" : strerror(errno));
+                fclose(fp);
+                close(client_fd);
+                return;
+            }
+            sent += (size_t)ret;
+        }
+    }
+
+    fclose(fp);
+    close(client_fd);
+}
+
+/* ============================================================================
  * HTTP Server
  * ========================================================================== */
 
@@ -686,10 +856,24 @@ static void handle_http_request(int client_fd) {
         config_to_json(response_body, sizeof(response_body));
         content_type = "application/json";
         LOG_DEBUG("Config export requested via HTTP");
+    } else if (strcmp(path, "/api/v1/slots") == 0) {
+        /* Slot discovery for controller fallback (non-standard) */
+        int ret = slots_to_json(response_body, sizeof(response_body));
+        if (ret < 0) {
+            snprintf(response_body, sizeof(response_body),
+                    "{\"error\": \"PROFINET subsystem unavailable\"}");
+            status_code = 503;
+        }
+        content_type = "application/json";
+    } else if (strcmp(path, "/api/v1/gsdml") == 0) {
+        /* Serve raw GSDML XML file — streamed directly due to file size */
+        serve_gsdml_file(client_fd);
+        return;  /* Response already sent and fd closed */
     } else {
         /* 404 Not Found */
         snprintf(response_body, sizeof(response_body),
                 "{\"error\": \"Not Found\", \"endpoints\": [\"/health\", \"/metrics\", \"/ready\", \"/live\", \"/config\""
+                ", \"/api/v1/slots\", \"/api/v1/gsdml\""
 #ifdef LED_SUPPORT
                 ", \"/led/test\", \"/led/status\""
 #endif

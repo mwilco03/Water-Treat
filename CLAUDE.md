@@ -90,6 +90,92 @@ The PROFINET controller uses the station name for **DCP (Discovery and Configura
 - Controller unable to establish AR (Application Relationship)
 - Connection timeout
 
+## RTU HTTP API Contract
+
+The RTU exposes an HTTP API on port **9081** (configurable via `[health] http_port`). The controller queries these endpoints for slot discovery before issuing a PROFINET Connect.
+
+**Code Location:** `src/health/health_check.c` -- HTTP server and route handler.
+
+### Slot Discovery Endpoints
+
+| Endpoint | Method | Content-Type | Purpose |
+|----------|--------|-------------|---------|
+| `/api/v1/slots` | GET | `application/json` | Current PROFINET slot configuration |
+| `/api/v1/gsdml` | GET | `application/xml` | Raw GSDML XML file |
+
+These endpoints answer: "what application modules are plugged in slots 1-246?" DAP (slot 0) is NOT included -- its configuration is fixed and defined in the GSDML.
+
+### `/api/v1/slots` Response Format
+
+```json
+{
+  "slot_count": 1,
+  "slots": [
+    {
+      "slot": 1, "subslot": 1,
+      "module_ident": 64, "submodule_ident": 65,
+      "direction": "input", "data_size": 5
+    }
+  ]
+}
+```
+
+Field details:
+- `slot_count`: number of application modules (excludes DAP)
+- `module_ident`, `submodule_ident`: integers (e.g., 64 = 0x40 = Temperature). Hex is for docs only.
+- `direction`: `"input"` (sensor) or `"output"` (actuator)
+- `data_size`: `input_size` for sensors (5), `output_size` for actuators (4)
+- No device-level metadata (`vendor_id`, `gsdml_version`) -- that belongs in `/config`
+- No `module_type` or `name` -- controller derives type from ident
+
+Returns **200** with empty `"slots": []` if no modules configured.
+Returns **503** if PROFINET subsystem is unavailable.
+
+### Implementation Rules
+
+1. Data source: `db_module_list()` (database), NOT p-net runtime state. Available before `pnet_init()`.
+2. DAP is NOT included. GSDML is the single source of truth for DAP.
+3. Module ident values are integers matching the GSDML (`include/gsdml_modules.h`)
+4. `/api/v1/gsdml` serves the file from `gsd/` directory
+5. Six fields per slot only: `slot`, `subslot`, `module_ident`, `submodule_ident`, `direction`, `data_size`
+
+### Controller Discovery Priority
+
+The controller's discovery chain has 5 steps. `/api/v1/gsdml` is preferred
+over `/api/v1/slots` because GSDML is the standard device description (only
+the HTTP transport is non-standard), and once cached it becomes step 1.
+
+1. Local GSDML file on disk (standard, offline)
+2. `GET /api/v1/gsdml` -- fetch GSDML via HTTP, cache locally (non-standard transport)
+3. Cached config from previous successful connection
+4. `GET /api/v1/slots` -- proprietary JSON slot list (non-standard)
+5. DAP-only connect + Record Read 0xF844 (standard PROFINET)
+
+### PROFINET Record Index Allocation
+
+| Index | Dir | Purpose | Status |
+|-------|-----|---------|--------|
+| 0x8000 | R | I&M0 | Implemented |
+| 0xF840 | W | User sync | Implemented |
+| 0xF841 | W | Device config | Implemented |
+| 0xF842 | W | Sensor config | Implemented |
+| 0xF843 | W | Actuator config | Implemented |
+| 0xF844 | R | Slot map (PROFINET fallback) | Implemented |
+| 0xF845 | W | Enrollment/binding | Implemented |
+
+New record indices must be added to both `config_sync.h` and `profinet_callbacks.c` read/write handlers.
+
+See `docs/CONTROLLER_IMPLEMENTATION_GUIDE.md` for full controller integration spec.
+
+### Related Repositories
+
+| Repository | Purpose |
+|------------|---------|
+| [Water-Controller](https://github.com/mwilco03/Water-Controller) | PROFINET IO Controller (consumes this RTU's API) |
+| [p-net](https://github.com/mwilco03/p-net) | p-net PROFINET stack (fork, used by this RTU) |
+
+The controller repo implements the other side of the connection described in `docs/CONTROLLER_IMPLEMENTATION_GUIDE.md`. The p-net fork is the PROFINET device stack this RTU links against (pinned to v0.2.0 in `scripts/install-deps.sh`).
+
 ## Build Requirements
 
 - C11 standard

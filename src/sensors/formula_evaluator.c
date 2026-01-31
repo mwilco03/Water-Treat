@@ -188,13 +188,35 @@ static float simple_eval(const char *formula, const float *values, int count) {
         return sum / (float)count;
     }
 
-    /* Sum: "a + b + ..." */
+    /* Sum: "a + b + ..." (no other operators) */
     if (strstr(formula, "+") && !strstr(formula, "-") && !strstr(formula, "*") && !strstr(formula, "/")) {
         float sum = 0.0f;
         for (int i = 0; i < count; i++) {
             sum += values[i];
         }
         return sum;
+    }
+
+    /* Multiply / scale: "a * b" or "a * constant" (no + - /) */
+    if (strstr(formula, "*") && !strstr(formula, "+") && !strstr(formula, "-") && !strstr(formula, "/")) {
+        if (count >= 2) {
+            /* Multi-variable product: x0 * x1 * ... */
+            float product = 1.0f;
+            for (int i = 0; i < count; i++) {
+                product *= values[i];
+            }
+            return product;
+        }
+        /* Single variable with scalar: "x0 * 2.5" */
+        const char *star = strstr(formula, "*");
+        if (star && count == 1) {
+            char *end = NULL;
+            float scalar = strtof(star + 1, &end);
+            if (end && end != star + 1) {
+                return values[0] * scalar;
+            }
+        }
+        return count > 0 ? values[0] : 0.0f;
     }
 
     /* Min */

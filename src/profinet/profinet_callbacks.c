@@ -15,10 +15,19 @@
 #include "rtu_registration.h"
 #include "config_sync.h"
 #include "auth/user_sync.h"
+#include "config/config.h"
 #include "utils/logger.h"
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <errno.h>
+
+/* Global config from main.c — needed for factory reset backup paths */
+extern config_manager_t g_config_mgr;
+extern app_config_t g_app_config;
 
 #ifdef LED_SUPPORT
 #include "hal/led_status.h"
@@ -27,6 +36,14 @@ extern led_status_manager_t g_led_mgr;
 
 #ifdef HAVE_PNET
 #include <pnet_api.h>
+#include "gsdml_modules.h"
+
+/* Static buffer for 0xF844 slot map record read response.
+ * Must persist until controller completes the read, so it's static.
+ * Max: 2-byte header + 246 slots * 15 bytes each = 3692 bytes */
+#define SLOT_MAP_RECORD_MAX_SIZE (2 + 246 * 15)
+static uint8_t g_slot_map_buffer[SLOT_MAP_RECORD_MAX_SIZE];
+static uint16_t g_slot_map_length = 0;
 
 /* I&M0 (Identification & Maintenance) data - mandatory for PROFINET compliance */
 #pragma pack(push, 1)
@@ -290,14 +307,39 @@ int profinet_read_callback(pnet_t *net, void *arg,
         case 0x8002:  // Identification & Maintenance 2 (optional - date)
         case 0x8003:  // Identification & Maintenance 3 (optional - descriptor)
         case 0x8004:  // Identification & Maintenance 4 (optional - signature)
-            // Optional I&M records not implemented
-            LOG_DEBUG("I&M%d read: not implemented", idx - 0x8000);
+            LOG_DEBUG("I&M%d read: optional, not supported", idx - 0x8000);
             *data = NULL;
             *length = 0;
             break;
 
+        case 0xF844: {
+            /*
+             * Slot map record read - PROFINET fallback for slot discovery.
+             * Step 5 in the controller's discovery chain (used when HTTP
+             * endpoints are unreachable on isolated L2 networks).
+             *
+             * Wire format: 2-byte count + 15 bytes per slot (all BE).
+             * See profinet_manager_build_slot_map() for format details.
+             */
+            int ret = profinet_manager_build_slot_map(
+                g_slot_map_buffer, sizeof(g_slot_map_buffer));
+            if (ret > 0) {
+                g_slot_map_length = (uint16_t)ret;
+                *data = g_slot_map_buffer;
+                *length = g_slot_map_length;
+                LOG_INFO("Slot map read (0xF844): providing %u bytes", *length);
+            } else {
+                /* No application modules or error - return empty response */
+                g_slot_map_length = 0;
+                *data = NULL;
+                *length = 0;
+                LOG_INFO("Slot map read (0xF844): no application modules");
+            }
+            break;
+        }
+
         default:
-            // Application-specific read
+            LOG_DEBUG("Unhandled read index 0x%04X on slot %u.%u", idx, slot, subslot);
             *data = NULL;
             *length = 0;
             break;
@@ -427,13 +469,20 @@ int profinet_write_callback(pnet_t *net, void *arg,
             return 0;
 
         default:
-            break;
-    }
-
-    /* Handle standard parameterization data */
-    if (idx <= 0x7FFF) {
-        LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
-                 slot, subslot, idx, write_length);
+            /* Standard parameterization data (0x0000-0x7FFF) is accepted */
+            if (idx <= 0x7FFF) {
+                LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
+                         slot, subslot, idx, write_length);
+                return 0;
+            }
+            /* Unknown vendor-specific index — reject with error */
+            LOG_WARNING("Unknown write index 0x%04X on slot %u.%u, rejecting",
+                        idx, slot, subslot);
+            if (result) {
+                result->pnio_status.error_code = 0xDE;   /* IODWriteRes */
+                result->pnio_status.error_code_1 = 0x80; /* Application write error */
+            }
+            return -1;
     }
 
     return 0;
@@ -524,6 +573,120 @@ int profinet_alarm_ack_cnf_callback(pnet_t *net, void *arg,
  * System Callbacks
  * ========================================================================== */
 
+#define BACKUP_DIR "/var/backup/water-treat"
+
+/**
+ * @brief Copy a file to a destination path.
+ * @return true on success, false on failure (logged).
+ */
+static bool backup_copy_file(const char *src, const char *dst) {
+    FILE *src_fp = fopen(src, "rb");
+    if (!src_fp) {
+        LOG_ERROR("Backup: cannot open source %s: %s", src, strerror(errno));
+        return false;
+    }
+
+    FILE *dst_fp = fopen(dst, "wb");
+    if (!dst_fp) {
+        LOG_ERROR("Backup: cannot create %s: %s", dst, strerror(errno));
+        fclose(src_fp);
+        return false;
+    }
+
+    char buf[8192];
+    size_t n;
+    bool ok = true;
+
+    while ((n = fread(buf, 1, sizeof(buf), src_fp)) > 0) {
+        if (fwrite(buf, 1, n, dst_fp) != n) {
+            LOG_ERROR("Backup: write failed to %s: %s", dst, strerror(errno));
+            ok = false;
+            break;
+        }
+    }
+
+    fclose(src_fp);
+    fclose(dst_fp);
+    return ok;
+}
+
+/**
+ * @brief Factory reset with backup (PROFINET reset mode 2).
+ *
+ * 1. Back up config file and database to /var/backup/water-treat/
+ * 2. Delete originals (will regenerate defaults on restart)
+ * 3. Clear p-net NV state
+ * 4. SIGTERM to trigger clean shutdown (systemd restarts the service)
+ */
+static void factory_reset_with_backup(void) {
+    /* Create backup directory */
+    mkdir("/var/backup", 0755);
+    mkdir(BACKUP_DIR, 0755);
+
+    /* Timestamp for backup filenames */
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char ts[20];
+    snprintf(ts, sizeof(ts), "%04d%02d%02d_%02d%02d%02d",
+             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+             tm->tm_hour, tm->tm_min, tm->tm_sec);
+
+    bool backup_ok = true;
+
+    /* Backup config file */
+    const char *config_path = g_config_mgr.config_path;
+    if (config_path[0] && access(config_path, R_OK) == 0) {
+        char dst[MAX_PATH_LEN];
+        snprintf(dst, sizeof(dst), "%s/config_%s.conf", BACKUP_DIR, ts);
+        if (backup_copy_file(config_path, dst)) {
+            LOG_INFO("Factory reset: config backed up to %s", dst);
+        } else {
+            backup_ok = false;
+        }
+    }
+
+    /* Backup database */
+    const char *db_path = g_app_config.database.path;
+    if (db_path[0] && access(db_path, R_OK) == 0) {
+        char dst[MAX_PATH_LEN];
+        snprintf(dst, sizeof(dst), "%s/database_%s.db", BACKUP_DIR, ts);
+        if (backup_copy_file(db_path, dst)) {
+            LOG_INFO("Factory reset: database backed up to %s", dst);
+        } else {
+            backup_ok = false;
+        }
+    }
+
+    if (!backup_ok) {
+        LOG_ERROR("Factory reset: backup incomplete — aborting reset to protect data");
+        return;
+    }
+
+    /* Delete originals so application regenerates defaults on restart */
+    if (config_path[0] && access(config_path, F_OK) == 0) {
+        if (remove(config_path) == 0) {
+            LOG_INFO("Factory reset: removed %s", config_path);
+        } else {
+            LOG_ERROR("Factory reset: failed to remove %s: %s",
+                      config_path, strerror(errno));
+        }
+    }
+
+    if (db_path[0] && access(db_path, F_OK) == 0) {
+        if (remove(db_path) == 0) {
+            LOG_INFO("Factory reset: removed %s", db_path);
+        } else {
+            LOG_ERROR("Factory reset: failed to remove %s: %s",
+                      db_path, strerror(errno));
+        }
+    }
+
+    LOG_WARNING("Factory reset with backup complete — restarting application");
+
+    /* SIGTERM triggers clean shutdown; systemd restarts the service */
+    kill(getpid(), SIGTERM);
+}
+
 int profinet_reset_callback(pnet_t *net, void *arg,
                             bool should_reset_application,
                             uint16_t reset_mode) {
@@ -548,9 +711,11 @@ int profinet_reset_callback(pnet_t *net, void *arg,
                 break;
 
             case 2:
-                /* Reset mode 2: Reset to factory with backup (not implemented) */
-                LOG_WARNING("Factory reset with backup not implemented, performing soft reset");
-                kill(getpid(), SIGHUP);
+                /* Reset mode 2: Factory reset with backup
+                 * Backs up config + database, then deletes originals so
+                 * application regenerates defaults on systemd restart. */
+                LOG_WARNING("Factory reset with backup requested");
+                factory_reset_with_backup();
                 break;
 
             default:
@@ -632,6 +797,20 @@ int profinet_write_callback(void *net, void *arg, uint32_t arep, uint32_t api,
     if (idx == USER_SYNC_PROFINET_INDEX && data && len > 0) {
         LOG_INFO("User sync packet received (stub mode): %u bytes", len);
         user_sync_process_packet(data, len);
+    }
+
+    /* Handle config sync in stub mode (for testing) */
+    if (idx == RTU_CONFIG_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("Device config received (stub mode): %u bytes", len);
+        config_sync_process_device(data, len);
+    }
+    if (idx == RTU_SENSOR_CONFIG_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("Sensor config received (stub mode): %u bytes", len);
+        config_sync_process_sensors(data, len);
+    }
+    if (idx == RTU_ACTUATOR_CONFIG_PROFINET_INDEX && data && len > 0) {
+        LOG_INFO("Actuator config received (stub mode): %u bytes", len);
+        config_sync_process_actuators(data, len);
     }
 
     /* Handle enrollment in stub mode (for testing) */

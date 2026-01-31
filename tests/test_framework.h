@@ -10,13 +10,13 @@
 #include <string.h>
 #include <math.h>
 
-/* Test counters */
-static int g_tests_run = 0;
-static int g_tests_passed = 0;
-static int g_tests_failed = 0;
+/* Test counters — defined in test_main.c, shared across all test TUs */
+extern int g_tests_run;
+extern int g_tests_passed;
+extern int g_tests_failed;
 
 /* Current test name for error reporting */
-static const char *g_current_test = NULL;
+extern const char *g_current_test;
 
 #define TEST_EPSILON 0.0001f
 

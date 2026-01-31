@@ -1224,6 +1224,76 @@ result_t profinet_manager_get_stats(profinet_stats_t *stats) {
     return RESULT_OK;
 }
 
+int profinet_manager_build_slot_map(uint8_t *buffer, size_t buffer_size) {
+    if (!buffer || buffer_size < 2) return -1;
+
+    pthread_mutex_lock(&g_pn.mutex);
+
+    /* Count application slots (skip DAP at slot 0) */
+    int app_count = 0;
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].plugged && g_pn.slots[i].slot > 0) {
+            app_count++;
+        }
+    }
+
+    /* Check buffer capacity: 2-byte header + 15 bytes per slot */
+    size_t needed = 2 + (size_t)app_count * 15;
+    if (buffer_size < needed) {
+        pthread_mutex_unlock(&g_pn.mutex);
+        LOG_ERROR("Slot map buffer too small: need %zu, have %zu", needed, buffer_size);
+        return -1;
+    }
+
+    /* Write slot count header (big-endian) */
+    uint16_t count_be = htons((uint16_t)app_count);
+    memcpy(buffer, &count_be, 2);
+    size_t pos = 2;
+
+    /* Write each application slot entry (15 bytes each) */
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        profinet_slot_t *s = &g_pn.slots[i];
+        if (!s->plugged || s->slot == 0) continue;
+
+        bool actuator = is_actuator_module(s->module_ident);
+
+        /* slot_number (uint16_t BE) */
+        uint16_t slot_be = htons((uint16_t)s->slot);
+        memcpy(buffer + pos, &slot_be, 2);
+        pos += 2;
+
+        /* subslot_number (uint16_t BE) */
+        uint16_t subslot_be = htons((uint16_t)s->subslot);
+        memcpy(buffer + pos, &subslot_be, 2);
+        pos += 2;
+
+        /* module_ident (uint32_t BE) */
+        uint32_t mod_be = htonl(s->module_ident);
+        memcpy(buffer + pos, &mod_be, 4);
+        pos += 4;
+
+        /* submodule_ident (uint32_t BE) */
+        uint32_t submod_be = htonl(s->submodule_ident);
+        memcpy(buffer + pos, &submod_be, 4);
+        pos += 4;
+
+        /* direction: 1=input (sensor), 2=output (actuator) */
+        buffer[pos++] = actuator ? 2 : 1;
+
+        /* data_size (uint16_t BE): 5 for sensors, 4 for actuators */
+        uint16_t dsize_be = htons(actuator ? GSDML_ACTUATOR_OUTPUT_SIZE
+                                           : GSDML_SENSOR_INPUT_SIZE);
+        memcpy(buffer + pos, &dsize_be, 2);
+        pos += 2;
+    }
+
+    pthread_mutex_unlock(&g_pn.mutex);
+
+    LOG_INFO("Built slot map (0xF844): %d application slots, %zu bytes",
+             app_count, pos);
+    return (int)pos;
+}
+
 result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
                                      const uint8_t *data, size_t data_len) {
 #ifdef HAVE_PNET
