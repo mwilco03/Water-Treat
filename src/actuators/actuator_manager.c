@@ -14,6 +14,7 @@
 #include "gsdml_modules.h"
 #include <pthread.h>
 #include <string.h>
+#include <inttypes.h>
 #include <unistd.h>
 
 /* Access to global config from main.c */
@@ -161,13 +162,13 @@ static void exit_degraded_mode(actuator_manager_t *mgr) {
 
     uint64_t degraded_duration_ms = get_time_ms() - mgr->disconnect_time_ms;
 
-    LOG_INFO("Exiting DEGRADED MODE - controller reconnected (was degraded for %lu ms)",
+    LOG_INFO("Exiting DEGRADED MODE - controller reconnected (was degraded for %" PRIu64 " ms)",
              degraded_duration_ms);
 
     if (mgr->db) {
         char msg[256];
         snprintf(msg, sizeof(msg),
-                 "NORMAL MODE: PROFINET controller reconnected after %lu seconds",
+                 "NORMAL MODE: PROFINET controller reconnected after %" PRIu64 " seconds",
                  degraded_duration_ms / 1000);
         DB_EVENT_INFO(mgr->db, "actuator_manager", msg);
     }
