@@ -34,7 +34,7 @@ readonly BACKUP_DIR="/var/backups/water-treat"
 readonly BOOTSTRAP_LOG="/var/log/water-treat-bootstrap.log"
 readonly MIN_DISK_SPACE_MB=512
 readonly REQUIRED_TOOLS=("git" "curl" "cmake" "make" "gcc")
-readonly BUILD_DEPS=("build-essential" "cmake" "libncurses5-dev" "libsqlite3-dev" "libcurl4-openssl-dev" "libcjson-dev" "libgpiod-dev" "libsystemd-dev")
+readonly BUILD_DEPS=("build-essential" "cmake" "libncurses5-dev" "libsqlite3-dev" "libcurl4-openssl-dev" "libcjson-dev" "libgpiod-dev" "libsystemd-dev" "ca-certificates" "ntpsec-ntpdate")
 
 # Shared protocol headers from Water-Controller
 readonly CONTROLLER_REPO="mwilco03/Water-Controller"
@@ -475,6 +475,17 @@ check_build_deps() {
     else
         log_warn "Could not auto-install build dependencies"
         log_info "Please ensure cmake, make, gcc and development libraries are installed"
+    fi
+
+    # Install libicu (needed by .NET Core / GitHub Actions runner).
+    # Package name includes a version that varies by OS release (libicu74, libicu76, etc.)
+    if command -v apt-cache &>/dev/null; then
+        local icu_pkg
+        icu_pkg=$(apt-cache search '^libicu[0-9]' 2>/dev/null | grep -v java | head -1 | awk '{print $1}')
+        if [[ -n "$icu_pkg" ]]; then
+            log_info "Installing $icu_pkg (ICU runtime for .NET / CI runners)..."
+            run_privileged apt-get install -y "$icu_pkg" || log_warn "Failed to install $icu_pkg (non-critical)"
+        fi
     fi
 
     # Verify critical tools

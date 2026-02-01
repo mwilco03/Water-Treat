@@ -103,6 +103,8 @@ declare -A PKG_MAP_APT=(
     [cjson-dev]="libcjson-dev"
     [gpiod-dev]="libgpiod-dev"
     [i2c-tools]="i2c-tools"
+    [ca-certificates]="ca-certificates"
+    [ntpdate]="ntpsec-ntpdate"
     # For building libgpiod from source
     [autoconf]="autoconf"
     [automake]="automake"
@@ -128,6 +130,8 @@ declare -A PKG_MAP_DNF=(
     [cjson-dev]="cjson-devel"
     [gpiod-dev]="libgpiod-devel"
     [i2c-tools]="i2c-tools"
+    [ca-certificates]="ca-certificates"
+    [ntpdate]="ntpdate"  # UNVERIFIED - may need ntpsec-ntpdate
     [autoconf]="autoconf"
     [automake]="automake"
     [libtool]="libtool"
@@ -152,6 +156,8 @@ declare -A PKG_MAP_PACMAN=(
     [cjson-dev]="cjson"
     [gpiod-dev]="libgpiod"
     [i2c-tools]="i2c-tools"
+    [ca-certificates]="ca-certificates"
+    [ntpdate]="ntp"  # UNVERIFIED - Arch may use different package
     [autoconf]="autoconf"
     [automake]="automake"
     [libtool]="libtool"
@@ -217,6 +223,8 @@ install_packages() {
         cjson-dev
         gpiod-dev
         i2c-tools
+        ca-certificates
+        ntpdate
         # For libgpiod source build if needed
         autoconf
         automake
@@ -253,6 +261,17 @@ install_packages() {
             if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "${resolved_packages[@]}"; then
                 breaking "Package installation failed"
                 return 1
+            fi
+
+            # Install libicu (needed by .NET Core / GitHub Actions runner).
+            # Package name includes a version that varies by OS release
+            # (e.g., libicu74 on Ubuntu 24.04, libicu76 on 24.10+).
+            local icu_pkg
+            icu_pkg=$(apt-cache search '^libicu[0-9]' 2>/dev/null | grep -v java | head -1 | awk '{print $1}')
+            if [[ -n "$icu_pkg" ]]; then
+                info "Installing $icu_pkg (ICU runtime for .NET / CI runners)..."
+                DEBIAN_FRONTEND=noninteractive apt-get install -y "$icu_pkg" || \
+                    non_breaking "Failed to install $icu_pkg (non-critical)"
             fi
             ;;
 
