@@ -11,6 +11,7 @@
 #include "db/db_modules.h"
 #include "utils/logger.h"
 #include "gsdml_modules.h"
+#include "config_defaults.h"
 #include "platform/hw_discover.h"
 #include <pthread.h>
 #include <string.h>
@@ -25,9 +26,10 @@
 #include <sys/ioctl.h>  /* ioctl for setting promiscuous mode */
 #include <linux/if_packet.h> /* SOCK_RAW for PROFINET */
 
-#define PROFINET_TICK_INTERVAL_US   1000
-#define MAX_PROFINET_SLOTS          247
-#define PROFINET_DATA_SIZE          256
+/* Derived from shared profinet_identity.h via config_defaults.h */
+#define PROFINET_TICK_INTERVAL_US   WT_PROFINET_TICK_INTERVAL_US
+#define MAX_PROFINET_SLOTS          WT_PROFINET_MAX_SLOTS
+#define PROFINET_DATA_SIZE          WT_PROFINET_DATA_SIZE
 
 /* Stuck state detection timeouts (milliseconds) */
 #define STATE_TIMEOUT_CONNECTING_MS     30000   /* 30s in CONNECTING before reset */

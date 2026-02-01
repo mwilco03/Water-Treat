@@ -17,17 +17,19 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "profinet_identity.h"
 #include "sensors/sensor_api.h"
 #include "db/db_actuators.h"
 
 /* ============================================================================
  * DAP (Device Access Point) - Slot 0
+ * Derived from profinet_identity.h (single source of truth)
  * ========================================================================== */
 
-#define GSDML_MOD_DAP              0x00000001
-#define GSDML_SUBMOD_DAP           0x00000001
-#define GSDML_SUBMOD_DAP_INTERFACE 0x00000100
-#define GSDML_SUBMOD_DAP_PORT      0x00000200
+#define GSDML_MOD_DAP              PN_MOD_DAP_IDENT
+#define GSDML_SUBMOD_DAP           PN_SUBMOD_DAP_IDENT
+#define GSDML_SUBMOD_DAP_INTERFACE PN_SUBMOD_DAP_IF_IDENT
+#define GSDML_SUBMOD_DAP_PORT      PN_SUBMOD_DAP_PORT_IDENT
 
 /* ============================================================================
  * Sensor Input Modules (Slots 1-8)

@@ -23,6 +23,7 @@ typedef enum {
     CONFIG_ERROR_INVALID_DB_PATH     = (1 << 11),
     CONFIG_ERROR_INVALID_WATCHDOG    = (1 << 12),
     CONFIG_ERROR_INVALID_STATION_NAME = (1 << 13),  /* Per IEC 61158-6 PROFINET spec */
+    CONFIG_WARN_IDENTITY_MISMATCH    = (1 << 6),   /* vendor_id/device_id drift from GSDML */
 } config_validation_flags_t;
 
 /* Validation result structure */

@@ -496,9 +496,9 @@ void config_get_defaults(app_config_t *c) {
     /* PROFINET defaults - station name derived from MAC */
     detect_station_id(c->profinet.station_name, sizeof(c->profinet.station_name));
     SAFE_STRNCPY(c->profinet.product_name,"Water Treatment RTU",sizeof(c->profinet.product_name));
-    c->profinet.vendor_id=0x0493;
-    c->profinet.device_id=0x0001;
-    c->profinet.min_device_interval=32;
+    c->profinet.vendor_id=WT_PROFINET_VENDOR_ID;
+    c->profinet.device_id=WT_PROFINET_DEVICE_ID;
+    c->profinet.min_device_interval=WT_PROFINET_MIN_INTERVAL;
     c->profinet.enabled=true;
     /* Controller fields - empty until configured or auto-discovered */
     c->profinet.controller_ip[0]='\0';
