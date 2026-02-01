@@ -11,6 +11,7 @@
 #include "config/config.h"
 #include "utils/logger.h"
 #include <ncurses.h>
+#include <inttypes.h>
 #include <string.h>
 #include <time.h>
 
@@ -286,9 +287,9 @@ static void draw_stats(WINDOW *win, int *row) {
     
     mvwprintw(win, stat_row++, 52, "Running: %s", 
               data_logger_is_running() ? "Yes" : "No");
-    mvwprintw(win, stat_row++, 52, "Logged: %lu", g_page.stats.total_logged);
-    mvwprintw(win, stat_row++, 52, "Remote Sent: %lu", g_page.stats.total_remote_sent);
-    mvwprintw(win, stat_row++, 52, "Remote Failed: %lu", g_page.stats.total_remote_failed);
+    mvwprintw(win, stat_row++, 52, "Logged: %" PRIu64, g_page.stats.total_logged);
+    mvwprintw(win, stat_row++, 52, "Remote Sent: %" PRIu64, g_page.stats.total_remote_sent);
+    mvwprintw(win, stat_row++, 52, "Remote Failed: %" PRIu64, g_page.stats.total_remote_failed);
     mvwprintw(win, stat_row++, 52, "Queue: %d/%d", 
               g_page.stats.queue_count, g_page.stats.queue_capacity);
 }

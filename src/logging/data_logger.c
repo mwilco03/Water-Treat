@@ -8,6 +8,7 @@
 #include "db/db_modules.h"
 #include "db/db_events.h"
 #include "utils/logger.h"
+#include <inttypes.h>
 #include <pthread.h>
 #include <string.h>
 #include <time.h>
@@ -220,7 +221,7 @@ static void drop_old_entries(void) {
 
     if (dropped > 0) {
         g_logger.total_dropped_age += dropped;
-        LOG_WARNING("Dropped %d entries older than %d seconds (total dropped: %lu)",
+        LOG_WARNING("Dropped %d entries older than %d seconds (total dropped: %" PRIu64 ")",
                     dropped, g_logger.max_queue_age_seconds, g_logger.total_dropped_age);
     }
 }
@@ -422,7 +423,7 @@ result_t data_logger_stop(void) {
     
     pthread_join(g_logger.log_thread, NULL);
     
-    LOG_INFO("Data logger stopped (total logged: %lu, remote sent: %lu)",
+    LOG_INFO("Data logger stopped (total logged: %" PRIu64 ", remote sent: %" PRIu64 ")",
              g_logger.total_logged, g_logger.total_remote_sent);
     
     return RESULT_OK;
