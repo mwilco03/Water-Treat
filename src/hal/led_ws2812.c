@@ -11,6 +11,7 @@
 #include "platform/board_detect.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <sys/stat.h>
 
 /* Backend operations table */
@@ -299,9 +300,18 @@ bool led_is_available(void) {
 #ifdef HAVE_RPI_WS281X
     return true;
 #else
-    /* Check if SPI device exists */
+    /* Check if SPI device exists using detected board info */
     struct stat st;
-    return (stat("/dev/spidev0.0", &st) == 0);
+    board_info_t info;
+    if (board_detect(&info) && info.pins.spi_bus >= 0) {
+        char spi_path[32];
+        snprintf(spi_path, sizeof(spi_path), "/dev/spidev%d.0",
+                 info.pins.spi_bus);
+        return (stat(spi_path, &st) == 0);
+    }
+    /* Fallback: check common SPI devices */
+    return (stat("/dev/spidev0.0", &st) == 0 ||
+            stat("/dev/spidev1.0", &st) == 0);
 #endif
 }
 

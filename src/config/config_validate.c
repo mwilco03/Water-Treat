@@ -5,6 +5,7 @@
 
 #include "config_validate.h"
 #include "profinet_identity.h"
+#include "config_defaults.h"
 #include "utils/logger.h"
 #include <string.h>
 #include <stdio.h>
@@ -103,6 +104,13 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
             result->warning_count++;
             add_message(result, "WARNING: MAC-based station ID detection failed, using fallback");
         }
+    }
+
+    /* Warn if station name is still the GSDML template (detect_station_id didn't run) */
+    if (strcmp(config->profinet.station_name, WT_GSDML_STATION_NAME) == 0) {
+        result->flags |= CONFIG_WARN_DEFAULT_STATION_NAME;
+        result->warning_count++;
+        add_message(result, "WARNING: Station name is GSDML default, not rtu-XXXX from MAC");
     }
 
     bool is_auto_device = (strncmp(config->system.device_name, "rtu-", 4) == 0 &&

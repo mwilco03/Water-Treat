@@ -22,8 +22,17 @@ PROFINET_IP="${2:-192.168.100.10}"
 PROFINET_NETMASK="255.255.255.0"
 PROFINET_GATEWAY=""  # No gateway needed for local PROFINET segment
 
-# Station name (must match GSD/controller configuration)
-STATION_NAME="water-treat-rtu"
+# Station name: auto-detect from MAC (rtu-XXXX format)
+# The GSDML DNS_CompatibleName "water-treat-rtu" is a template for engineering
+# tools only. Runtime station names are per-instance: rtu-{last 4 hex of MAC}.
+MAC_ADDR=$(ip link show "$PROFINET_IFACE" 2>/dev/null | grep ether | awk '{print $2}')
+if [ -n "$MAC_ADDR" ] && [ "$MAC_ADDR" != "00:00:00:00:00:00" ]; then
+    SUFFIX=$(echo "$MAC_ADDR" | tr -d ':' | tail -c 5 | tr '[:upper:]' '[:lower:]')
+    STATION_NAME="rtu-${SUFFIX}"
+else
+    STATION_NAME="rtu-0000"
+    echo "WARNING: Could not detect MAC address, using fallback station name"
+fi
 
 echo "=============================================="
 echo "  PROFINET Network Configuration"

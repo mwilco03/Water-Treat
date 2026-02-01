@@ -31,17 +31,16 @@
 #define PN_INSTANCE_ID              0x0001
 
 /* ============================================================================
- * Station Name (must match GSDML <DNS_CompatibleName>)
- * ========================================================================== */
-
-/**
- * Default station name from GSDML DNS_CompatibleName.
- * At runtime, bootstrap.sh overrides this with "rtu-XXXX" (last 4 hex
- * of MAC), so this default is only used if no config file exists.
+ * NOTE: Station name is NOT in this header.
  *
- * Format: IEC 61158-6 compliant (lowercase alphanumeric + hyphens).
- */
-#define PN_STATION_NAME_DEFAULT     "water-treat-rtu"
+ * Station names are per-instance (rtu-XXXX from MAC address), not a
+ * shared device-type constant. Each RTU derives its own station name
+ * at runtime via detect_station_id() in config.c.
+ *
+ * The GSDML DNS_CompatibleName "water-treat-rtu" is a template value
+ * for engineering tools only — it is NOT the runtime station name.
+ * See config_defaults.h for the GSDML template constant.
+ * ========================================================================== */
 
 /* ============================================================================
  * DAP (Device Access Point) - Slot 0 Identifiers

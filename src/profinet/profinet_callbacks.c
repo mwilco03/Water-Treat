@@ -75,7 +75,7 @@ static im0_data_t g_im0_data = {
     .block_header_length = 54,
     .block_header_version = 0x01,
     .block_header_reserved = 0,
-    .vendor_id = 0x0493,            // Water Treatment Systems vendor ID
+    .vendor_id = PN_VENDOR_ID,
     .order_id = "WaterTreat-RTU   ",// 20 chars padded with spaces
     .serial_number = "RTU-000000001   ",// 16 chars
     .hardware_revision = 0x0001,
@@ -291,26 +291,25 @@ int profinet_read_callback(pnet_t *net, void *arg,
                            uint8_t **data, uint16_t *length,
                            pnet_result_t *result) {
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(api);
-    UNUSED(sequence_number); UNUSED(result);
-    
+    UNUSED(sequence_number);
+
     LOG_DEBUG("PROFINET read: slot=%u.%u, idx=0x%04X", slot, subslot, idx);
-    
-    // Handle standard indices
+
     switch (idx) {
-        case 0x8000:  // Identification & Maintenance 0 (mandatory)
+        case 0x8000:  /* Identification & Maintenance 0 (mandatory) */
             *data = (uint8_t *)&g_im0_data;
             *length = sizeof(im0_data_t);
             LOG_DEBUG("I&M0 read: providing %u bytes", *length);
-            break;
+            return 0;
 
-        case 0x8001:  // Identification & Maintenance 1 (optional - function tag)
-        case 0x8002:  // Identification & Maintenance 2 (optional - date)
-        case 0x8003:  // Identification & Maintenance 3 (optional - descriptor)
-        case 0x8004:  // Identification & Maintenance 4 (optional - signature)
+        case 0x8001:  /* Identification & Maintenance 1 (optional - function tag) */
+        case 0x8002:  /* Identification & Maintenance 2 (optional - date) */
+        case 0x8003:  /* Identification & Maintenance 3 (optional - descriptor) */
+        case 0x8004:  /* Identification & Maintenance 4 (optional - signature) */
             LOG_DEBUG("I&M%d read: optional, not supported", idx - 0x8000);
             *data = NULL;
             *length = 0;
-            break;
+            return 0;
 
         case 0xF844: {
             /*
@@ -329,23 +328,31 @@ int profinet_read_callback(pnet_t *net, void *arg,
                 *length = g_slot_map_length;
                 LOG_INFO("Slot map read (0xF844): providing %u bytes", *length);
             } else {
-                /* No application modules or error - return empty response */
                 g_slot_map_length = 0;
                 *data = NULL;
                 *length = 0;
                 LOG_INFO("Slot map read (0xF844): no application modules");
             }
-            break;
+            return 0;
         }
 
         default:
-            LOG_DEBUG("Unhandled read index 0x%04X on slot %u.%u", idx, slot, subslot);
-            *data = NULL;
-            *length = 0;
-            break;
+            /* Standard parameter indices (0x0000-0x7FFF) - let p-net handle */
+            if (idx <= 0x7FFF) {
+                LOG_DEBUG("Standard read index 0x%04X, deferring to p-net", idx);
+                *data = NULL;
+                *length = 0;
+                return 0;
+            }
+            /* Unknown vendor-specific index - reject */
+            LOG_WARNING("Unknown read index 0x%04X on slot %u.%u, rejecting",
+                        idx, slot, subslot);
+            if (result) {
+                result->pnio_status.error_code = 0xDE;   /* IODReadRes */
+                result->pnio_status.error_code_1 = 0x80; /* Application read error */
+            }
+            return -1;
     }
-    
-    return 0;
 }
 
 int profinet_write_callback(pnet_t *net, void *arg,

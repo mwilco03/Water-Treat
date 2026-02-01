@@ -10,6 +10,7 @@
 #include "../tui_common.h"
 #include "../dialogs/dialog_helpers.h"
 #include "profinet/profinet_manager.h"
+#include "profinet_identity.h"
 #include "profinet/controller_discovery.h"
 #include "profinet/rtu_registration.h"
 #include "sensors/sensor_manager.h"
@@ -265,8 +266,8 @@ static void draw_protocol_info(WINDOW *win, int start_row) {
         mvwprintw(win, r++, col, "Vendor ID:  0x%04X", cfg->profinet.vendor_id);
         mvwprintw(win, r++, col, "Device ID:  0x%04X", cfg->profinet.device_id);
     } else {
-        mvwprintw(win, r++, col, "Vendor ID:  0x0493");
-        mvwprintw(win, r++, col, "Device ID:  0x0001");
+        mvwprintw(win, r++, col, "Vendor ID:  0x%04X", PN_VENDOR_ID);
+        mvwprintw(win, r++, col, "Device ID:  0x%04X", PN_DEVICE_ID);
     }
     r++;
 
