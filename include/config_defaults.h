@@ -14,6 +14,8 @@
 #ifndef CONFIG_DEFAULTS_H
 #define CONFIG_DEFAULTS_H
 
+#include "profinet_identity.h"
+
 /* ============================================================================
  * HTTP Server Configuration
  * ============================================================================
@@ -36,13 +38,13 @@
 /* ============================================================================
  * PROFINET Configuration
  * ============================================================================
- * PROFINET device identity per GSD file:
- *   gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml
+ * Identity values derived from profinet_identity.h (single source of truth).
+ * These MUST match the GSDML file.
  */
-#define WT_PROFINET_VENDOR_ID       0x0493  /* Assigned vendor ID for training use */
-#define WT_PROFINET_DEVICE_ID       0x0001  /* Device type identifier */
-#define WT_PROFINET_MIN_INTERVAL    32      /* Minimum update interval (cycles) */
-#define WT_PROFINET_TICK_INTERVAL_US 1000   /* PROFINET stack tick rate (microseconds) */
+#define WT_PROFINET_VENDOR_ID           PN_VENDOR_ID
+#define WT_PROFINET_DEVICE_ID           PN_DEVICE_ID
+#define WT_PROFINET_MIN_INTERVAL        PN_MIN_DEVICE_INTERVAL
+#define WT_PROFINET_TICK_INTERVAL_US    PN_TICK_US
 #define WT_PROFINET_MAX_SLOTS       247     /* Maximum I/O modules supported (matches Modbus limit) */
 #define WT_PROFINET_DATA_SIZE       256     /* Maximum data payload size per slot */
 
@@ -94,7 +96,7 @@
 /* ============================================================================
  * Station Identity
  * ============================================================================ */
-#define WT_STATION_NAME_DEFAULT     "water-treat-rtu"
+#define WT_STATION_NAME_DEFAULT     PN_STATION_NAME_DEFAULT
 
 /* ============================================================================
  * Environment Variables

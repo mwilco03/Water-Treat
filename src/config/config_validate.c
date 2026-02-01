@@ -4,8 +4,10 @@
  */
 
 #include "config_validate.h"
+#include "profinet_identity.h"
 #include "utils/logger.h"
 #include <string.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <ctype.h>
 
@@ -116,6 +118,27 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
         result->flags |= CONFIG_WARN_PROFINET_DISABLED;
         result->warning_count++;
         add_message(result, "WARNING: PROFINET is disabled - no controller communication");
+    }
+
+    /* Cross-check PROFINET identity against shared constants (profinet_identity.h).
+     * These MUST match the GSDML or the controller will fail to connect. */
+    if (config->profinet.vendor_id != PN_VENDOR_ID) {
+        result->flags |= CONFIG_WARN_IDENTITY_MISMATCH;
+        result->warning_count++;
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "WARNING: Vendor ID 0x%04X differs from GSDML (0x%04X)",
+                 config->profinet.vendor_id, PN_VENDOR_ID);
+        add_message(result, msg);
+    }
+    if (config->profinet.device_id != PN_DEVICE_ID) {
+        result->flags |= CONFIG_WARN_IDENTITY_MISMATCH;
+        result->warning_count++;
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "WARNING: Device ID 0x%04X differs from GSDML (0x%04X)",
+                 config->profinet.device_id, PN_DEVICE_ID);
+        add_message(result, msg);
     }
 
     /* Check health endpoint */
