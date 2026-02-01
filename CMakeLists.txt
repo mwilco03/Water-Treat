@@ -324,6 +324,19 @@ if(GPIOD_FOUND)
         target_link_directories(water-treat PRIVATE ${GPIOD_LIBRARY_DIRS})
     endif()
     target_link_libraries(water-treat ${GPIOD_LIBRARIES})
+    # Detect libgpiod API version: v2 has gpiod_chip_get_info(), v1 does not.
+    # This drives the #if defined(HAVE_GPIOD_V2) / #elif defined(HAVE_GPIOD)
+    # branching in gpio_hal.c.
+    include(CheckFunctionExists)
+    set(CMAKE_REQUIRED_LIBRARIES ${GPIOD_LIBRARIES})
+    check_function_exists(gpiod_chip_get_info GPIOD_HAS_V2_API)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    if(GPIOD_HAS_V2_API)
+        message(STATUS "libgpiod v2 API detected")
+        target_compile_definitions(water-treat PRIVATE HAVE_GPIOD_V2=1)
+    else()
+        message(STATUS "libgpiod v1 API detected")
+    endif()
 endif()
 
 # systemd for sd_notify and watchdog support
