@@ -5,6 +5,11 @@
  * Modern GPIO interface using libgpiod (Linux GPIO character device).
  * Falls back to legacy sysfs if libgpiod is not available.
  *
+ * Supports both libgpiod v1 (1.x) and v2 (2.x) APIs. The v2 API is a
+ * ground-up redesign: struct gpiod_line is gone, replaced by a request-based
+ * model where you configure line settings, create a request config, then
+ * request lines from the chip as a batch.
+ *
  * Why libgpiod over sysfs?
  * - sysfs GPIO is deprecated since Linux 4.8
  * - libgpiod provides atomic multi-pin operations
@@ -44,7 +49,10 @@ typedef struct {
     gpio_callback_t callback;
     void *callback_ctx;
 
-#ifdef HAVE_GPIOD
+#if defined(HAVE_GPIOD_V2)
+    struct gpiod_line_request *request;
+    struct gpiod_edge_event_buffer *event_buf;
+#elif defined(HAVE_GPIOD)
     struct gpiod_line *line;
 #else
     int value_fd;
@@ -89,10 +97,486 @@ bool gpio_chip_exists(const char *chip_name) {
 }
 
 /* ============================================================================
- * libgpiod Implementation
+ * libgpiod v2 Implementation
  * ========================================================================== */
 
-#ifdef HAVE_GPIOD
+#if defined(HAVE_GPIOD_V2)
+
+/**
+ * Score a GPIO chip for selection.
+ * Higher score = better candidate for main user GPIO.
+ *
+ * Scoring criteria:
+ * - More GPIO lines = likely the main controller
+ * - Lower chip number = primary controller (tie-breaker)
+ * - Chips with "pinctrl" in label are usually the main ones
+ */
+static int score_gpiochip(const char *chip_name) {
+    char path[128];
+    snprintf(path, sizeof(path), "/dev/%s", chip_name);
+    struct gpiod_chip *chip = gpiod_chip_open(path);
+    if (!chip) return -1;
+
+    struct gpiod_chip_info *info = gpiod_chip_get_info(chip);
+    if (!info) {
+        gpiod_chip_close(chip);
+        return -1;
+    }
+
+    int score = 0;
+    size_t num_lines = gpiod_chip_info_get_num_lines(info);
+    const char *label = gpiod_chip_info_get_label(info);
+
+    /* Base score on line count - more lines = more likely main controller */
+    score = (int)num_lines;
+
+    /* Bonus for chips with pinctrl in label (usually main GPIO controller) */
+    if (label && strstr(label, "pinctrl")) {
+        score += 50;
+    }
+
+    /* Small bonus for lower chip numbers (tie-breaker) */
+    int chip_num = -1;
+    if (sscanf(chip_name, "gpiochip%d", &chip_num) == 1 && chip_num >= 0) {
+        score += (100 - chip_num);  /* Lower number = higher bonus */
+    }
+
+    LOG_DEBUG("GPIO: chip %s: lines=%zu, label='%s', score=%d",
+              chip_name, num_lines, label ? label : "", score);
+
+    gpiod_chip_info_free(info);
+    gpiod_chip_close(chip);
+    return score;
+}
+
+/**
+ * Discover the best GPIO chip using /dev/gpiochip* enumeration.
+ * Returns the chip name in buf, or false if none found.
+ */
+static bool discover_best_gpiochip(char *buf, size_t buf_size) {
+    DIR *dir = opendir("/dev");
+    if (!dir) {
+        LOG_ERROR("GPIO: Cannot open /dev for chip discovery");
+        return false;
+    }
+
+    char best_chip[64] = {0};
+    int best_score = -1;
+    int chip_count = 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        /* Look for gpiochip* entries */
+        if (strncmp(entry->d_name, "gpiochip", 8) != 0) continue;
+
+        chip_count++;
+        int score = score_gpiochip(entry->d_name);
+
+        if (score > best_score) {
+            best_score = score;
+            strncpy(best_chip, entry->d_name, sizeof(best_chip) - 1);
+        }
+    }
+
+    closedir(dir);
+
+    LOG_INFO("GPIO: Discovered %d chip(s), best candidate: %s (score=%d)",
+             chip_count, best_chip[0] ? best_chip : "none", best_score);
+
+    if (best_chip[0] != '\0' && best_score >= 0) {
+        strncpy(buf, best_chip, buf_size - 1);
+        buf[buf_size - 1] = '\0';
+        return true;
+    }
+
+    return false;
+}
+
+result_t gpio_init(void) {
+    if (g_gpio.initialized) return RESULT_OK;
+
+    pthread_mutex_init(&g_gpio.mutex, NULL);
+
+    /* Discovery-first: scan /dev for gpiochip devices and score them */
+    char best_chip[64];
+    if (discover_best_gpiochip(best_chip, sizeof(best_chip))) {
+        char path[128];
+        snprintf(path, sizeof(path), "/dev/%s", best_chip);
+        g_gpio.chip = gpiod_chip_open(path);
+        if (g_gpio.chip) {
+            SAFE_STRNCPY(g_gpio.chip_name, best_chip, sizeof(g_gpio.chip_name));
+            struct gpiod_chip_info *info = gpiod_chip_get_info(g_gpio.chip);
+            if (info) {
+                const char *lbl = gpiod_chip_info_get_label(info);
+                LOG_INFO("GPIO: Opened chip %s (%s, %zu lines)",
+                         best_chip, lbl ? lbl : "",
+                         gpiod_chip_info_get_num_lines(info));
+                gpiod_chip_info_free(info);
+            }
+        }
+    }
+
+    if (!g_gpio.chip) {
+        LOG_ERROR("GPIO: No GPIO chips discovered");
+        return RESULT_ERROR;
+    }
+
+    g_gpio.initialized = true;
+    LOG_INFO("GPIO HAL initialized (libgpiod v2 backend)");
+    return RESULT_OK;
+}
+
+void gpio_shutdown(void) {
+    if (!g_gpio.initialized) return;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    /* Release all pins */
+    for (int i = 0; i < g_gpio.pin_count; i++) {
+        if (g_gpio.pins[i].in_use) {
+            if (g_gpio.pins[i].event_buf) {
+                gpiod_edge_event_buffer_free(g_gpio.pins[i].event_buf);
+                g_gpio.pins[i].event_buf = NULL;
+            }
+            if (g_gpio.pins[i].request) {
+                gpiod_line_request_release(g_gpio.pins[i].request);
+                g_gpio.pins[i].request = NULL;
+            }
+            g_gpio.pins[i].in_use = false;
+        }
+    }
+
+    if (g_gpio.chip) {
+        gpiod_chip_close(g_gpio.chip);
+        g_gpio.chip = NULL;
+    }
+
+    pthread_mutex_unlock(&g_gpio.mutex);
+    pthread_mutex_destroy(&g_gpio.mutex);
+
+    g_gpio.initialized = false;
+    LOG_INFO("GPIO HAL shutdown");
+}
+
+static gpio_pin_state_t* find_or_create_pin(int pin) {
+    for (int i = 0; i < g_gpio.pin_count; i++) {
+        if (g_gpio.pins[i].pin == pin) {
+            return &g_gpio.pins[i];
+        }
+    }
+
+    if (g_gpio.pin_count >= MAX_GPIO_PINS) {
+        return NULL;
+    }
+
+    gpio_pin_state_t *state = &g_gpio.pins[g_gpio.pin_count++];
+    memset(state, 0, sizeof(*state));
+    state->pin = pin;
+    return state;
+}
+
+result_t gpio_configure(int pin, gpio_direction_t dir, gpio_pull_t pull) {
+    if (!g_gpio.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    gpio_pin_state_t *state = find_or_create_pin(pin);
+    if (!state) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        LOG_ERROR("GPIO: Too many pins configured");
+        return RESULT_NO_MEMORY;
+    }
+
+    /* Release existing request if reconfiguring */
+    if (state->request) {
+        gpiod_line_request_release(state->request);
+        state->request = NULL;
+    }
+    if (state->event_buf) {
+        gpiod_edge_event_buffer_free(state->event_buf);
+        state->event_buf = NULL;
+    }
+
+    /* Create line settings */
+    struct gpiod_line_settings *settings = gpiod_line_settings_new();
+    if (!settings) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_ERROR;
+    }
+
+    if (dir == GPIO_DIR_OUTPUT) {
+        gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_OUTPUT);
+        gpiod_line_settings_set_output_value(settings, GPIOD_LINE_VALUE_INACTIVE);
+    } else {
+        gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+    }
+
+    switch (pull) {
+        case GPIO_PULL_UP:   gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_PULL_UP); break;
+        case GPIO_PULL_DOWN: gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_PULL_DOWN); break;
+        default:             gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_DISABLED); break;
+    }
+
+    /* Create line config and add settings for our offset */
+    struct gpiod_line_config *line_cfg = gpiod_line_config_new();
+    if (!line_cfg) {
+        gpiod_line_settings_free(settings);
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_ERROR;
+    }
+
+    unsigned int offset = (unsigned int)pin;
+    gpiod_line_config_add_line_settings(line_cfg, &offset, 1, settings);
+
+    /* Create request config with consumer name */
+    struct gpiod_request_config *req_cfg = gpiod_request_config_new();
+    if (!req_cfg) {
+        gpiod_line_config_free(line_cfg);
+        gpiod_line_settings_free(settings);
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_ERROR;
+    }
+    gpiod_request_config_set_consumer(req_cfg, GPIO_CONSUMER_NAME);
+
+    /* Request the line */
+    state->request = gpiod_chip_request_lines(g_gpio.chip, req_cfg, line_cfg);
+
+    gpiod_request_config_free(req_cfg);
+    gpiod_line_config_free(line_cfg);
+    gpiod_line_settings_free(settings);
+
+    if (!state->request) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        LOG_ERROR("GPIO: Failed to configure line %d", pin);
+        return RESULT_ERROR;
+    }
+
+    state->in_use = true;
+    state->direction = dir;
+
+    pthread_mutex_unlock(&g_gpio.mutex);
+    LOG_DEBUG("GPIO: Configured pin %d as %s", pin, dir == GPIO_DIR_OUTPUT ? "output" : "input");
+    return RESULT_OK;
+}
+
+result_t gpio_read(int pin, bool *value) {
+    CHECK_NULL(value);
+    if (!g_gpio.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    gpio_pin_state_t *state = find_or_create_pin(pin);
+    if (!state || !state->request) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_NOT_FOUND;
+    }
+
+    enum gpiod_line_value val = gpiod_line_request_get_value(
+        state->request, (unsigned int)pin);
+    if (val == GPIOD_LINE_VALUE_ERROR) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        LOG_ERROR("GPIO: Failed to read pin %d", pin);
+        return RESULT_IO_ERROR;
+    }
+
+    *value = (val == GPIOD_LINE_VALUE_ACTIVE);
+    pthread_mutex_unlock(&g_gpio.mutex);
+    return RESULT_OK;
+}
+
+result_t gpio_write(int pin, bool value) {
+    if (!g_gpio.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    gpio_pin_state_t *state = find_or_create_pin(pin);
+    if (!state || !state->request) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_NOT_FOUND;
+    }
+
+    int ret = gpiod_line_request_set_value(state->request, (unsigned int)pin,
+        value ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE);
+    if (ret < 0) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        LOG_ERROR("GPIO: Failed to write pin %d", pin);
+        return RESULT_IO_ERROR;
+    }
+
+    pthread_mutex_unlock(&g_gpio.mutex);
+    return RESULT_OK;
+}
+
+result_t gpio_set_edge(int pin, gpio_edge_t edge) {
+    if (!g_gpio.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    gpio_pin_state_t *state = find_or_create_pin(pin);
+    if (!state) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_NOT_FOUND;
+    }
+
+    /* Release and reconfigure for edge detection */
+    if (state->request) {
+        gpiod_line_request_release(state->request);
+        state->request = NULL;
+    }
+    if (state->event_buf) {
+        gpiod_edge_event_buffer_free(state->event_buf);
+        state->event_buf = NULL;
+    }
+
+    /* Create line settings with edge detection */
+    struct gpiod_line_settings *settings = gpiod_line_settings_new();
+    if (!settings) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_ERROR;
+    }
+
+    gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+
+    enum gpiod_line_edge gpiod_edge;
+    switch (edge) {
+        case GPIO_EDGE_RISING:  gpiod_edge = GPIOD_LINE_EDGE_RISING; break;
+        case GPIO_EDGE_FALLING: gpiod_edge = GPIOD_LINE_EDGE_FALLING; break;
+        case GPIO_EDGE_BOTH:    gpiod_edge = GPIOD_LINE_EDGE_BOTH; break;
+        default:
+            gpiod_line_settings_free(settings);
+            pthread_mutex_unlock(&g_gpio.mutex);
+            return RESULT_INVALID_PARAM;
+    }
+    gpiod_line_settings_set_edge_detection(settings, gpiod_edge);
+
+    struct gpiod_line_config *line_cfg = gpiod_line_config_new();
+    if (!line_cfg) {
+        gpiod_line_settings_free(settings);
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_ERROR;
+    }
+
+    unsigned int offset = (unsigned int)pin;
+    gpiod_line_config_add_line_settings(line_cfg, &offset, 1, settings);
+
+    struct gpiod_request_config *req_cfg = gpiod_request_config_new();
+    if (!req_cfg) {
+        gpiod_line_config_free(line_cfg);
+        gpiod_line_settings_free(settings);
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_ERROR;
+    }
+    gpiod_request_config_set_consumer(req_cfg, GPIO_CONSUMER_NAME);
+
+    state->request = gpiod_chip_request_lines(g_gpio.chip, req_cfg, line_cfg);
+
+    gpiod_request_config_free(req_cfg);
+    gpiod_line_config_free(line_cfg);
+    gpiod_line_settings_free(settings);
+
+    if (!state->request) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        LOG_ERROR("GPIO: Failed to configure edge detection on pin %d", pin);
+        return RESULT_ERROR;
+    }
+
+    /* Pre-allocate event buffer (avoids runtime allocation in gpio_wait_edge) */
+    state->event_buf = gpiod_edge_event_buffer_new(1);
+    if (!state->event_buf) {
+        gpiod_line_request_release(state->request);
+        state->request = NULL;
+        pthread_mutex_unlock(&g_gpio.mutex);
+        LOG_ERROR("GPIO: Failed to allocate event buffer for pin %d", pin);
+        return RESULT_ERROR;
+    }
+
+    state->edge = edge;
+    state->in_use = true;
+
+    pthread_mutex_unlock(&g_gpio.mutex);
+    return RESULT_OK;
+}
+
+result_t gpio_wait_edge(int pin, int timeout_ms, bool *value) {
+    if (!g_gpio.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    gpio_pin_state_t *state = find_or_create_pin(pin);
+    if (!state || !state->request || !state->event_buf) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_NOT_FOUND;
+    }
+
+    /* v2 API uses nanoseconds for timeout */
+    int64_t timeout_ns = (int64_t)timeout_ms * 1000000LL;
+
+    int ret = gpiod_line_request_wait_edge_events(state->request, timeout_ns);
+    if (ret < 0) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_ERROR;
+    }
+    if (ret == 0) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_TIMEOUT;
+    }
+
+    int num_events = gpiod_line_request_read_edge_events(
+        state->request, state->event_buf, 1);
+    if (num_events < 1) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_IO_ERROR;
+    }
+
+    if (value) {
+        struct gpiod_edge_event *event =
+            gpiod_edge_event_buffer_get_event(state->event_buf, 0);
+        *value = (gpiod_edge_event_get_event_type(event) ==
+                  GPIOD_EDGE_EVENT_RISING_EDGE);
+    }
+
+    pthread_mutex_unlock(&g_gpio.mutex);
+    return RESULT_OK;
+}
+
+result_t gpio_add_callback(int pin, gpio_callback_t callback, void *ctx) {
+    if (!g_gpio.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    gpio_pin_state_t *state = find_or_create_pin(pin);
+    if (!state) {
+        pthread_mutex_unlock(&g_gpio.mutex);
+        return RESULT_NOT_FOUND;
+    }
+
+    state->callback = callback;
+    state->callback_ctx = ctx;
+
+    pthread_mutex_unlock(&g_gpio.mutex);
+    return RESULT_OK;
+}
+
+result_t gpio_remove_callback(int pin) {
+    if (!g_gpio.initialized) return RESULT_NOT_INITIALIZED;
+
+    pthread_mutex_lock(&g_gpio.mutex);
+
+    gpio_pin_state_t *state = find_or_create_pin(pin);
+    if (state) {
+        state->callback = NULL;
+        state->callback_ctx = NULL;
+    }
+
+    pthread_mutex_unlock(&g_gpio.mutex);
+    return RESULT_OK;
+}
+
+/* ============================================================================
+ * libgpiod v1 Implementation
+ * ========================================================================== */
+
+#elif defined(HAVE_GPIOD)
 
 /**
  * Score a GPIO chip for selection.
@@ -742,7 +1226,7 @@ result_t gpio_remove_callback(int pin) {
     return RESULT_OK;
 }
 
-#endif /* HAVE_GPIOD */
+#endif /* HAVE_GPIOD / HAVE_GPIOD_V2 */
 
 /* ============================================================================
  * PWM Functions (sysfs implementation)
