@@ -263,9 +263,12 @@ install_packages() {
                 return 1
             fi
 
-            # Install libicu (needed by .NET Core / GitHub Actions runner).
-            # Package name includes a version that varies by OS release
-            # (e.g., libicu74 on Ubuntu 24.04, libicu76 on 24.10+).
+            # --- CI runner / .NET runtime dependencies ---
+            # Debian 13+ (Trixie) renamed many runtime libraries with a "t64"
+            # suffix for the 64-bit time_t transition (e.g., libssl3 -> libssl3t64).
+            # We try the base name first, then fall back to the t64 variant.
+
+            # libicu: version-numbered (libicu74, libicu76, etc.)
             local icu_pkg
             icu_pkg=$(apt-cache search '^libicu[0-9]' 2>/dev/null | grep -v java | head -1 | awk '{print $1}')
             if [[ -n "$icu_pkg" ]]; then
@@ -273,6 +276,21 @@ install_packages() {
                 DEBIAN_FRONTEND=noninteractive apt-get install -y "$icu_pkg" || \
                     non_breaking "Failed to install $icu_pkg (non-critical)"
             fi
+
+            # Runtime libraries that may need t64 suffix on Debian 13+
+            local t64_packages=("libssl3" "libcurl4" "liblttng-ust1" "libkrb5-3" "zlib1g")
+            local base_pkg resolved_pkg
+            for base_pkg in "${t64_packages[@]}"; do
+                resolved_pkg="$base_pkg"
+                if ! apt-cache show "$base_pkg" &>/dev/null 2>&1; then
+                    if apt-cache show "${base_pkg}t64" &>/dev/null 2>&1; then
+                        resolved_pkg="${base_pkg}t64"
+                    fi
+                fi
+                info "Installing ${resolved_pkg}..."
+                DEBIAN_FRONTEND=noninteractive apt-get install -y "$resolved_pkg" 2>/dev/null || \
+                    non_breaking "Failed to install $resolved_pkg (non-critical)"
+            done
             ;;
 
         dnf)
@@ -335,10 +353,11 @@ install_packages() {
 # libgpiod Version Detection
 # ------------------------------------------------------------------------------
 # What: Check if libgpiod is installed and which API version
-# Why: This codebase uses libgpiod v1 API. Debian Bookworm+ ships v2.
-#      v1 and v2 APIs are incompatible - different function names.
+# Why: This codebase supports both v1 and v2 APIs via compile-time detection.
+#      CMake detects the API version automatically (HAVE_GPIOD / HAVE_GPIOD_V2).
+#      Debian Bookworm+ ships v2; older distros have v1.
 # Edge cases: Not installed, v1 installed, v2 installed
-# User impact: Automatic - we handle the mismatch for them
+# User impact: Automatic - both API versions are supported
 #
 
 declare -A LIBGPIOD=()
@@ -369,7 +388,7 @@ detect_libgpiod() {
             ;;
         2.*)
             LIBGPIOD[api]="v2"
-            detail "Found libgpiod ${LIBGPIOD[version]} (v2 API - incompatible)"
+            detail "Found libgpiod ${LIBGPIOD[version]} (v2 API - supported)"
             ;;
         *)
             LIBGPIOD[api]="unknown"
@@ -485,9 +504,9 @@ build_libgpiod_v1() {
 # libgpiod Handling
 # ------------------------------------------------------------------------------
 # What: Determine what to do based on libgpiod state
-# Why: Need v1 API, system might have v2 or nothing
-# Edge cases: Already have v1 (do nothing), have v2 (build v1), have nothing (build v1)
-# User impact: Automatic resolution of API compatibility
+# Why: Need libgpiod installed (v1 or v2 both work, CMake auto-detects)
+# Edge cases: Already have v1 (OK), have v2 (OK), have nothing (build v1)
+# User impact: Automatic resolution - any installed version works
 #
 
 handle_libgpiod() {
@@ -500,12 +519,7 @@ handle_libgpiod() {
             ;;
 
         "v2")
-            warn "System has libgpiod v2 which uses incompatible API"
-            warn "This project requires libgpiod v1 API"
-            echo ""
-            action "Building libgpiod v1 from source (installs to /usr/local)"
-
-            build_libgpiod_v1 || return 1
+            success "libgpiod v2 API available (CMake will auto-detect)"
             return 0
             ;;
 
@@ -803,17 +817,16 @@ verify_dependencies() {
         fi
     done
 
-    # Special check: libgpiod must be v1
+    # Check libgpiod version (v1 and v2 both supported, CMake auto-detects)
     if pkg-config --exists libgpiod 2>/dev/null; then
         local gpiod_ver
         gpiod_ver="$(pkg-config --modversion libgpiod)"
         case "${gpiod_ver}" in
-            1.*)
-                # Good
+            1.*|2.*)
+                detail "libgpiod ${gpiod_ver} OK (CMake auto-detects API version)"
                 ;;
             *)
-                breaking "libgpiod is ${gpiod_ver} but v1.x is required"
-                all_good=false
+                non_breaking "libgpiod is ${gpiod_ver} (unknown version, may still work)"
                 ;;
         esac
     fi
