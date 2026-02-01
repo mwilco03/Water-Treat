@@ -273,9 +273,20 @@ int profinet_connect_callback(pnet_t *net, void *arg,
 
 int profinet_release_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
-    UNUSED(net); UNUSED(arg); UNUSED(result);
+    UNUSED(net); UNUSED(arg);
 
     LOG_INFO("PROFINET release (arep=%u)", arep);
+
+    if (result &&
+        (result->pnio_status.error_code != 0 ||
+         result->pnio_status.error_code_1 != 0 ||
+         result->pnio_status.error_code_2 != 0)) {
+        LOG_WARNING(">>> release_callback result: err=0x%02X, err1=0x%02X, err2=0x%04X",
+                    result->pnio_status.error_code,
+                    result->pnio_status.error_code_1,
+                    result->pnio_status.error_code_2);
+    }
+
     profinet_manager_set_connected(false, 0);
     return 0;
 }
