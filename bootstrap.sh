@@ -900,6 +900,21 @@ build_from_source() {
         return 1
     fi
 
+    # Install non-packaged dependencies (p-net PROFINET stack, libgpiod, etc.)
+    # p-net is CRITICAL -- without it HAVE_PNET is undefined and the entire
+    # PROFINET subsystem compiles to stubs.  The RTU cannot communicate.
+    if [[ -f "$source_dir/scripts/install-deps.sh" ]]; then
+        log_step "Installing dependencies (p-net, libgpiod)..."
+        if ! (cd "$source_dir" && bash scripts/install-deps.sh); then
+            log_error "Dependency installation failed"
+            log_error "p-net (PROFINET stack) is required -- cannot build without it"
+            return 1
+        fi
+    else
+        log_error "scripts/install-deps.sh not found in cloned repo"
+        return 1
+    fi
+
     # Fetch shared protocol headers from Water-Controller
     fetch_shared_protocols "$source_dir" || {
         log_error "Cannot build without protocol headers from Water-Controller"
@@ -910,10 +925,22 @@ build_from_source() {
     mkdir -p "$build_dir"
 
     log_info "Running cmake..."
-    (cd "$build_dir" && cmake ..) || {
+    local cmake_output
+    cmake_output=$(cd "$build_dir" && cmake .. 2>&1) || {
         log_error "CMake configuration failed"
+        echo "$cmake_output" >&2
         return 1
     }
+    echo "$cmake_output" >&2
+
+    # CRITICAL: Verify p-net was found.  Without it the PROFINET subsystem
+    # compiles to stubs and the RTU cannot communicate with the controller.
+    if echo "$cmake_output" | grep -q "p-net not found"; then
+        log_error "p-net (PROFINET stack) was NOT found by CMake"
+        log_error "The RTU binary will have no PROFINET support -- aborting"
+        log_error "Run: scripts/install-deps.sh  to build p-net from source"
+        return 1
+    fi
 
     log_info "Compiling (this may take a few minutes)..."
     local nproc_count
