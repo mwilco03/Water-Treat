@@ -297,9 +297,15 @@ int profinet_read_callback(pnet_t *net, void *arg,
 
     switch (idx) {
         case 0x8000:  /* Identification & Maintenance 0 (mandatory) */
+            /*
+             * Note: p-net v0.2.0 handles I&M0 reads internally from
+             * pnet_cfg_t.im_0_data — this case is never reached.
+             * I&M0 data is set in profinet_manager_init().
+             * Kept as defensive fallback only.
+             */
             *data = (uint8_t *)&g_im0_data;
             *length = sizeof(im0_data_t);
-            LOG_DEBUG("I&M0 read: providing %u bytes", *length);
+            LOG_WARNING("I&M0 read via app callback (unexpected — p-net should handle internally)");
             return 0;
 
         case 0x8001:  /* Identification & Maintenance 1 (optional - function tag) */

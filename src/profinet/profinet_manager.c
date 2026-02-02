@@ -459,6 +459,32 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     // Note: physical_ports[0].netif_name is set in profinet_manager_start()
     // after we know the interface name
 
+    // Send DCP Hello at startup so controllers can discover us proactively
+    g_pn.pnet_cfg.send_hello = true;
+
+    // I&M0 (Identification & Maintenance) data - served by p-net internally
+    // Note: p-net handles index 0x8000 reads from this struct directly;
+    // the application read_cb is NOT called for I&M0.
+    g_pn.pnet_cfg.im_0_data.im_vendor_id_hi = PN_VENDOR_ID_HI;
+    g_pn.pnet_cfg.im_0_data.im_vendor_id_lo = PN_VENDOR_ID_LO;
+    snprintf(g_pn.pnet_cfg.im_0_data.im_order_id,
+             sizeof(g_pn.pnet_cfg.im_0_data.im_order_id),
+             "WaterTreat-RTU");
+    snprintf(g_pn.pnet_cfg.im_0_data.im_serial_number,
+             sizeof(g_pn.pnet_cfg.im_0_data.im_serial_number),
+             "RTU-000000001");
+    g_pn.pnet_cfg.im_0_data.im_hardware_revision = 1;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_prefix = 'V';
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_functional_enhancement = 1;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_bug_fix = 0;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_internal_change = 0;
+    g_pn.pnet_cfg.im_0_data.im_revision_counter = 0;
+    g_pn.pnet_cfg.im_0_data.im_profile_id = 0;
+    g_pn.pnet_cfg.im_0_data.im_profile_specific_type = 0;
+    g_pn.pnet_cfg.im_0_data.im_version_major = 1;
+    g_pn.pnet_cfg.im_0_data.im_version_minor = 1;
+    g_pn.pnet_cfg.im_0_data.im_supported = 0x001E; /* I&M1-4 supported (I&M0 always implicit) */
+
     // Callbacks
     g_pn.pnet_cfg.state_cb = profinet_state_callback;
     g_pn.pnet_cfg.connect_cb = profinet_connect_callback;
