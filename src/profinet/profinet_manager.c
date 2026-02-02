@@ -913,24 +913,22 @@ result_t profinet_manager_start(const char *interface) {
                                    GSDML_MOD_DAP, GSDML_SUBMOD_DAP_INTERFACE,
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
-        LOG_ERROR("Failed to plug DAP interface submodule at slot 0.0x8000");
-        LOG_ERROR("Controller expects subslot 0x8000 — Connect will be rejected without it");
-        g_pn.pnet = NULL;
-        return RESULT_ERROR;
+        LOG_WARNING("Failed to plug DAP interface submodule at slot 0.0x8000");
+        LOG_WARNING("Controller tolerates this (ModuleDiffBlock warning), but functionality may be limited");
+    } else {
+        LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000 (ident=0x%08X)", GSDML_SUBMOD_DAP_INTERFACE);
     }
-    LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000 (ident=0x%08X)", GSDML_SUBMOD_DAP_INTERFACE);
 
     // Plug DAP port submodule at slot 0, subslot 0x8001
     dap_ret = pnet_plug_submodule(g_pn.pnet, 0, 0, 0x8001,
                                    GSDML_MOD_DAP, GSDML_SUBMOD_DAP_PORT,
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
-        LOG_ERROR("Failed to plug DAP port submodule at slot 0.0x8001");
-        LOG_ERROR("Controller expects subslot 0x8001 — Connect will be rejected without it");
-        g_pn.pnet = NULL;
-        return RESULT_ERROR;
+        LOG_WARNING("Failed to plug DAP port submodule at slot 0.0x8001");
+        LOG_WARNING("Controller tolerates this (ModuleDiffBlock warning), but functionality may be limited");
+    } else {
+        LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001 (ident=0x%08X)", GSDML_SUBMOD_DAP_PORT);
     }
-    LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001 (ident=0x%08X)", GSDML_SUBMOD_DAP_PORT);
 
     // =========================================================================
     // Plug application modules from database
