@@ -28,6 +28,7 @@ static int config_to_json(char *buffer, size_t buffer_size);
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/sysinfo.h>
+#include <inttypes.h>
 #include <fcntl.h>
 #include <errno.h>
 
@@ -291,8 +292,8 @@ int health_check_to_json(char *buffer, size_t buffer_size) {
     return snprintf(buffer, buffer_size,
         "{\n"
         "  \"status\": \"%s\",\n"
-        "  \"timestamp\": %lu,\n"
-        "  \"uptime_seconds\": %lu,\n"
+        "  \"timestamp\": %" PRIu64 ",\n"
+        "  \"uptime_seconds\": %" PRIu64 ",\n"
         "  \"subsystems\": {\n"
         "    \"profinet\": {\"status\": \"%s\", \"message\": \"%s\"},\n"
         "    \"sensors\": {\"status\": \"%s\", \"message\": \"%s\"},\n"
@@ -310,8 +311,8 @@ int health_check_to_json(char *buffer, size_t buffer_size) {
         "  }\n"
         "}\n",
         health_status_to_string(snap.overall_status),
-        (unsigned long)snap.timestamp,
-        (unsigned long)snap.uptime_seconds,
+        snap.timestamp,
+        snap.uptime_seconds,
         health_status_to_string(snap.profinet.status), snap.profinet.message,
         health_status_to_string(snap.sensors.status), snap.sensors.message,
         health_status_to_string(snap.actuators.status), snap.actuators.message,
@@ -337,7 +338,7 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         "water_treat_health %d\n"
         "# HELP water_treat_uptime_seconds Uptime in seconds\n"
         "# TYPE water_treat_uptime_seconds counter\n"
-        "water_treat_uptime_seconds %lu\n"
+        "water_treat_uptime_seconds %" PRIu64 "\n"
         "# HELP water_treat_subsystem_health Subsystem health (0=ok, 1=degraded, 2=critical, 3=unknown)\n"
         "# TYPE water_treat_subsystem_health gauge\n"
         "water_treat_subsystem_health{subsystem=\"profinet\"} %d\n"
@@ -364,7 +365,7 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         "# TYPE water_treat_memory_usage_percent gauge\n"
         "water_treat_memory_usage_percent %.1f\n",
         (int)snap.overall_status,
-        (unsigned long)snap.uptime_seconds,
+        snap.uptime_seconds,
         (int)snap.profinet.status,
         (int)snap.sensors.status,
         (int)snap.actuators.status,
@@ -381,13 +382,13 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
     len += snprintf(buffer + len, buffer_size - len,
         "# HELP water_treat_logger_total_logged Total entries logged locally\n"
         "# TYPE water_treat_logger_total_logged counter\n"
-        "water_treat_logger_total_logged %lu\n"
+        "water_treat_logger_total_logged %" PRIu64 "\n"
         "# HELP water_treat_logger_remote_sent Total entries sent to remote successfully\n"
         "# TYPE water_treat_logger_remote_sent counter\n"
-        "water_treat_logger_remote_sent %lu\n"
+        "water_treat_logger_remote_sent %" PRIu64 "\n"
         "# HELP water_treat_logger_remote_failed Total entries that failed to send to remote\n"
         "# TYPE water_treat_logger_remote_failed counter\n"
-        "water_treat_logger_remote_failed %lu\n"
+        "water_treat_logger_remote_failed %" PRIu64 "\n"
         "# HELP water_treat_logger_queue_depth Current entries queued for remote transmission\n"
         "# TYPE water_treat_logger_queue_depth gauge\n"
         "water_treat_logger_queue_depth %d\n"
@@ -400,9 +401,9 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         "# HELP water_treat_logger_consecutive_failures Consecutive remote send failures\n"
         "# TYPE water_treat_logger_consecutive_failures gauge\n"
         "water_treat_logger_consecutive_failures %d\n",
-        (unsigned long)logger_stats.total_logged,
-        (unsigned long)logger_stats.total_remote_sent,
-        (unsigned long)logger_stats.total_remote_failed,
+        logger_stats.total_logged,
+        logger_stats.total_remote_sent,
+        logger_stats.total_remote_failed,
         logger_stats.queue_count,
         logger_stats.queue_capacity,
         logger_stats.remote_available ? 1 : 0,
@@ -420,14 +421,14 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
             "water_treat_alarm_rules_max %d\n"
             "# HELP water_treat_alarm_cache_hits Alarm rule cache hits\n"
             "# TYPE water_treat_alarm_cache_hits counter\n"
-            "water_treat_alarm_cache_hits %lu\n"
+            "water_treat_alarm_cache_hits %" PRIu64 "\n"
             "# HELP water_treat_alarm_total_checks Total alarm rule checks performed\n"
             "# TYPE water_treat_alarm_total_checks counter\n"
-            "water_treat_alarm_total_checks %lu\n",
+            "water_treat_alarm_total_checks %" PRIu64 "\n",
             alarm_stats.cached_rule_count,
             256,  /* MAX_ALARM_RULES from alarm_manager.c */
-            (unsigned long)alarm_stats.cache_hits,
-            (unsigned long)alarm_stats.total_checks);
+            alarm_stats.cache_hits,
+            alarm_stats.total_checks);
     }
 
     /* Add per-sensor health metrics (P2 operator request for predictive maintenance) */
@@ -440,8 +441,8 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
             sensor_instance_t *s = g_sensor_mgr.instances[i];
             if (!s) continue;
             len += snprintf(buffer + len, buffer_size - len,
-                "water_treat_sensor_total_reads{sensor=\"%s\",slot=\"%d\"} %lu\n",
-                s->name, s->slot, (unsigned long)s->total_reads);
+                "water_treat_sensor_total_reads{sensor=\"%s\",slot=\"%d\"} %" PRIu64 "\n",
+                s->name, s->slot, s->total_reads);
         }
 
         len += snprintf(buffer + len, buffer_size - len,
@@ -451,8 +452,8 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
             sensor_instance_t *s = g_sensor_mgr.instances[i];
             if (!s) continue;
             len += snprintf(buffer + len, buffer_size - len,
-                "water_treat_sensor_total_failures{sensor=\"%s\",slot=\"%d\"} %lu\n",
-                s->name, s->slot, (unsigned long)s->total_failures);
+                "water_treat_sensor_total_failures{sensor=\"%s\",slot=\"%d\"} %" PRIu64 "\n",
+                s->name, s->slot, s->total_failures);
         }
 
         len += snprintf(buffer + len, buffer_size - len,
