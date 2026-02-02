@@ -78,6 +78,44 @@ detect_os() {
 }
 
 # ------------------------------------------------------------------------------
+# t64 ABI Detection
+# ------------------------------------------------------------------------------
+# What: Detect if runtime packages use the "t64" suffix
+# Why: Debian 13+ (Trixie) and Ubuntu 24.04+ renamed many libs for 64-bit
+#      time_t (e.g., libssl3 -> libssl3t64).  Set T64="" or T64="t64" once,
+#      then use "${T64}" in package names:  apt-get install "libssl3${T64}"
+# Edge cases: Unknown derivatives fall back to checking installed packages
+# User impact: Correct package names on first try, no fallback loops
+#
+
+T64=""
+
+detect_t64() {
+    T64=""
+    case "${SYSTEM[os_id]}" in
+        debian)
+            if [[ "${SYSTEM[os_version]%%.*}" -ge 13 ]] 2>/dev/null; then
+                T64="t64"
+            fi
+            ;;
+        ubuntu)
+            if dpkg --compare-versions "${SYSTEM[os_version]}" ge "24.04" 2>/dev/null; then
+                T64="t64"
+            fi
+            ;;
+        *)
+            if dpkg -l 'lib*t64' 2>/dev/null | grep -q '^ii'; then
+                T64="t64"
+            fi
+            ;;
+    esac
+
+    if [[ -n "$T64" ]]; then
+        detail "t64 ABI detected (${SYSTEM[os_id]} ${SYSTEM[os_version]})"
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # Package Name Mappings
 # ------------------------------------------------------------------------------
 # What: Maps generic package names to distro-specific names
@@ -263,47 +301,25 @@ install_packages() {
                 return 1
             fi
 
-            # --- CI runner / .NET runtime dependencies ---
-            # Debian 13+ (Trixie) renamed many runtime libraries with a "t64"
-            # suffix for the 64-bit time_t transition (e.g., libssl3 -> libssl3t64).
-            #
-            # We use `apt-cache policy` to check for an installable candidate.
-            # `apt-cache show` is NOT reliable -- it returns metadata for
-            # virtual/transitional packages that apt-get cannot install.
+            # CI runner / .NET runtime dependencies.
+            # detect_t64 sets T64="" or T64="t64" based on OS version.
+            detect_t64
 
-            # libicu: version-numbered (libicu74, libicu76, etc.)
             local icu_pkg
             icu_pkg=$(apt-cache search '^libicu[0-9]' 2>/dev/null | grep -v java | head -1 | awk '{print $1}')
-            if [[ -n "$icu_pkg" ]]; then
-                info "Installing $icu_pkg (ICU runtime for .NET / CI runners)..."
-                DEBIAN_FRONTEND=noninteractive apt-get install -y "$icu_pkg" || \
-                    non_breaking "Failed to install $icu_pkg"
-            fi
 
-            # Runtime libraries that may need t64 suffix on Debian 13+
-            local t64_bases=("libssl3" "libcurl4" "liblttng-ust1" "libkrb5-3" "zlib1g")
-            local resolved_rt=()
-            local base_pkg candidate
+            local rt_pkgs=(
+                "libssl3${T64}"
+                "libcurl4${T64}"
+                "liblttng-ust1${T64}"
+                "libkrb5-3"
+                "zlib1g"
+                ${icu_pkg:+"$icu_pkg"}
+            )
 
-            for base_pkg in "${t64_bases[@]}"; do
-                candidate=$(apt-cache policy "$base_pkg" 2>/dev/null | awk '/Candidate:/{print $2}')
-                if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
-                    resolved_rt+=("$base_pkg")
-                else
-                    candidate=$(apt-cache policy "${base_pkg}t64" 2>/dev/null | awk '/Candidate:/{print $2}')
-                    if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
-                        resolved_rt+=("${base_pkg}t64")
-                    else
-                        non_breaking "No installable package for $base_pkg (or ${base_pkg}t64)"
-                    fi
-                fi
-            done
-
-            if [[ ${#resolved_rt[@]} -gt 0 ]]; then
-                info "Installing runtime deps: ${resolved_rt[*]}"
-                DEBIAN_FRONTEND=noninteractive apt-get install -y "${resolved_rt[@]}" || \
-                    non_breaking "Some runtime dependencies failed to install"
-            fi
+            info "Installing runtime deps: ${rt_pkgs[*]}"
+            DEBIAN_FRONTEND=noninteractive apt-get install -y "${rt_pkgs[@]}" || \
+                non_breaking "Some runtime dependencies failed to install"
             ;;
 
         dnf)

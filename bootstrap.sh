@@ -357,6 +357,55 @@ purge_pnet_contamination() {
 }
 
 # =============================================================================
+# OS / Package Detection
+# =============================================================================
+# Debian 13+ (Trixie) and Ubuntu 24.04+ renamed many runtime libraries with
+# a "t64" suffix for the 64-bit time_t ABI transition.  Detect once, use
+# everywhere via the T64 variable: empty on older distros, "t64" on newer.
+#
+#   apt-get install -y "libssl3${T64}" "libcurl4${T64}" ...
+#
+# Detection priority:
+#   1. Known distro+version from /etc/os-release
+#   2. Fallback: check if ANY lib*t64 package is installed (covers derivatives)
+# =============================================================================
+T64=""
+
+detect_t64() {
+    T64=""
+    if [[ ! -f /etc/os-release ]]; then
+        return
+    fi
+
+    local id version_id
+    id=$(. /etc/os-release && echo "${ID:-}")
+    version_id=$(. /etc/os-release && echo "${VERSION_ID:-0}")
+
+    case "$id" in
+        debian)
+            if [[ "${version_id%%.*}" -ge 13 ]] 2>/dev/null; then
+                T64="t64"
+            fi
+            ;;
+        ubuntu)
+            if dpkg --compare-versions "$version_id" ge "24.04" 2>/dev/null; then
+                T64="t64"
+            fi
+            ;;
+        *)
+            # Unknown derivative -- check if the system has t64 packages installed
+            if dpkg -l 'lib*t64' 2>/dev/null | grep -q '^ii'; then
+                T64="t64"
+            fi
+            ;;
+    esac
+
+    if [[ -n "$T64" ]]; then
+        log_debug "t64 ABI detected ($id $version_id) -- using t64 package suffixes"
+    fi
+}
+
+# =============================================================================
 # System Detection
 # =============================================================================
 
@@ -477,47 +526,29 @@ check_build_deps() {
         log_info "Please ensure cmake, make, gcc and development libraries are installed"
     fi
 
-    # Install CI runner / .NET runtime dependencies.
-    # Debian 13+ (Trixie) renamed many runtime packages with a "t64" suffix
-    # for the 64-bit time_t transition (e.g., libssl3 -> libssl3t64,
-    # libcurl4 -> libcurl4t64).
-    #
-    # We use `apt-cache policy` to check for an installable candidate.
-    # `apt-cache show` is NOT reliable here -- it returns metadata for
-    # virtual/transitional packages that apt-get cannot actually install.
+    # CI runner / .NET runtime dependencies.
+    # detect_t64 sets T64="" or T64="t64" based on /etc/os-release.
+    # Packages that went through the 64-bit time_t ABI transition get
+    # the suffix appended; others (libkrb5-3, zlib1g) keep their name.
     if command -v apt-cache &>/dev/null; then
-        # libicu: version-numbered package (libicu74, libicu76, etc.)
+        detect_t64
+
+        # libicu: version-numbered (libicu74, libicu76, etc.) -- detect dynamically
         local icu_pkg
         icu_pkg=$(apt-cache search '^libicu[0-9]' 2>/dev/null | grep -v java | head -1 | awk '{print $1}')
-        if [[ -n "$icu_pkg" ]]; then
-            log_info "Installing $icu_pkg (ICU runtime for .NET / CI runners)..."
-            run_privileged apt-get install -y "$icu_pkg" || log_warn "Failed to install $icu_pkg"
-        fi
 
-        # Runtime libraries that may need t64 suffix on Debian 13+
-        local t64_bases=("libssl3" "libcurl4" "liblttng-ust1" "libkrb5-3" "zlib1g")
-        local resolved_rt=()
-        local base_pkg candidate
+        local rt_pkgs=(
+            "libssl3${T64}"
+            "libcurl4${T64}"
+            "liblttng-ust1${T64}"
+            "libkrb5-3"
+            "zlib1g"
+            ${icu_pkg:+"$icu_pkg"}
+        )
 
-        for base_pkg in "${t64_bases[@]}"; do
-            candidate=$(apt-cache policy "$base_pkg" 2>/dev/null | awk '/Candidate:/{print $2}')
-            if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
-                resolved_rt+=("$base_pkg")
-            else
-                candidate=$(apt-cache policy "${base_pkg}t64" 2>/dev/null | awk '/Candidate:/{print $2}')
-                if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
-                    resolved_rt+=("${base_pkg}t64")
-                else
-                    log_warn "No installable package for $base_pkg (or ${base_pkg}t64)"
-                fi
-            fi
-        done
-
-        if [[ ${#resolved_rt[@]} -gt 0 ]]; then
-            log_info "Installing runtime deps: ${resolved_rt[*]}"
-            run_privileged apt-get install -y "${resolved_rt[@]}" || \
-                log_warn "Some runtime dependencies failed to install"
-        fi
+        log_info "Installing runtime deps: ${rt_pkgs[*]}"
+        run_privileged apt-get install -y "${rt_pkgs[@]}" || \
+            log_warn "Some runtime dependencies failed to install"
     fi
 
     # Verify critical tools
