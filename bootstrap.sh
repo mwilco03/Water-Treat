@@ -34,7 +34,7 @@ readonly BACKUP_DIR="/var/backups/water-treat"
 readonly BOOTSTRAP_LOG="/var/log/water-treat-bootstrap.log"
 readonly MIN_DISK_SPACE_MB=512
 readonly REQUIRED_TOOLS=("git" "curl" "cmake" "make" "gcc")
-readonly BUILD_DEPS=("build-essential" "cmake" "libncurses5-dev" "libsqlite3-dev" "libcurl4-openssl-dev" "libcjson-dev" "libgpiod-dev" "libsystemd-dev")
+readonly BUILD_DEPS=("build-essential" "cmake" "libncurses5-dev" "libsqlite3-dev" "libcurl4-openssl-dev" "libcjson-dev" "libgpiod-dev" "libsystemd-dev" "ca-certificates" "ntpsec-ntpdate")
 
 # Shared protocol headers from Water-Controller
 readonly CONTROLLER_REPO="mwilco03/Water-Controller"
@@ -475,6 +475,34 @@ check_build_deps() {
     else
         log_warn "Could not auto-install build dependencies"
         log_info "Please ensure cmake, make, gcc and development libraries are installed"
+    fi
+
+    # Install CI runner / .NET runtime dependencies.
+    # Debian 13+ (Trixie) renamed many runtime packages with a "t64" suffix
+    # for the 64-bit time_t transition (e.g., libssl3 -> libssl3t64,
+    # libcurl4 -> libcurl4t64).  We try the base name first, then fall back.
+    if command -v apt-cache &>/dev/null; then
+        # libicu: version-numbered package (libicu74, libicu76, etc.)
+        local icu_pkg
+        icu_pkg=$(apt-cache search '^libicu[0-9]' 2>/dev/null | grep -v java | head -1 | awk '{print $1}')
+        if [[ -n "$icu_pkg" ]]; then
+            log_info "Installing $icu_pkg (ICU runtime for .NET / CI runners)..."
+            run_privileged apt-get install -y "$icu_pkg" || log_warn "Failed to install $icu_pkg (non-critical)"
+        fi
+
+        # Runtime libraries that may need t64 suffix on Debian 13+
+        local t64_packages=("libssl3" "libcurl4" "liblttng-ust1" "libkrb5-3" "zlib1g")
+        local base_pkg resolved_pkg
+        for base_pkg in "${t64_packages[@]}"; do
+            resolved_pkg="$base_pkg"
+            if ! apt-cache show "$base_pkg" &>/dev/null 2>&1; then
+                if apt-cache show "${base_pkg}t64" &>/dev/null 2>&1; then
+                    resolved_pkg="${base_pkg}t64"
+                fi
+            fi
+            log_info "Installing ${resolved_pkg}..."
+            run_privileged apt-get install -y "$resolved_pkg" 2>/dev/null || log_warn "Failed to install $resolved_pkg (non-critical)"
+        done
     fi
 
     # Verify critical tools

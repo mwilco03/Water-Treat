@@ -27,6 +27,7 @@
 #include "tui/tui_main.h"
 #include "tui/pages/page_wizard.h"
 
+#include <inttypes.h>
 #include <signal.h>
 #include <unistd.h>
 #include <getopt.h>
@@ -908,7 +909,7 @@ int main(int argc, char *argv[]) {
     uint64_t watchdog_usec = 0;
     int wd_enabled = sd_watchdog_enabled(0, &watchdog_usec);
     if (wd_enabled > 0) {
-        LOG_INFO("Systemd watchdog enabled (interval: %lu ms)", watchdog_usec / 1000);
+        LOG_INFO("Systemd watchdog enabled (interval: %" PRIu64 " ms)", watchdog_usec / 1000);
     }
 #endif
 

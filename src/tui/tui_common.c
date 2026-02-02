@@ -10,6 +10,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <inttypes.h>
 
 /* Shared context for all TUI pages */
 static struct {
@@ -410,7 +411,7 @@ void tui_format_size(char *buffer, size_t buf_size, uint64_t bytes) {
     }
     
     if (unit == 0) {
-        snprintf(buffer, buf_size, "%lu %s", (unsigned long)bytes, units[unit]);
+        snprintf(buffer, buf_size, "%" PRIu64 " %s", bytes, units[unit]);
     } else {
         snprintf(buffer, buf_size, "%.1f %s", size, units[unit]);
     }

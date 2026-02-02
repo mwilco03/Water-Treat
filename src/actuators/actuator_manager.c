@@ -195,12 +195,12 @@ static void check_safety_limits(actuator_manager_t *mgr) {
             if (on_duration_ms >= max_on_ms) {
                 /* AUDIT: Log watchdog timeout with full context for compliance */
                 LOG_WARNING("WATCHDOG TIMEOUT: Actuator '%s' (slot %d, GPIO %d) "
-                            "exceeded max on time %d sec (was on for %lu sec), forcing OFF",
+                            "exceeded max on time %d sec (was on for %" PRIu64 " sec), forcing OFF",
                             act->config.name,
                             act->config.profinet_slot,
                             act->config.gpio_pin,
                             act->config.max_on_time_sec,
-                            (unsigned long)(on_duration_ms / 1000));
+                            on_duration_ms / 1000);
 
                 act->state = ACTUATOR_STATE_OFF;
                 apply_actuator_state(act);
@@ -239,10 +239,10 @@ static void apply_safe_state(actuator_manager_t *mgr) {
         actuator_instance_t *act = &mgr->actuators[i];
 
         if (act->state == ACTUATOR_STATE_ON) {
-            LOG_WARNING("SAFE STATE: Stopping actuator '%s' (slot %d) - was ON for %lu ms",
+            LOG_WARNING("SAFE STATE: Stopping actuator '%s' (slot %d) - was ON for %" PRIu64 " ms",
                         act->config.name,
                         act->config.profinet_slot,
-                        (unsigned long)(get_time_ms() - act->last_state_change_ms));
+                        get_time_ms() - act->last_state_change_ms);
 
             act->state = ACTUATOR_STATE_OFF;
             act->pwm_duty = 0;
@@ -296,8 +296,8 @@ static void* watchdog_thread(void *arg) {
                     LOG_DEBUG("WATCHDOG: No recent commands detected, starting %d ms delay before degraded mode",
                               g_degraded_alarm_delay_ms);
                 } else if ((now - mgr->no_command_start_ms) > (uint64_t)g_degraded_alarm_delay_ms) {
-                    LOG_WARNING("WATCHDOG: Command timeout exceeded %d ms - no commands for %lu ms, entering degraded mode",
-                                g_command_timeout_ms, (unsigned long)(now - mgr->no_command_start_ms));
+                    LOG_WARNING("WATCHDOG: Command timeout exceeded %d ms - no commands for %" PRIu64 " ms, entering degraded mode",
+                                g_command_timeout_ms, now - mgr->no_command_start_ms);
                     enter_degraded_mode(mgr);
                     mgr->no_command_start_ms = 0;  // Reset for next disconnect cycle
                 }
@@ -633,8 +633,8 @@ result_t actuator_manager_handle_output(actuator_manager_t *mgr,
         if (elapsed < (uint64_t)act->config.min_cycle_time_ms) {
             uint64_t remaining = act->config.min_cycle_time_ms - elapsed;
             pthread_mutex_unlock(&mgr->mutex);
-            LOG_INFO("Actuator %s: command rejected (cycle time %lums, need %lums more)",
-                     act->config.name, (unsigned long)elapsed, (unsigned long)remaining);
+            LOG_INFO("Actuator %s: command rejected (cycle time %" PRIu64 "ms, need %" PRIu64 "ms more)",
+                     act->config.name, elapsed, remaining);
             return RESULT_BUSY;  /* Explicit rejection, not silent success */
         }
     }
