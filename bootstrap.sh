@@ -900,6 +900,17 @@ build_from_source() {
         return 1
     fi
 
+    # Install non-packaged dependencies (p-net PROFINET stack, tinyexpr, etc.)
+    # install-deps.sh lives in the cloned repo and handles detection + build-from-source
+    if [[ -x "$source_dir/scripts/install-deps.sh" ]]; then
+        log_step "Installing dependencies via install-deps.sh..."
+        (cd "$source_dir" && bash scripts/install-deps.sh) || {
+            log_warn "install-deps.sh had issues (build may lack PROFINET support)"
+        }
+    else
+        log_warn "scripts/install-deps.sh not found -- p-net must be installed manually"
+    fi
+
     # Fetch shared protocol headers from Water-Controller
     fetch_shared_protocols "$source_dir" || {
         log_error "Cannot build without protocol headers from Water-Controller"
