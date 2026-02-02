@@ -277,11 +277,13 @@ detect_network_interface() {
 detect_station_name() {
     local iface="$1"
     if [[ -z "$iface" ]]; then
+        log_warn "No network interface found — station name will be fallback 'rtu-0000'"
         echo "rtu-0000"
         return
     fi
     local mac_file="/sys/class/net/${iface}/address"
     if [[ ! -f "$mac_file" ]]; then
+        log_warn "No MAC address file for $iface — station name will be fallback 'rtu-0000'"
         echo "rtu-0000"
         return
     fi
@@ -290,7 +292,82 @@ detect_station_name() {
     local mac suffix
     mac=$(cat "$mac_file")
     suffix=$(echo "$mac" | awk -F: '{print tolower($5 $6)}')
+
+    # Validate the suffix is exactly 4 hex chars
+    if [[ ! "$suffix" =~ ^[0-9a-f]{4}$ ]]; then
+        log_warn "MAC suffix '$suffix' invalid (expected 4 hex chars) — using fallback 'rtu-0000'"
+        echo "rtu-0000"
+        return
+    fi
+
     echo "rtu-${suffix}"
+}
+
+# Validate station name per PROFINET IEC 61158-6
+# Regex: ^[a-z0-9][a-z0-9-]{0,62}$ (no uppercase, underscores, dots, spaces)
+validate_station_name() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        return 1
+    fi
+    if [[ ${#name} -gt 63 ]]; then
+        log_warn "Station name '$name' exceeds 63 characters"
+        return 1
+    fi
+    if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        log_warn "Station name '$name' violates PROFINET naming rules (lowercase a-z, 0-9, hyphens only)"
+        return 1
+    fi
+    if [[ "$name" == *- ]]; then
+        log_warn "Station name '$name' cannot end with a hyphen"
+        return 1
+    fi
+    return 0
+}
+
+# Set Linux hostname to match PROFINET station name
+# Why: DCP discovery uses station name, and some network tools rely on hostname.
+# Keeping them in sync avoids confusion during commissioning and troubleshooting.
+set_hostname() {
+    local station_name="$1"
+    local current_hostname
+
+    current_hostname=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo "")
+
+    if [[ "$current_hostname" == "$station_name" ]]; then
+        log_info "Hostname already set to '$station_name'"
+        return 0
+    fi
+
+    log_info "Setting hostname to '$station_name' (was '$current_hostname')"
+
+    # Set runtime hostname
+    if command -v hostnamectl &>/dev/null; then
+        run_privileged hostnamectl set-hostname "$station_name" 2>/dev/null || \
+            log_warn "hostnamectl failed, falling back to /etc/hostname"
+    fi
+
+    # Persist to /etc/hostname
+    echo "$station_name" | run_privileged tee /etc/hostname > /dev/null 2>&1 || \
+        log_warn "Could not write /etc/hostname"
+
+    # Update /etc/hosts — ensure station name resolves to 127.0.1.1
+    # This prevents "unable to resolve host" warnings from sudo/systemd
+    if [[ -f /etc/hosts ]]; then
+        # Remove old RTU hostname entries (rtu-XXXX pattern on 127.0.1.1)
+        if grep -qE '127\.0\.1\.1.*\brtu-[0-9a-f]+\b' /etc/hosts 2>/dev/null; then
+            run_privileged sed -i '/127\.0\.1\.1.*\brtu-[0-9a-f]/d' /etc/hosts
+        fi
+        # Remove old hostname on 127.0.1.1 if it differs
+        if [[ -n "$current_hostname" && "$current_hostname" != "$station_name" ]]; then
+            if grep -qE "127\.0\.1\.1.*\b${current_hostname}\b" /etc/hosts 2>/dev/null; then
+                run_privileged sed -i "/127\.0\.1\.1.*\b${current_hostname}\b/d" /etc/hosts
+            fi
+        fi
+        # Add new entry
+        echo "127.0.1.1    $station_name" | run_privileged tee -a /etc/hosts > /dev/null 2>&1
+        log_info "Updated /etc/hosts: 127.0.1.1 -> $station_name"
+    fi
 }
 
 # =============================================================================
@@ -1001,6 +1078,21 @@ install_files() {
     log_info "Detected interface: ${iface:-none}"
     log_info "Detected station_name: $station_name"
 
+    # Validate station name before using it
+    if ! validate_station_name "$station_name"; then
+        log_warn "Generated station name '$station_name' failed validation, using 'rtu-0000'"
+        station_name="rtu-0000"
+    fi
+
+    if [[ "$station_name" == "rtu-0000" ]]; then
+        log_warn "Using fallback station name 'rtu-0000' — MAC detection failed"
+        log_warn "All RTUs with this name will collide on the PROFINET network"
+        log_warn "Set a unique name in $CONFIG_DIR/water-treat.conf [profinet] station_name"
+    fi
+
+    # Set Linux hostname to match PROFINET station name
+    set_hostname "$station_name"
+
     # Create default config if not exists (proper INI format)
     if [[ ! -f "$CONFIG_DIR/water-treat.conf" ]]; then
         run_privileged tee "$CONFIG_DIR/water-treat.conf" > /dev/null <<EOF
@@ -1053,9 +1145,17 @@ EOF
         log_info "Station name set to: $station_name"
     else
         log_info "Config exists, preserving: $CONFIG_DIR/water-treat.conf"
-        # Check if station_name is configured
-        if ! grep -q "^station_name" "$CONFIG_DIR/water-treat.conf" 2>/dev/null; then
-            log_warn "No station_name in config - RTU may not respond to DCP"
+        # Check if station_name is configured and sync hostname from it
+        local existing_name
+        existing_name=$(grep -E '^\s*station_name\s*=' "$CONFIG_DIR/water-treat.conf" 2>/dev/null \
+                        | head -1 | sed 's/.*=\s*//' | tr -d '[:space:]')
+        if [[ -n "$existing_name" ]]; then
+            log_info "Existing station_name in config: $existing_name"
+            # Ensure hostname matches the config file's station name (e.g. after board swap)
+            set_hostname "$existing_name"
+        else
+            log_warn "No station_name in config — RTU may not respond to DCP"
+            log_warn "Add to $CONFIG_DIR/water-treat.conf: [profinet] station_name = rtu-XXXX"
         fi
     fi
 
