@@ -707,8 +707,12 @@ result_t profinet_manager_start(const char *interface) {
 
     // Enable promiscuous mode for PROFINET raw Ethernet frames
     if (!enable_promiscuous_mode(g_netif_name)) {
-        LOG_WARNING("Could not enable promiscuous mode - PROFINET may not work correctly");
-        // Continue anyway - p-net might still work if already in promisc mode
+        LOG_ERROR("Could not enable promiscuous mode on '%s'", g_netif_name);
+        LOG_ERROR("PROFINET requires promiscuous mode for raw Ethernet frames");
+        LOG_ERROR("Check: CAP_NET_ADMIN capability, or run as root");
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Cannot enable promiscuous mode on '%s' (need CAP_NET_ADMIN or root)", g_netif_name);
+        return RESULT_ERROR;
     }
 
     // Configure physical port (single port device - same as main interface)
@@ -909,22 +913,24 @@ result_t profinet_manager_start(const char *interface) {
                                    GSDML_MOD_DAP, GSDML_SUBMOD_DAP_INTERFACE,
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
-        LOG_WARNING("Failed to plug DAP interface submodule at slot 0.0x8000");
-        // Non-fatal - some controllers don't require this
-    } else {
-        LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000 (ident=0x%08X)", GSDML_SUBMOD_DAP_INTERFACE);
+        LOG_ERROR("Failed to plug DAP interface submodule at slot 0.0x8000");
+        LOG_ERROR("Controller expects subslot 0x8000 — Connect will be rejected without it");
+        g_pn.pnet = NULL;
+        return RESULT_ERROR;
     }
+    LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000 (ident=0x%08X)", GSDML_SUBMOD_DAP_INTERFACE);
 
     // Plug DAP port submodule at slot 0, subslot 0x8001
     dap_ret = pnet_plug_submodule(g_pn.pnet, 0, 0, 0x8001,
                                    GSDML_MOD_DAP, GSDML_SUBMOD_DAP_PORT,
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
-        LOG_WARNING("Failed to plug DAP port submodule at slot 0.0x8001");
-        // Non-fatal - some controllers don't require this
-    } else {
-        LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001 (ident=0x%08X)", GSDML_SUBMOD_DAP_PORT);
+        LOG_ERROR("Failed to plug DAP port submodule at slot 0.0x8001");
+        LOG_ERROR("Controller expects subslot 0x8001 — Connect will be rejected without it");
+        g_pn.pnet = NULL;
+        return RESULT_ERROR;
     }
+    LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001 (ident=0x%08X)", GSDML_SUBMOD_DAP_PORT);
 
     // =========================================================================
     // Plug application modules from database
@@ -992,14 +998,18 @@ result_t profinet_manager_start(const char *interface) {
     LOG_INFO("Slots plugged: DAP + %d application modules", g_pn.slot_count);
     LOG_INFO("If connect_callback is NOT called, p-net rejects before app layer");
     LOG_INFO("=== End Config Summary ===");
-#else
-    UNUSED(interface);
-    LOG_WARNING("PROFINET support not compiled in (HAVE_PNET not defined)");
-    g_pn.running = true;
-    set_state(PROFINET_STATE_READY);
-#endif
 
     return RESULT_OK;
+#else
+    UNUSED(interface);
+    LOG_ERROR("PROFINET support not compiled in (HAVE_PNET not defined)");
+    LOG_ERROR("The RTU cannot communicate without p-net. Rebuild with p-net installed.");
+    LOG_ERROR("Run: bash scripts/install-deps.sh && cd build && cmake .. && make");
+    snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+             "PROFINET not compiled in (HAVE_PNET undefined). Rebuild with p-net installed.");
+    set_state(PROFINET_STATE_ERROR);
+    return RESULT_ERROR;
+#endif
 }
 
 result_t profinet_manager_stop(void) {
