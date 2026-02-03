@@ -230,6 +230,27 @@ But the code doesn't actually send these alarm types correctly.
 - Document the difference between process and diagnosis alarms in `CLAUDE.md`
 - Consider alarm rate limiting if sensors flap frequently
 
+## Commit History
+
+1. **306f69c** - ❌ "fix: remove unused alarm_type variable" (WRONG - reverted)
+2. **e3781a6** - "Revert 'fix: remove unused alarm_type variable'"
+3. **3d43a44** - ✅ "fix: use correct p-net diagnosis API for channel diagnosis alarms"
+4. **c665664** - ✅ "fix: correct p-net diagnosis API enum constants" (compilation fix)
+
+All changes pushed to branch `claude/libgpiod-v2-setup-GmByI`.
+
+### Enum Constant Correction (c665664)
+
+After implementing the correct diagnosis API, the code had wrong enum constant names that caused compilation failure:
+
+**Error**: `'PNET_DIAG_CH_PROP_TYPE_INPUT' undeclared`
+
+The `ch_bits` parameter expects channel data width values (UNSPECIFIED, 1_BIT, 8_BIT, etc.), not channel direction.
+
+**Fixed**:
+- ch_bits: `PNET_DIAG_CH_PROP_TYPE_UNSPECIFIED` (for whole submodule)
+- severity: `PNET_DIAG_CH_PROP_MAINT_FAULT` (fault, not just maintenance)
+
 ## Conclusion
 
 The original developer (in commit `88191bcf`) **knew** that alarm type 0x0001/0x0002 was needed (as evidenced by the comment and the calculated `alarm_type` variable), but either:
