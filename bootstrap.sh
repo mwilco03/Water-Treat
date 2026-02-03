@@ -237,11 +237,12 @@ discover_network() {
 # =============================================================================
 
 detect_network_interface() {
-    # Priority order: eth* > enp* > ens* > wlan*
+    # Priority order: eth* > enp* > ens* > enx* (USB with MAC) > wlan*
     local iface=""
 
     # Use find to avoid glob expansion issues
-    for pattern in "eth" "enp" "ens" "wlan"; do
+    # enx* = USB Ethernet with MAC address in name (e.g., enx001e0639ec3b)
+    for pattern in "eth" "enp" "ens" "enx" "wlan"; do
         while IFS= read -r candidate; do
             [[ -z "$candidate" ]] && continue
             local name
