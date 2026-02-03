@@ -146,6 +146,26 @@ static profinet_slot_t* add_slot(int slot, int subslot) {
     return s;
 }
 
+bool profinet_manager_get_plugged_module_ident(int slot, uint32_t *module_ident) {
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].slot == slot) {
+            if (module_ident) *module_ident = g_pn.slots[i].module_ident;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool profinet_manager_get_plugged_submodule_ident(int slot, int subslot,
+                                                   uint32_t *module_ident,
+                                                   uint32_t *submodule_ident) {
+    profinet_slot_t *s = find_slot(slot, subslot);
+    if (!s) return false;
+    if (module_ident) *module_ident = s->module_ident;
+    if (submodule_ident) *submodule_ident = s->submodule_ident;
+    return true;
+}
+
 /**
  * @brief Determine if a module is an actuator (output) based on GSDML ident
  *
@@ -1678,6 +1698,17 @@ result_t profinet_manager_add_module(void *mgr, int slot, uint32_t module_ident,
                                      int subslot, uint32_t submodule_ident,
                                      size_t input_len, size_t output_len) {
     UNUSED(mgr);
+
+    /*
+     * Warn if called after PROFINET stack is already running.
+     * p-net v0.2.0 does not support hot-plugging modules — pnet_plug_module()
+     * must be called before the first connection. Modules added after start
+     * will only take effect after a full restart.
+     */
+    if (g_pn.running) {
+        LOG_WARNING("Module added to slot %d.%d after PROFINET started — "
+                    "requires restart to take effect on PROFINET", slot, subslot);
+    }
 
     /* Check if slot already exists (may be loaded from database) */
     profinet_slot_t *s = find_slot(slot, subslot);

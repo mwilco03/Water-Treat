@@ -35,6 +35,43 @@ extern app_config_t g_app_config;
 extern led_status_manager_t g_led_mgr;
 #endif
 
+/* ============================================================================
+ * Shared Write Index Dispatch
+ *
+ * Used by both HAVE_PNET and stub write handlers to avoid duplicating
+ * the index→processing-function mapping.
+ * ========================================================================== */
+
+static const char* write_index_name(uint16_t idx) {
+    switch (idx) {
+        case USER_SYNC_PROFINET_INDEX:          return "user sync";
+        case RTU_ENROLL_PROFINET_INDEX:         return "enrollment";
+        case RTU_CONFIG_PROFINET_INDEX:         return "device config";
+        case RTU_SENSOR_CONFIG_PROFINET_INDEX:  return "sensor config";
+        case RTU_ACTUATOR_CONFIG_PROFINET_INDEX: return "actuator config";
+        default:                                return NULL;
+    }
+}
+
+static result_t dispatch_write_index(uint16_t idx, const uint8_t *data, uint16_t len) {
+    if (!data || len == 0) return RESULT_INVALID_PARAM;
+
+    switch (idx) {
+        case USER_SYNC_PROFINET_INDEX:
+            return user_sync_process_packet(data, len);
+        case RTU_ENROLL_PROFINET_INDEX:
+            return rtu_registration_process_enrollment(data, len);
+        case RTU_CONFIG_PROFINET_INDEX:
+            return config_sync_process_device(data, len);
+        case RTU_SENSOR_CONFIG_PROFINET_INDEX:
+            return config_sync_process_sensors(data, len);
+        case RTU_ACTUATOR_CONFIG_PROFINET_INDEX:
+            return config_sync_process_actuators(data, len);
+        default:
+            return RESULT_NOT_FOUND;
+    }
+}
+
 #ifdef HAVE_PNET
 #include <pnet_api.h>
 #include "gsdml_modules.h"
@@ -422,131 +459,45 @@ int profinet_write_callback(pnet_t *net, void *arg,
     LOG_DEBUG("PROFINET write: slot=%u.%u, idx=0x%04X, len=%u",
               slot, subslot, idx, write_length);
 
-    /*
-     * Handle vendor-specific PROFINET record writes (0xF840-0xF845)
-     *
-     * Index allocation:
-     * - 0xF840: User sync (credentials from controller)
-     * - 0xF841: Device configuration
-     * - 0xF842: Sensor configuration
-     * - 0xF843: Actuator configuration
-     * - 0xF845: Enrollment/binding
-     */
-    switch (idx) {
-        case USER_SYNC_PROFINET_INDEX: /* 0xF840 */
-            /*
-             * User sync packets from controller
-             *
-             * The controller sends user credentials via PROFINET acyclic write.
-             * This allows centralized user management with credentials synced to
-             * RTU for local authentication when controller is offline.
-             *
-             * Security: User sync uses DJB2 hashed passwords, not plaintext.
-             * The hash format is "DJB2:<salt_hash>:<password_hash>".
-             */
-            LOG_INFO("Received user sync packet: %u bytes", write_length);
-
-            {
-                result_t r = user_sync_process_packet(data, write_length);
-                if (r != RESULT_OK) {
-                    LOG_ERROR("User sync packet processing failed: %d", r);
-                    if (result) {
-                        result->pnio_status.error_code = 0xCF;
-                        result->pnio_status.error_code_1 = 0x81;
-                    }
-                    return -1;
-                }
-
-                user_sync_status_t status;
-                user_sync_get_status(&status);
-                LOG_INFO("User sync complete: %u users stored, %u total syncs",
-                         status.users_stored, status.sync_count);
-            }
-            return 0;
-
-        case RTU_ENROLL_PROFINET_INDEX: /* 0xF845 */
-            /*
-             * Enrollment/binding packets from controller
-             *
-             * Used to confirm RTU registration and store enrollment token.
-             * Supports bind, unbind, rebind, and status query operations.
-             */
-            LOG_INFO("Received enrollment packet: %u bytes", write_length);
-
-            {
-                result_t r = rtu_registration_process_enrollment(data, write_length);
-                if (r != RESULT_OK) {
-                    LOG_ERROR("Enrollment packet processing failed: %d", r);
-                    if (result) {
-                        result->pnio_status.error_code = 0xCF;
-                        result->pnio_status.error_code_1 = 0x81;
-                    }
-                    return -1;
-                }
-            }
-            return 0;
-
-        case RTU_CONFIG_PROFINET_INDEX: /* 0xF841 */
-            LOG_INFO("Received device config packet: %u bytes", write_length);
-            {
-                result_t r = config_sync_process_device(data, write_length);
-                if (r != RESULT_OK) {
-                    LOG_ERROR("Device config processing failed: %d", r);
-                    if (result) {
-                        result->pnio_status.error_code = 0xCF;
-                        result->pnio_status.error_code_1 = 0x81;
-                    }
-                    return -1;
-                }
-            }
-            return 0;
-
-        case RTU_SENSOR_CONFIG_PROFINET_INDEX: /* 0xF842 */
-            LOG_INFO("Received sensor config packet: %u bytes", write_length);
-            {
-                result_t r = config_sync_process_sensors(data, write_length);
-                if (r != RESULT_OK) {
-                    LOG_ERROR("Sensor config processing failed: %d", r);
-                    if (result) {
-                        result->pnio_status.error_code = 0xCF;
-                        result->pnio_status.error_code_1 = 0x81;
-                    }
-                    return -1;
-                }
-            }
-            return 0;
-
-        case RTU_ACTUATOR_CONFIG_PROFINET_INDEX: /* 0xF843 */
-            LOG_INFO("Received actuator config packet: %u bytes", write_length);
-            {
-                result_t r = config_sync_process_actuators(data, write_length);
-                if (r != RESULT_OK) {
-                    LOG_ERROR("Actuator config processing failed: %d", r);
-                    if (result) {
-                        result->pnio_status.error_code = 0xCF;
-                        result->pnio_status.error_code_1 = 0x81;
-                    }
-                    return -1;
-                }
-            }
-            return 0;
-
-        default:
-            /* Standard parameterization data (0x0000-0x7FFF) is accepted */
-            if (idx <= 0x7FFF) {
-                LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
-                         slot, subslot, idx, write_length);
-                return 0;
-            }
-            /* Unknown vendor-specific index — reject with error */
-            LOG_WARNING("Unknown write index 0x%04X on slot %u.%u, rejecting",
-                        idx, slot, subslot);
+    /* Dispatch vendor-specific record writes (0xF840-0xF845) */
+    const char *name = write_index_name(idx);
+    if (name) {
+        LOG_INFO("Received %s packet: %u bytes", name, write_length);
+        result_t r = dispatch_write_index(idx, data, write_length);
+        if (r != RESULT_OK) {
+            LOG_ERROR("%s processing failed: %d", name, r);
             if (result) {
-                result->pnio_status.error_code = 0xDE;   /* IODWriteRes */
-                result->pnio_status.error_code_1 = 0x80; /* Application write error */
+                result->pnio_status.error_code = 0xCF;
+                result->pnio_status.error_code_1 = 0x81;
             }
             return -1;
+        }
+
+        /* User sync post-processing: log credential summary */
+        if (idx == USER_SYNC_PROFINET_INDEX) {
+            user_sync_status_t status;
+            user_sync_get_status(&status);
+            LOG_INFO("User sync complete: %u users stored, %u total syncs",
+                     status.users_stored, status.sync_count);
+        }
+        return 0;
     }
+
+    /* Standard parameterization data (0x0000-0x7FFF) is accepted */
+    if (idx <= 0x7FFF) {
+        LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
+                 slot, subslot, idx, write_length);
+        return 0;
+    }
+
+    /* Unknown vendor-specific index — reject with error */
+    LOG_WARNING("Unknown write index 0x%04X on slot %u.%u, rejecting",
+                idx, slot, subslot);
+    if (result) {
+        result->pnio_status.error_code = 0xDE;   /* IODWriteRes */
+        result->pnio_status.error_code_1 = 0x80; /* Application write error */
+    }
+    return -1;
 }
 
 /* ============================================================================
@@ -558,10 +509,19 @@ int profinet_exp_module_callback(pnet_t *net, void *arg,
                                  uint32_t module_ident) {
     UNUSED(net); UNUSED(arg); UNUSED(api);
 
-    LOG_INFO(">>> CALLBACK: exp_module slot=%u, ident=0x%08X (p-net reached app layer!)",
-             slot, module_ident);
+    uint32_t plugged_ident = 0;
+    bool found = profinet_manager_get_plugged_module_ident((int)slot, &plugged_ident);
 
-    // Accept the module - actual plugging is done in profinet_manager_start
+    if (!found) {
+        LOG_WARNING("exp_module: controller expects module 0x%08X in slot %u, "
+                    "but RTU has nothing plugged there", module_ident, slot);
+    } else if (plugged_ident != module_ident) {
+        LOG_WARNING("exp_module: MISMATCH slot %u — controller expects 0x%08X, "
+                    "RTU has 0x%08X plugged", slot, module_ident, plugged_ident);
+    } else {
+        LOG_INFO("exp_module: slot %u ident 0x%08X matches", slot, module_ident);
+    }
+
     return 0;
 }
 
@@ -570,10 +530,27 @@ int profinet_exp_submodule_callback(pnet_t *net, void *arg,
                                     uint32_t module_ident, uint32_t submodule_ident,
                                     const pnet_data_cfg_t *exp_data_cfg) {
     UNUSED(net); UNUSED(arg); UNUSED(api);
-    UNUSED(module_ident); UNUSED(exp_data_cfg);
+    UNUSED(exp_data_cfg);
 
-    LOG_INFO(">>> CALLBACK: exp_submodule slot=%u.%u, submod=0x%08X (module processing OK)",
-             slot, subslot, submodule_ident);
+    uint32_t plugged_mod = 0, plugged_submod = 0;
+    bool found = profinet_manager_get_plugged_submodule_ident(
+        (int)slot, (int)subslot, &plugged_mod, &plugged_submod);
+
+    if (!found) {
+        LOG_WARNING("exp_submodule: controller expects submodule 0x%08X in slot %u.%u, "
+                    "but RTU has nothing plugged there",
+                    submodule_ident, slot, subslot);
+    } else if (plugged_mod != module_ident || plugged_submod != submodule_ident) {
+        LOG_WARNING("exp_submodule: MISMATCH slot %u.%u — "
+                    "controller expects mod=0x%08X sub=0x%08X, "
+                    "RTU has mod=0x%08X sub=0x%08X",
+                    slot, subslot,
+                    module_ident, submodule_ident,
+                    plugged_mod, plugged_submod);
+    } else {
+        LOG_INFO("exp_submodule: slot %u.%u submod 0x%08X matches",
+                 slot, subslot, submodule_ident);
+    }
 
     return 0;
 }
@@ -858,30 +835,13 @@ int profinet_write_callback(void *net, void *arg, uint32_t arep, uint32_t api,
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(api);
     UNUSED(slot); UNUSED(subslot); UNUSED(seq); UNUSED(result);
 
-    /* Handle user sync even in stub mode (for testing) */
-    if (idx == USER_SYNC_PROFINET_INDEX && data && len > 0) {
-        LOG_INFO("User sync packet received (stub mode): %u bytes", len);
-        user_sync_process_packet(data, len);
-    }
-
-    /* Handle config sync in stub mode (for testing) */
-    if (idx == RTU_CONFIG_PROFINET_INDEX && data && len > 0) {
-        LOG_INFO("Device config received (stub mode): %u bytes", len);
-        config_sync_process_device(data, len);
-    }
-    if (idx == RTU_SENSOR_CONFIG_PROFINET_INDEX && data && len > 0) {
-        LOG_INFO("Sensor config received (stub mode): %u bytes", len);
-        config_sync_process_sensors(data, len);
-    }
-    if (idx == RTU_ACTUATOR_CONFIG_PROFINET_INDEX && data && len > 0) {
-        LOG_INFO("Actuator config received (stub mode): %u bytes", len);
-        config_sync_process_actuators(data, len);
-    }
-
-    /* Handle enrollment in stub mode (for testing) */
-    if (idx == RTU_ENROLL_PROFINET_INDEX && data && len > 0) {
-        LOG_INFO("Enrollment packet received (stub mode): %u bytes", len);
-        rtu_registration_process_enrollment(data, len);
+    const char *name = write_index_name(idx);
+    if (name) {
+        LOG_INFO("Received %s packet (no-pnet build): %u bytes", name, len);
+        result_t r = dispatch_write_index(idx, data, len);
+        if (r != RESULT_OK) {
+            LOG_ERROR("%s processing failed: %d", name, r);
+        }
     }
 
     return 0;

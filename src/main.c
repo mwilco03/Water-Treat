@@ -337,10 +337,7 @@ static result_t init_profinet(void) {
 }
 
 static result_t init_sensors(void) {
-    // Pass NULL for profinet_mgr if PROFINET is disabled
-    void *pn_mgr = g_app_config.profinet.enabled ? (void*)1 : NULL;
-
-    result_t r = sensor_manager_init(&g_sensor_mgr, &g_db, (profinet_manager_t*)pn_mgr);
+    result_t r = sensor_manager_init(&g_sensor_mgr, &g_db, g_app_config.profinet.enabled);
     if (r != RESULT_OK) {
         LOG_ERROR("Failed to initialize sensor manager");
         return r;
