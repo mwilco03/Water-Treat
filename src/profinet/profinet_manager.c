@@ -1587,15 +1587,15 @@ result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t q
         ret = pnet_diag_add(
             g_pn.pnet,
             &diag_source,
-            PNET_DIAG_CH_PROP_TYPE_INPUT,      /* Channel type: input */
-            PNET_DIAG_CH_PROP_MAINT_REQUIRED,  /* Severity: maintenance required */
-            ch_error_type,                      /* Channel error type */
-            0,                                  /* ext_ch_error_type (none) */
-            0,                                  /* ext_ch_add_value (none) */
-            0,                                  /* qual_ch_qualifier (none) */
-            0x8000,                             /* USI: standard channel diagnosis */
-            0,                                  /* manuf_data_len (none) */
-            NULL                                /* p_manuf_data (none) */
+            PNET_DIAG_CH_PROP_TYPE_UNSPECIFIED,  /* Channel data width: whole submodule */
+            PNET_DIAG_CH_PROP_MAINT_FAULT,       /* Severity: fault (not just maintenance) */
+            ch_error_type,                        /* Channel error type */
+            0,                                    /* ext_ch_error_type (none) */
+            0,                                    /* ext_ch_add_value (none) */
+            0,                                    /* qual_ch_qualifier (none) */
+            0x8000,                               /* USI: standard channel diagnosis */
+            0,                                    /* manuf_data_len (none) */
+            NULL                                  /* p_manuf_data (none) */
         );
     } else {
         /* Remove diagnosis - stack automatically sends alarm type 0x0002 (disappears) */
