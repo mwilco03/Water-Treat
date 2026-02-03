@@ -1567,7 +1567,6 @@ result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t q
     memcpy(diag_data + 4, &error_type, 2);
 
     bool is_fault = (quality == QUALITY_BAD || quality == QUALITY_NOT_CONNECTED);
-    uint16_t alarm_type = is_fault ? 0x0001 : 0x0002;  /* Appears / Disappears */
 
     int ret = pnet_alarm_send_process_alarm(
         g_pn.pnet, g_pn.arep, 0,
