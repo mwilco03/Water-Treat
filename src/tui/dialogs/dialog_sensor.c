@@ -9,6 +9,8 @@
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "db/db_actuators.h"
+#include "sensors/sensor_manager.h"
+#include "platform/board_detect.h"
 #include "gsdml_modules.h"
 #include <ncurses.h>
 #include <string.h>
@@ -182,9 +184,16 @@ static result_t check_gpio_conflict(database_t *db, sensor_form_t *form, int exc
         return RESULT_OK;  /* No valid GPIO pin specified */
     }
 
+    /* Detect gpio_chip from board rather than hardcoding */
+    const char *chip = "gpiochip0";  /* fallback */
+    board_info_t board;
+    if (board_detect(&board) == RESULT_OK && board.pins.gpio_chip[0] != '\0') {
+        chip = board.pins.gpio_chip;
+    }
+
     /* Use the actuator GPIO conflict check which also checks sensors */
     gpio_conflict_t conflict;
-    result_t r = db_actuator_gpio_conflict_check(db, gpio_pin, "gpiochip0", 0, &conflict);
+    result_t r = db_actuator_gpio_conflict_check(db, gpio_pin, chip, 0, &conflict);
     if (r == RESULT_OK && conflict.has_conflict) {
         /* Check if the conflict is with ourselves (when editing) */
         if (exclude_sensor_id > 0 && conflict.conflict_type == 1) {
@@ -295,6 +304,9 @@ int dialog_sensor_add(void) {
                         if (strlen(form.name) == 0) { dialog_error("Name required"); continue; }
                         int sensor_id;
                         if (save_sensor(&form, &sensor_id) == RESULT_OK) {
+                            /* Reload sensors so worker thread picks up changes */
+                            sensor_manager_t *smgr = tui_get_sensor_manager();
+                            if (smgr) sensor_manager_reload_sensors(smgr);
                             dialog_destroy(dialog);
                             return sensor_id;
                         }
@@ -332,17 +344,35 @@ bool dialog_sensor_edit(int sensor_id) {
     form.subslot = module.subslot;
     SAFE_STRNCPY(form.module_type, module.module_type, sizeof(form.module_type));
     
-    db_physical_sensor_t phys;
-    if (db_physical_sensor_get(db, sensor_id, &phys) == RESULT_OK) {
-        SAFE_STRNCPY(form.sensor_type, phys.sensor_type, sizeof(form.sensor_type));
-        SAFE_STRNCPY(form.interface, phys.interface, sizeof(form.interface));
-        SAFE_STRNCPY(form.address, phys.address, sizeof(form.address));
-        form.bus = phys.bus;
-        form.channel = phys.channel;
-        SAFE_STRNCPY(form.unit, phys.unit, sizeof(form.unit));
-        form.min_value = phys.min_value;
-        form.max_value = phys.max_value;
-        form.poll_rate_ms = phys.poll_rate_ms;
+    /* Load sub-record data based on module type */
+    if (strcmp(module.module_type, "physical") == 0) {
+        db_physical_sensor_t phys;
+        if (db_physical_sensor_get(db, sensor_id, &phys) == RESULT_OK) {
+            SAFE_STRNCPY(form.sensor_type, phys.sensor_type, sizeof(form.sensor_type));
+            SAFE_STRNCPY(form.interface, phys.interface, sizeof(form.interface));
+            SAFE_STRNCPY(form.address, phys.address, sizeof(form.address));
+            form.bus = phys.bus;
+            form.channel = phys.channel;
+            SAFE_STRNCPY(form.unit, phys.unit, sizeof(form.unit));
+            form.min_value = phys.min_value;
+            form.max_value = phys.max_value;
+            form.poll_rate_ms = phys.poll_rate_ms;
+        }
+    } else if (strcmp(module.module_type, "adc") == 0) {
+        db_adc_sensor_t adc;
+        if (db_adc_sensor_get(db, sensor_id, &adc) == RESULT_OK) {
+            SAFE_STRNCPY(form.sensor_type, adc.adc_type, sizeof(form.sensor_type));
+            SAFE_STRNCPY(form.interface, adc.interface, sizeof(form.interface));
+            SAFE_STRNCPY(form.address, adc.address, sizeof(form.address));
+            form.bus = adc.bus;
+            form.channel = adc.channel;
+            form.gain = adc.gain;
+            form.reference_voltage = adc.reference_voltage;
+            SAFE_STRNCPY(form.unit, adc.unit, sizeof(form.unit));
+            form.min_value = adc.eng_min;
+            form.max_value = adc.eng_max;
+            form.poll_rate_ms = adc.poll_rate_ms;
+        }
     }
     
     WINDOW *dialog = dialog_create(DIALOG_HEIGHT, DIALOG_WIDTH, "Edit Sensor");
@@ -373,14 +403,57 @@ bool dialog_sensor_edit(int sensor_id) {
                 case KEY_UP: case '\t': in_buttons = false; break;
                 case '\n': case KEY_ENTER:
                     if (button == 0) {
+                        /* Check for GPIO conflicts before saving */
+                        result_t r = check_gpio_conflict(db, &form, sensor_id);
+                        if (r != RESULT_OK) break;
+
                         module.slot = form.slot;
                         module.subslot = form.subslot;
                         SAFE_STRNCPY(module.name, form.name, sizeof(module.name));
-                        if (db_module_update(db, &module) == RESULT_OK) {
-                            dialog_destroy(dialog);
-                            return true;
+                        SAFE_STRNCPY(module.module_type, form.module_type, sizeof(module.module_type));
+                        if (db_module_update(db, &module) != RESULT_OK) {
+                            dialog_error("Failed to update module");
+                            break;
                         }
-                        dialog_error("Failed to update");
+
+                        /* Write sub-record data based on module type */
+                        if (strcmp(form.module_type, "physical") == 0) {
+                            db_physical_sensor_t phys = {0};
+                            phys.module_id = sensor_id;
+                            SAFE_STRNCPY(phys.sensor_type, form.sensor_type, sizeof(phys.sensor_type));
+                            SAFE_STRNCPY(phys.hardware_type, form.sensor_type, sizeof(phys.hardware_type));
+                            SAFE_STRNCPY(phys.interface, form.interface, sizeof(phys.interface));
+                            SAFE_STRNCPY(phys.address, form.address, sizeof(phys.address));
+                            phys.bus = form.bus;
+                            phys.channel = form.channel;
+                            SAFE_STRNCPY(phys.unit, form.unit, sizeof(phys.unit));
+                            phys.min_value = form.min_value;
+                            phys.max_value = form.max_value;
+                            phys.poll_rate_ms = form.poll_rate_ms;
+                            db_physical_sensor_update(db, &phys);
+                        } else if (strcmp(form.module_type, "adc") == 0) {
+                            db_adc_sensor_t adc = {0};
+                            adc.module_id = sensor_id;
+                            SAFE_STRNCPY(adc.adc_type, form.sensor_type, sizeof(adc.adc_type));
+                            SAFE_STRNCPY(adc.interface, form.interface, sizeof(adc.interface));
+                            SAFE_STRNCPY(adc.address, form.address, sizeof(adc.address));
+                            adc.bus = form.bus;
+                            adc.channel = form.channel;
+                            adc.gain = form.gain;
+                            adc.reference_voltage = form.reference_voltage;
+                            SAFE_STRNCPY(adc.unit, form.unit, sizeof(adc.unit));
+                            adc.eng_min = form.min_value;
+                            adc.eng_max = form.max_value;
+                            adc.poll_rate_ms = form.poll_rate_ms;
+                            db_adc_sensor_update(db, &adc);
+                        }
+
+                        /* Reload sensors so worker thread picks up changes */
+                        sensor_manager_t *smgr = tui_get_sensor_manager();
+                        if (smgr) sensor_manager_reload_sensors(smgr);
+
+                        dialog_destroy(dialog);
+                        return true;
                     } else { dialog_destroy(dialog); return false; }
                     break;
                 case 27: dialog_destroy(dialog); return false;
