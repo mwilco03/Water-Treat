@@ -1680,3 +1680,48 @@ result_t profinet_manager_add_module(void *mgr, int slot, uint32_t module_ident,
 
     return RESULT_OK;
 }
+
+void profinet_manager_clear_app_slots(void) {
+    pthread_mutex_lock(&g_pn.mutex);
+
+    /* Remove all application slots (slot > 0), preserving DAP (slot 0) */
+    int new_count = 0;
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].slot == 0) {
+            /* Keep DAP slot at index 0 */
+            if (new_count != i) {
+                g_pn.slots[new_count] = g_pn.slots[i];
+            }
+            new_count++;
+        }
+    }
+
+    int removed = g_pn.slot_count - new_count;
+    g_pn.slot_count = new_count;
+
+    pthread_mutex_unlock(&g_pn.mutex);
+
+    if (removed > 0) {
+        LOG_INFO("Cleared %d application slots (DAP preserved)", removed);
+    }
+}
+
+void profinet_manager_remove_slot(int slot, int subslot) {
+    if (slot <= 0) return;  /* Cannot remove DAP */
+
+    pthread_mutex_lock(&g_pn.mutex);
+
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].slot == slot && g_pn.slots[i].subslot == subslot) {
+            /* Shift remaining slots down */
+            for (int j = i; j < g_pn.slot_count - 1; j++) {
+                g_pn.slots[j] = g_pn.slots[j + 1];
+            }
+            g_pn.slot_count--;
+            LOG_DEBUG("Removed PROFINET slot %d.%d", slot, subslot);
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&g_pn.mutex);
+}

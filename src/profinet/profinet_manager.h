@@ -188,4 +188,24 @@ int profinet_manager_init_all_inputs(void);
  */
 void profinet_manager_dump_slots(void);
 
+/**
+ * @brief Clear all application module slots (not DAP)
+ *
+ * Must be called before re-adding modules during reload to prevent
+ * stale slots from persisting. Only clears slot tracking; does not
+ * unplug from p-net (which requires a connection reset).
+ */
+void profinet_manager_clear_app_slots(void);
+
+/**
+ * @brief Remove a specific application module slot
+ *
+ * Targeted removal for individual slot cleanup (e.g., when a sensor is
+ * deleted). Safer than clear_app_slots when only one subsystem reloads.
+ *
+ * @param slot     Slot number to remove (must be > 0; DAP cannot be removed)
+ * @param subslot  Subslot number
+ */
+void profinet_manager_remove_slot(int slot, int subslot);
+
 #endif

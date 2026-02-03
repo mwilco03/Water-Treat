@@ -98,6 +98,7 @@ result_t db_physical_sensor_update(database_t *db, db_physical_sensor_t *sensor)
 // ADC sensor operations
 result_t db_adc_sensor_create(database_t *db, db_adc_sensor_t *sensor);
 result_t db_adc_sensor_get(database_t *db, int module_id, db_adc_sensor_t *sensor);
+result_t db_adc_sensor_update(database_t *db, db_adc_sensor_t *sensor);
 
 // Web poll sensor operations
 result_t db_web_poll_sensor_create(database_t *db, db_web_poll_sensor_t *sensor);
