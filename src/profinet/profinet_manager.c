@@ -1514,9 +1514,13 @@ result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
  * sensor failures to the controller, complementing the IOPS=BAD signal
  * and the quality byte in cyclic data.
  *
- * alarm_type values used:
- *   0x0001 = Diagnosis (channel fault appears)
- *   0x0002 = Diagnosis disappears (channel fault cleared)
+ * Implementation uses p-net diagnosis API (pnet_diag_add/pnet_diag_remove)
+ * which automatically manages alarm types and diagnosis state:
+ *   - pnet_diag_add()    → Sends alarm type 0x0001 (diagnosis appears)
+ *   - pnet_diag_remove() → Sends alarm type 0x0002 (diagnosis disappears)
+ *
+ * The diagnosis state is stored in the IO-Device per PROFINET spec, ensuring
+ * controllers see persistent diagnosis across reconnects.
  *
  * The controller should monitor these alarms and:
  *   - Mark affected input data as unreliable when diagnosis appears
@@ -1535,9 +1539,14 @@ result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t q
     if (!g_pn.pnet || !g_pn.connected) return RESULT_NOT_INITIALIZED;
 
     /*
-     * Build channel diagnosis data (USI = 0x8000 per PROFINET standard).
-     * Payload: 2-byte channel number (0 = whole submodule) +
-     *          2-byte channel properties + 2-byte channel error type.
+     * PROFINET channel diagnosis per IEC 61158-6-10.
+     *
+     * IMPORTANT: Use pnet_diag_add()/pnet_diag_remove() instead of
+     * pnet_alarm_send_process_alarm(). The diagnosis API:
+     *   - Stores diagnosis state in the IO-Device (required by spec)
+     *   - Automatically sends alarm type 0x0001 (appears) on add
+     *   - Automatically sends alarm type 0x0002 (disappears) on remove
+     *   - No need for alarm confirmation callback management
      *
      * Channel error types from IEC 61158-6-10:
      *   0x0001 = Short circuit
@@ -1545,45 +1554,71 @@ result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t q
      *   0x0008 = Data transmission impossible
      *   0x001F = Sensor not available
      */
-    uint8_t diag_data[6];
-    uint16_t channel_num = 0;  /* Whole submodule */
-    uint16_t channel_props = htons(0x0000);  /* Input, accumulative */
-    uint16_t error_type;
 
+    bool is_fault = (quality == QUALITY_BAD || quality == QUALITY_NOT_CONNECTED);
+
+    /* Map quality to channel error type */
+    uint16_t ch_error_type;
     switch (quality) {
         case QUALITY_NOT_CONNECTED:
-            error_type = htons(0x001F);  /* Sensor not available */
+            ch_error_type = 0x001F;  /* Sensor not available */
             break;
         case QUALITY_BAD:
-            error_type = htons(0x0008);  /* Data transmission impossible */
+            ch_error_type = 0x0008;  /* Data transmission impossible */
             break;
         default:
-            error_type = htons(0x0000);  /* No error */
+            ch_error_type = 0x0000;  /* No error */
             break;
     }
 
-    memcpy(diag_data + 0, &channel_num, 2);
-    memcpy(diag_data + 2, &channel_props, 2);
-    memcpy(diag_data + 4, &error_type, 2);
+    /* Define diagnosis source location */
+    pnet_diag_source_t diag_source = {
+        .api = 0,
+        .slot = (uint16_t)slot,
+        .subslot = (uint16_t)subslot,
+        .ch = 0,  /* 0 = whole submodule */
+        .ch_grouping = PNET_DIAG_CH_INDIVIDUAL_CHANNEL,
+        .ch_direction = PNET_DIAG_CH_PROP_DIR_INPUT
+    };
 
-    bool is_fault = (quality == QUALITY_BAD || quality == QUALITY_NOT_CONNECTED);
-    uint16_t alarm_type = is_fault ? 0x0001 : 0x0002;  /* Appears / Disappears */
-
-    int ret = pnet_alarm_send_process_alarm(
-        g_pn.pnet, g_pn.arep, 0,
-        (uint16_t)slot, (uint16_t)subslot,
-        0x8000,  /* USI: channel diagnosis */
-        sizeof(diag_data), diag_data
-    );
+    int ret;
+    if (is_fault) {
+        /* Add diagnosis - stack automatically sends alarm type 0x0001 (appears) */
+        ret = pnet_diag_add(
+            g_pn.pnet,
+            &diag_source,
+            PNET_DIAG_CH_PROP_TYPE_INPUT,      /* Channel type: input */
+            PNET_DIAG_CH_PROP_MAINT_REQUIRED,  /* Severity: maintenance required */
+            ch_error_type,                      /* Channel error type */
+            0,                                  /* ext_ch_error_type (none) */
+            0,                                  /* ext_ch_add_value (none) */
+            0,                                  /* qual_ch_qualifier (none) */
+            0x8000,                             /* USI: standard channel diagnosis */
+            0,                                  /* manuf_data_len (none) */
+            NULL                                /* p_manuf_data (none) */
+        );
+    } else {
+        /* Remove diagnosis - stack automatically sends alarm type 0x0002 (disappears) */
+        ret = pnet_diag_remove(
+            g_pn.pnet,
+            &diag_source,
+            ch_error_type,
+            0,      /* ext_ch_error_type (none) */
+            0x8000  /* USI: standard channel diagnosis */
+        );
+    }
 
     if (ret != 0) {
-        LOG_WARNING("Failed to send diagnosis alarm for slot %d: ret=%d", slot, ret);
+        LOG_WARNING("Failed to %s diagnosis for slot %d.%d: ret=%d",
+                    is_fault ? "add" : "remove", slot, subslot, ret);
         return RESULT_ERROR;
     }
 
-    LOG_INFO("Sent diagnosis %s for slot %d.%d (quality=%s)",
+    LOG_INFO("Sent diagnosis %s (alarm type 0x%04X) for slot %d.%d (quality=%s)",
              is_fault ? "APPEARS" : "DISAPPEARS",
+             is_fault ? 0x0001 : 0x0002,
              slot, subslot, quality_to_string(quality));
+
     return RESULT_OK;
 #else
     UNUSED(slot); UNUSED(subslot); UNUSED(quality);

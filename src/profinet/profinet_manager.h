@@ -215,7 +215,12 @@ void profinet_manager_remove_slot(int slot, int subslot);
  * sensor transitions to BAD/NOT_CONNECTED, or clears the alarm when the
  * sensor recovers to GOOD/UNCERTAIN.
  *
- * Wire-compliant: uses standard alarm types and channel diagnosis USI.
+ * Uses p-net diagnosis API (pnet_diag_add/remove) which:
+ *   - Stores diagnosis state in the IO-Device (per PROFINET spec)
+ *   - Automatically sends alarm type 0x0001 (appears) when diagnosis added
+ *   - Automatically sends alarm type 0x0002 (disappears) when diagnosis removed
+ *
+ * Wire-compliant: uses standard diagnosis alarm types and USI 0x8000.
  *
  * @param slot      PROFINET slot number
  * @param subslot   PROFINET subslot number
