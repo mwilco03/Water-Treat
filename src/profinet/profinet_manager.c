@@ -412,19 +412,81 @@ static result_t load_modules_from_db(void) {
 }
 
 /* ============================================================================
+ * GSDML Consistency Validation
+ * ========================================================================== */
+
+/**
+ * @brief Validate runtime config matches GSDML identity constants
+ *
+ * Catches configuration errors at startup rather than at connection time
+ * when the controller rejects due to identity mismatch. All identity values
+ * must match the GSDML file (gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml).
+ *
+ * Checked values:
+ *   - vendor_id  must equal PN_VENDOR_ID  (0x0493)
+ *   - device_id  must equal PN_DEVICE_ID  (0x0001)
+ *   - min_device_interval must equal PN_MIN_DEVICE_INTERVAL (32)
+ *
+ * @param config  Runtime PROFINET configuration
+ * @return true if all values match GSDML, false on mismatch (logged)
+ */
+static bool validate_gsdml_consistency(const profinet_config_t *config) {
+    bool valid = true;
+
+    if (config->vendor_id != PN_VENDOR_ID) {
+        LOG_ERROR("GSDML mismatch: vendor_id=0x%04X, expected 0x%04X (GSDML)",
+                  config->vendor_id, (unsigned)PN_VENDOR_ID);
+        valid = false;
+    }
+
+    if (config->device_id != PN_DEVICE_ID) {
+        LOG_ERROR("GSDML mismatch: device_id=0x%04X, expected 0x%04X (GSDML)",
+                  config->device_id, (unsigned)PN_DEVICE_ID);
+        valid = false;
+    }
+
+    if (config->min_device_interval != PN_MIN_DEVICE_INTERVAL) {
+        LOG_ERROR("GSDML mismatch: min_device_interval=%u, expected %u (GSDML)",
+                  config->min_device_interval, (unsigned)PN_MIN_DEVICE_INTERVAL);
+        valid = false;
+    }
+
+    if (valid) {
+        LOG_INFO("GSDML consistency check passed: vendor=0x%04X, device=0x%04X, interval=%u",
+                 (unsigned)PN_VENDOR_ID, (unsigned)PN_DEVICE_ID,
+                 (unsigned)PN_MIN_DEVICE_INTERVAL);
+    } else {
+        LOG_ERROR("GSDML consistency check FAILED — fix config to match "
+                  "gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml");
+    }
+
+    return valid;
+}
+
+/* ============================================================================
  * Public API
  * ========================================================================== */
 
 result_t profinet_manager_init(database_t *db, const profinet_config_t *config) {
     CHECK_NULL(db); CHECK_NULL(config);
-    
+
     if (g_pn.initialized) return RESULT_OK;
-    
+
+    /* Validate config matches GSDML before proceeding */
+    if (!validate_gsdml_consistency(config)) {
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Config does not match GSDML identity constants");
+        return RESULT_ERROR;
+    }
+
     memset(&g_pn, 0, sizeof(g_pn));
     g_pn.db = db;
     memcpy(&g_pn.config, config, sizeof(profinet_config_t));
-    
+
     pthread_mutex_init(&g_pn.mutex, NULL);
+
+    /* Initialize callback data structures (I&M0 byte ordering, etc.) */
+    profinet_callbacks_init();
 
 #ifdef HAVE_PNET
     // Configure p-net

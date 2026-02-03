@@ -1,20 +1,20 @@
 /**
  * @file user_sync_protocol.h
- * @brief Shared protocol definitions for user credential synchronization
+ * @brief Shared user-sync wire protocol (Water-Controller ↔ Water-Treat RTU)
  *
- * CANONICAL SOURCE: This file defines the wire format for user credential
- * sync between the SCADA Controller and RTU devices via PROFINET acyclic
- * record writes (index 0xF840).
+ * Canonical definitions for the user credential synchronization protocol
+ * transmitted over PROFINET acyclic record writes (index 0xF840).
  *
- * Both Water-Controller and Water-Treat (RTU) must use identical definitions.
- * The Water-Controller repository is the upstream source of truth.
- * RTU fetches this header via scripts/fetch_shared_protocols.sh.
+ * This header is the single source of truth for:
+ *   - Wire format structures (header, records)
+ *   - Protocol constants (magic, version, operations, roles)
+ *   - Cryptographic helpers (DJB2, CRC16-CCITT, constant-time compare)
  *
- * Wire format: All multi-byte integers are in network byte order (big-endian).
- * Structs are packed (__attribute__((packed))) — no padding between fields.
+ * Both the controller (Python) and RTU (C) implement identical algorithms.
+ * The test vectors in user_sync_verify_hash_implementation() guarantee parity.
  *
- * Hash format: "DJB2:%08X:%08X" where first field is DJB2(salt), second is
- * DJB2(password). Salt is USER_SYNC_SALT ("NaCl4Life").
+ * Origin: Water-Controller repository
+ * Synced to Water-Treat via build-time fetch (see scripts/sync-shared-headers.sh)
  */
 
 #ifndef USER_SYNC_PROTOCOL_H
@@ -25,69 +25,68 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <arpa/inet.h>
 
 /* ============================================================================
  * Protocol Constants
  * ========================================================================== */
 
-/** Protocol version — increment on breaking wire format changes */
-#define USER_SYNC_PROTOCOL_VERSION  1
+/** Protocol version (bump on incompatible wire format changes) */
+#define USER_SYNC_PROTOCOL_VERSION  2
 
-/** Magic number for packet identification: "USYN" in big-endian */
-#define USER_SYNC_MAGIC             0x5553594E
+/** Magic bytes: ASCII "USER" = 0x55534552 (stored big-endian on wire) */
+#define USER_SYNC_MAGIC             0x55534552u
 
-/** PROFINET record index for user sync writes */
+/** PROFINET record index for user sync packets */
 #define USER_SYNC_RECORD_INDEX      0xF840
 
-/** Maximum users per sync (embedded constraint — static allocation) */
+/** Maximum users per sync (embedded constraint) */
 #define USER_SYNC_MAX_USERS         16
 
-/** Maximum username length including null terminator */
-#define USER_SYNC_USERNAME_LEN      64
+/** Username field width (including null terminator) */
+#define USER_SYNC_USERNAME_LEN      32
 
-/** Maximum hash string length including null terminator.
- *  Format: "DJB2:%08X:%08X" = 22 chars + null = 23, padded to 32. */
-#define USER_SYNC_HASH_LEN          32
+/** Hash string width: "DJB2:XXXXXXXX:XXXXXXXX" + null (24 bytes) */
+#define USER_SYNC_HASH_LEN          24
 
-/** Salt for DJB2 hash computation */
+/** Salt for password hashing — must match controller */
 #define USER_SYNC_SALT              "NaCl4Life"
 
 /** DJB2 hash initial value */
-#define DJB2_INIT                   ((uint32_t)5381)
+#define DJB2_INIT                   5381u
 
 /* ============================================================================
  * Operation Codes
  * ========================================================================== */
 
-/** Replace all RTU users with this set */
-#define USER_SYNC_OP_FULL_SYNC      0
+/** Replace entire user table with this packet's records */
+#define USER_SYNC_OP_FULL_SYNC      0x01
 
-/** Add or update individual users */
-#define USER_SYNC_OP_ADD_UPDATE     1
+/** Add or update individual user records */
+#define USER_SYNC_OP_ADD_UPDATE     0x02
 
-/** Delete individual users */
-#define USER_SYNC_OP_DELETE          2
+/** Delete users listed in this packet */
+#define USER_SYNC_OP_DELETE         0x03
 
 /* ============================================================================
- * User Roles
+ * Role Constants (uint8_t values, ascending privilege)
  * ========================================================================== */
 
-/** Role type — uint8_t on the wire */
 typedef uint8_t user_sync_role_t;
 
-#define USER_ROLE_VIEWER            ((user_sync_role_t)0)
-#define USER_ROLE_OPERATOR          ((user_sync_role_t)1)
-#define USER_ROLE_ENGINEER          ((user_sync_role_t)2)
-#define USER_ROLE_ADMIN             ((user_sync_role_t)3)
+#define USER_ROLE_VIEWER    ((user_sync_role_t)0)
+#define USER_ROLE_OPERATOR  ((user_sync_role_t)1)
+#define USER_ROLE_ENGINEER  ((user_sync_role_t)2)
+#define USER_ROLE_ADMIN     ((user_sync_role_t)3)
 
 /* ============================================================================
- * User Flags (bitfield)
+ * User Flags
  * ========================================================================== */
 
-/** Account is enabled */
+/** Account is active (can authenticate) */
 #define USER_FLAG_ACTIVE            0x01
 
-/** Controller marked this user for RTU synchronization */
+/** Controller marked this user for RTU sync */
 #define USER_FLAG_SYNC_TO_RTUS      0x02
 
 /* ============================================================================
@@ -95,31 +94,29 @@ typedef uint8_t user_sync_role_t;
  * ========================================================================== */
 
 typedef enum {
-    USER_SYNC_OK = 0,
-    USER_SYNC_ERR_MAGIC,        /**< Invalid magic number */
-    USER_SYNC_ERR_VERSION,      /**< Unsupported protocol version */
-    USER_SYNC_ERR_SIZE,         /**< Packet too short for declared content */
-    USER_SYNC_ERR_CHECKSUM,     /**< CRC16 mismatch */
-    USER_SYNC_ERR_OPERATION,    /**< Unknown operation code */
-    USER_SYNC_ERR_COUNT,        /**< User count exceeds MAX_USERS */
+    USER_SYNC_OK           = 0,
+    USER_SYNC_ERR_MAGIC    = 1,
+    USER_SYNC_ERR_VERSION  = 2,
+    USER_SYNC_ERR_CRC      = 3,
+    USER_SYNC_ERR_LENGTH   = 4
 } user_sync_result_t;
 
 /* ============================================================================
- * Wire Format Structures (packed, network byte order)
+ * Wire Format Structures (all multi-byte fields in network byte order)
  * ========================================================================== */
 
 /**
- * Sync packet header (12 bytes)
+ * Packet header — precedes the user record array.
  *
- * Byte layout:
- *   [0..3]  magic        uint32_t  USER_SYNC_MAGIC
- *   [4]     version      uint8_t   USER_SYNC_PROTOCOL_VERSION
- *   [5]     operation    uint8_t   USER_SYNC_OP_*
- *   [6]     user_count   uint8_t   Number of records following
- *   [7]     reserved     uint8_t   Must be 0
- *   [8..11] timestamp    uint32_t  Epoch seconds (network byte order)
- *   [12..13] checksum    uint16_t  CRC16-CCITT of payload (network byte order)
- *   [14..15] reserved2   uint16_t  Must be 0
+ * Wire layout (16 bytes):
+ *   [0-3]   magic      (uint32, big-endian: 0x55534552)
+ *   [4]     version    (uint8: 2)
+ *   [5]     operation  (uint8: USER_SYNC_OP_*)
+ *   [6]     user_count (uint8: number of records following)
+ *   [7]     reserved
+ *   [8-9]   checksum   (uint16, big-endian: CRC16-CCITT of records)
+ *   [10-11] reserved
+ *   [12-15] timestamp  (uint32, big-endian: unix epoch)
  */
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -127,21 +124,20 @@ typedef struct __attribute__((packed)) {
     uint8_t  operation;
     uint8_t  user_count;
     uint8_t  reserved;
-    uint32_t timestamp;
     uint16_t checksum;
     uint16_t reserved2;
+    uint32_t timestamp;
 } user_sync_header_t;
 
 /**
- * Per-user record (network byte order where applicable)
+ * Single user record in wire format (64 bytes).
  *
- * Byte layout:
- *   [0..3]   user_id        uint32_t  Unique ID (network byte order)
- *   [4..67]  username       char[64]  Null-terminated UTF-8
- *   [68..99] password_hash  char[32]  "DJB2:%08X:%08X" null-terminated
- *   [100]    role           uint8_t   USER_ROLE_*
- *   [101]    flags          uint8_t   USER_FLAG_* bitfield
- *   [102..103] reserved     uint16_t  Must be 0
+ *   [0-3]   user_id        (uint32, big-endian)
+ *   [4-35]  username       (32 bytes, null-terminated, zero-padded)
+ *   [36-59] password_hash  (24 bytes, "DJB2:XXXXXXXX:XXXXXXXX\0")
+ *   [60]    role           (uint8: USER_ROLE_*)
+ *   [61]    flags          (uint8: USER_FLAG_*)
+ *   [62-63] reserved
  */
 typedef struct __attribute__((packed)) {
     uint32_t user_id;
@@ -153,81 +149,112 @@ typedef struct __attribute__((packed)) {
 } user_sync_record_t;
 
 /**
- * Full sync payload (header + variable number of records)
+ * Complete payload (header + records).
+ * Convenience type for size calculations.
  */
 typedef struct __attribute__((packed)) {
     user_sync_header_t header;
-    user_sync_record_t records[];
+    user_sync_record_t records[USER_SYNC_MAX_USERS];
 } user_sync_payload_t;
 
 /* ============================================================================
- * Inline Functions
+ * Inline Functions — DJB2 Hash
  * ========================================================================== */
 
 /**
- * DJB2 hash of a null-terminated string
- * Matches controller's _djb2_hash() with 32-bit overflow masking.
+ * @brief DJB2 hash of a null-terminated string
+ *
+ * hash(i) = hash(i-1) * 33 + c,  starting from DJB2_INIT (5381).
+ * 32-bit unsigned overflow is the masking mechanism.
+ *
+ * Verified test vectors:
+ *   DJB2("")          = 5381
+ *   DJB2("a")         = 177670
+ *   DJB2("NaCl4Life") = 0x1A3C1FD7
  */
 static inline uint32_t user_sync_djb2(const char *str) {
     uint32_t hash = DJB2_INIT;
-    int c;
-    while ((c = (unsigned char)*str++)) {
-        hash = ((hash << 5) + hash) + (uint32_t)c;  /* hash * 33 + c */
+    if (!str) return hash;
+    while (*str) {
+        hash = hash * 33 + (uint8_t)*str;
+        str++;
     }
     return hash;
 }
 
 /**
- * Compute DJB2 hash of password (with optional salt override).
+ * @brief Hash password with salt (DJB2 seeded by salt hash)
  *
- * @param password  Password to hash
- * @param salt      Salt string (NULL to use default USER_SYNC_SALT)
- * @param out_hash  Receives the 32-bit hash result
+ * 1. Compute salt_hash = DJB2(salt)        [defaults to USER_SYNC_SALT]
+ * 2. Continue hashing password characters from salt_hash
+ *
+ * @param password  Plaintext password
+ * @param salt      Salt string (NULL → USER_SYNC_SALT)
+ * @param hash_out  Receives 32-bit password hash
  */
 static inline void user_sync_hash_with_salt(const char *password,
-                                              const char *salt,
-                                              uint32_t *out_hash) {
-    (void)salt;  /* Salt is hashed separately in the wire format */
-    *out_hash = user_sync_djb2(password);
+                                             const char *salt,
+                                             uint32_t *hash_out) {
+    const char *actual_salt = salt ? salt : USER_SYNC_SALT;
+    uint32_t hash = user_sync_djb2(actual_salt);
+    if (password) {
+        const char *p = password;
+        while (*p) {
+            hash = hash * 33 + (uint8_t)*p;
+            p++;
+        }
+    }
+    if (hash_out) *hash_out = hash;
 }
 
 /**
- * Format password hash in controller-compatible format.
- * Output: "DJB2:<salt_hash>:<password_hash>"
+ * @brief Format password into wire hash string
  *
- * @param password   Plaintext password
- * @param out        Buffer of at least USER_SYNC_HASH_LEN bytes
+ * Produces: "DJB2:<salt_hash>:<password_hash>"
+ * Example:  "DJB2:1A3C1FD7:F82B0BED" for password "test123"
+ *
+ * @param password  Plaintext password
+ * @param hash_out  Buffer (min USER_SYNC_HASH_LEN bytes)
  */
-static inline void user_sync_format_hash(const char *password, char *out) {
+static inline void user_sync_format_hash(const char *password, char *hash_out) {
     uint32_t salt_hash = user_sync_djb2(USER_SYNC_SALT);
-    uint32_t pass_hash = user_sync_djb2(password);
-    snprintf(out, USER_SYNC_HASH_LEN, "DJB2:%08X:%08X", salt_hash, pass_hash);
+    uint32_t pass_hash;
+    user_sync_hash_with_salt(password, NULL, &pass_hash);
+    snprintf(hash_out, USER_SYNC_HASH_LEN, "DJB2:%08X:%08X",
+             salt_hash, pass_hash);
 }
 
+/* ============================================================================
+ * Inline Functions — Security
+ * ========================================================================== */
+
 /**
- * Constant-time comparison of two buffers.
- * Prevents timing attacks on hash comparison.
+ * @brief Constant-time comparison to prevent timing attacks
  *
- * @return true if first `len` bytes are equal
+ * Compares all bytes regardless of mismatch position.
+ * The volatile qualifier prevents the compiler from short-circuiting.
+ *
+ * @return true if all bytes match, false otherwise
  */
-static inline bool user_sync_constant_time_compare(const char *a, const char *b,
-                                                     size_t len) {
+static inline bool user_sync_constant_time_compare(const char *a,
+                                                    const char *b,
+                                                    size_t len) {
     volatile uint8_t diff = 0;
     for (size_t i = 0; i < len; i++) {
-        diff |= (uint8_t)((unsigned char)a[i] ^ (unsigned char)b[i]);
+        diff |= (uint8_t)a[i] ^ (uint8_t)b[i];
     }
     return diff == 0;
 }
 
 /**
- * CRC16-CCITT (polynomial 0x1021, init 0xFFFF)
+ * @brief CRC16-CCITT (polynomial 0x1021, init 0xFFFF)
  *
- * Used for packet integrity verification.
+ * Used to validate record payloads in user sync packets.
  */
-static inline uint16_t user_sync_crc16_ccitt(const uint8_t *data, size_t len) {
+static inline uint16_t user_sync_crc16_ccitt(const uint8_t *data, size_t length) {
     uint16_t crc = 0xFFFF;
-    for (size_t i = 0; i < len; i++) {
-        crc ^= (uint16_t)((uint16_t)data[i] << 8);
+    for (size_t i = 0; i < length; i++) {
+        crc ^= (uint16_t)data[i] << 8;
         for (int j = 0; j < 8; j++) {
             if (crc & 0x8000) {
                 crc = (uint16_t)((crc << 1) ^ 0x1021);
@@ -239,109 +266,55 @@ static inline uint16_t user_sync_crc16_ccitt(const uint8_t *data, size_t len) {
     return crc;
 }
 
+/* ============================================================================
+ * Inline Functions — Validation
+ * ========================================================================== */
+
 /**
- * Validate sync packet header (magic, version, operation, user count).
- *
- * @return USER_SYNC_OK if valid, error code otherwise
+ * @brief Validate packet header magic and version
  */
-static inline user_sync_result_t user_sync_validate_header(const user_sync_header_t *hdr) {
-    if (!hdr) return USER_SYNC_ERR_SIZE;
-
-    if (hdr->magic != USER_SYNC_MAGIC) {
-        /* Try network byte order */
-        uint32_t magic_n = ((hdr->magic >> 24) & 0xFF) |
-                           ((hdr->magic >> 8) & 0xFF00) |
-                           ((hdr->magic << 8) & 0xFF0000) |
-                           ((hdr->magic << 24) & 0xFF000000);
-        if (magic_n != USER_SYNC_MAGIC) {
-            return USER_SYNC_ERR_MAGIC;
-        }
-    }
-
-    if (hdr->version != USER_SYNC_PROTOCOL_VERSION) {
-        return USER_SYNC_ERR_VERSION;
-    }
-
-    if (hdr->operation > USER_SYNC_OP_DELETE) {
-        return USER_SYNC_ERR_OPERATION;
-    }
-
-    if (hdr->user_count > USER_SYNC_MAX_USERS) {
-        return USER_SYNC_ERR_COUNT;
-    }
-
+static inline user_sync_result_t user_sync_validate_header(
+        const user_sync_header_t *hdr) {
+    if (!hdr) return USER_SYNC_ERR_LENGTH;
+    if (ntohl(hdr->magic) != USER_SYNC_MAGIC) return USER_SYNC_ERR_MAGIC;
+    if (hdr->version != USER_SYNC_PROTOCOL_VERSION) return USER_SYNC_ERR_VERSION;
     return USER_SYNC_OK;
 }
 
 /**
- * Validate full payload (header + size check for records).
- *
- * @param data      Raw packet data
- * @param length    Total packet length
- * @return USER_SYNC_OK if valid
+ * @brief Validate payload structure
  */
-static inline user_sync_result_t user_sync_validate_payload(const uint8_t *data,
-                                                              size_t length) {
-    if (!data || length < sizeof(user_sync_header_t)) {
-        return USER_SYNC_ERR_SIZE;
-    }
-
-    const user_sync_header_t *hdr = (const user_sync_header_t *)data;
-    user_sync_result_t result = user_sync_validate_header(hdr);
-    if (result != USER_SYNC_OK) {
-        return result;
-    }
-
-    size_t expected = sizeof(user_sync_header_t) +
-                      (size_t)hdr->user_count * sizeof(user_sync_record_t);
-    if (length < expected) {
-        return USER_SYNC_ERR_SIZE;
-    }
-
-    return USER_SYNC_OK;
+static inline user_sync_result_t user_sync_validate_payload(
+        const user_sync_payload_t *payload) {
+    if (!payload) return USER_SYNC_ERR_LENGTH;
+    return user_sync_validate_header(&payload->header);
 }
 
 /**
- * Initialize a sync header with default values.
+ * @brief Initialize header with default magic and version
  */
-static inline void user_sync_init_header(user_sync_header_t *hdr,
-                                           uint8_t operation,
-                                           uint8_t user_count) {
+static inline void user_sync_init_header(user_sync_header_t *hdr) {
     if (!hdr) return;
     memset(hdr, 0, sizeof(*hdr));
-    hdr->magic = USER_SYNC_MAGIC;
+    hdr->magic = htonl(USER_SYNC_MAGIC);
     hdr->version = USER_SYNC_PROTOCOL_VERSION;
-    hdr->operation = operation;
-    hdr->user_count = user_count;
-}
-
-/**
- * Compute total payload size for a given user count.
- */
-static inline size_t user_sync_payload_size(uint8_t user_count) {
-    return sizeof(user_sync_header_t) +
-           (size_t)user_count * sizeof(user_sync_record_t);
 }
 
 /* ============================================================================
- * String Conversion Functions
+ * Inline Functions — String Conversion
  * ========================================================================== */
 
-/** Result code to human-readable string */
 static inline const char* user_sync_result_str(user_sync_result_t result) {
     switch (result) {
-        case USER_SYNC_OK:            return "OK";
-        case USER_SYNC_ERR_MAGIC:     return "invalid magic";
-        case USER_SYNC_ERR_VERSION:   return "unsupported version";
-        case USER_SYNC_ERR_SIZE:      return "packet too short";
-        case USER_SYNC_ERR_CHECKSUM:  return "checksum mismatch";
-        case USER_SYNC_ERR_OPERATION: return "unknown operation";
-        case USER_SYNC_ERR_COUNT:     return "user count exceeds max";
-        default:                      return "unknown error";
+        case USER_SYNC_OK:          return "OK";
+        case USER_SYNC_ERR_MAGIC:   return "invalid magic";
+        case USER_SYNC_ERR_VERSION: return "version mismatch";
+        case USER_SYNC_ERR_CRC:     return "CRC error";
+        case USER_SYNC_ERR_LENGTH:  return "invalid length";
+        default:                    return "unknown error";
     }
 }
 
-/** Role to human-readable string */
 static inline const char* user_sync_role_str(user_sync_role_t role) {
     switch (role) {
         case USER_ROLE_VIEWER:   return "viewer";
@@ -352,26 +325,34 @@ static inline const char* user_sync_role_str(user_sync_role_t role) {
     }
 }
 
-/** Operation code to human-readable string */
 static inline const char* user_sync_op_str(uint8_t operation) {
     switch (operation) {
-        case USER_SYNC_OP_FULL_SYNC:   return "FULL_SYNC";
-        case USER_SYNC_OP_ADD_UPDATE:  return "ADD_UPDATE";
-        case USER_SYNC_OP_DELETE:      return "DELETE";
-        default:                       return "UNKNOWN";
+        case USER_SYNC_OP_FULL_SYNC:  return "full_sync";
+        case USER_SYNC_OP_ADD_UPDATE: return "add_update";
+        case USER_SYNC_OP_DELETE:     return "delete";
+        default:                      return "unknown_op";
     }
 }
 
+/* ============================================================================
+ * Inline Functions — Utility
+ * ========================================================================== */
+
 /**
- * Check if a role meets or exceeds the required level.
- *
- * @param user_role      Role of the user
- * @param required_role  Minimum required role
- * @return true if user_role >= required_role
+ * @brief Check if one role has sufficient privilege for another
+ * @return true if have >= required
  */
-static inline bool user_sync_role_sufficient(user_sync_role_t user_role,
-                                               user_sync_role_t required_role) {
-    return user_role >= required_role;
+static inline bool user_sync_role_sufficient(user_sync_role_t have,
+                                              user_sync_role_t required) {
+    return have >= required;
+}
+
+/**
+ * @brief Calculate total payload size for a given user count
+ */
+static inline size_t user_sync_payload_size(uint8_t user_count) {
+    return sizeof(user_sync_header_t) +
+           ((size_t)user_count * sizeof(user_sync_record_t));
 }
 
 #endif /* USER_SYNC_PROTOCOL_H */

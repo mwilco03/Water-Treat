@@ -24,6 +24,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <arpa/inet.h>  /* htons for I&M0 byte ordering */
 
 /* Global config from main.c — needed for factory reset backup paths */
 extern config_manager_t g_config_mgr;
@@ -53,8 +54,8 @@ typedef struct {
     uint8_t  block_header_version;  // 1.0
     uint8_t  block_header_reserved;
     uint16_t vendor_id;             // 0x0493 (matches GSD)
-    char     order_id[20];          // Order number (ASCII)
-    char     serial_number[16];     // Serial number (ASCII)
+    char     order_id[20];          // Order number (ASCII, space-padded)
+    char     serial_number[16];     // Serial number (ASCII, space-padded)
     uint16_t hardware_revision;     // HW revision
     struct {
         uint8_t prefix;             // 'V' for release
@@ -70,27 +71,65 @@ typedef struct {
 } im0_data_t;
 #pragma pack(pop)
 
-static im0_data_t g_im0_data = {
-    .block_header_type = 0x0020,
-    .block_header_length = 54,
-    .block_header_version = 0x01,
-    .block_header_reserved = 0,
-    .vendor_id = PN_VENDOR_ID,
-    .order_id = "WaterTreat-RTU   ",// 20 chars padded with spaces
-    .serial_number = "RTU-000000001   ",// 16 chars
-    .hardware_revision = 0x0001,
-    .software_revision = {
-        .prefix = 'V',
-        .functional = 1,            // Major: 1
-        .bugfix = 0,                // Minor: 0
-        .internal = 0               // Patch: 0
-    },
-    .revision_counter = 0,
-    .profile_id = 0,                // No profile
-    .profile_specific_type = 0,
-    .im_version = 0x0101,           // I&M v1.1
-    .im_supported = 0x001F          // I&M0-4 supported (bits 0-4)
-};
+/*
+ * I&M0 data — initialized at runtime by profinet_callbacks_init()
+ * to ensure multi-byte fields are in network byte order (big-endian).
+ *
+ * PROFINET record data is transmitted as raw bytes; the stack does NOT
+ * byte-swap application callback data.  A static initializer would store
+ * uint16_t fields in host byte order, producing wrong values on
+ * little-endian systems (ARM, x86).
+ */
+static im0_data_t g_im0_data;
+static bool g_im0_initialized = false;
+
+/* ============================================================================
+ * Initialization
+ * ========================================================================== */
+
+void profinet_callbacks_init(void) {
+    if (g_im0_initialized) return;
+
+    /*
+     * Initialize I&M0 with multi-byte fields in network byte order.
+     * Text fields are space-padded per PROFINET I&M0 specification
+     * (IEC 61158-6-10, 5.2.18.1).
+     */
+    memset(&g_im0_data, 0, sizeof(g_im0_data));
+
+    /* Space-pad text fields before copying content */
+    memset(g_im0_data.order_id, ' ', sizeof(g_im0_data.order_id));
+    memset(g_im0_data.serial_number, ' ', sizeof(g_im0_data.serial_number));
+
+    /* Block header — big-endian */
+    g_im0_data.block_header_type    = htons(0x0020);
+    g_im0_data.block_header_length  = htons(54);
+    g_im0_data.block_header_version = 0x01;
+    g_im0_data.block_header_reserved = 0x00;
+
+    /* Device identity — big-endian */
+    g_im0_data.vendor_id = htons(PN_VENDOR_ID);
+    memcpy(g_im0_data.order_id, "WaterTreat-RTU", 14);         /* 14 chars + space-pad */
+    memcpy(g_im0_data.serial_number, "RTU-000000001", 13);     /* 13 chars + space-pad */
+
+    /* Revisions */
+    g_im0_data.hardware_revision         = htons(0x0001);
+    g_im0_data.software_revision.prefix     = 'V';
+    g_im0_data.software_revision.functional = 1;   /* Major */
+    g_im0_data.software_revision.bugfix     = 0;   /* Minor */
+    g_im0_data.software_revision.internal   = 0;   /* Patch */
+
+    /* Profile — big-endian */
+    g_im0_data.revision_counter      = htons(0);
+    g_im0_data.profile_id            = htons(0);
+    g_im0_data.profile_specific_type = htons(0);
+    g_im0_data.im_version            = htons(0x0101);  /* I&M v1.1 */
+    g_im0_data.im_supported          = htons(0x001F);  /* I&M0-4 */
+
+    g_im0_initialized = true;
+    LOG_DEBUG("I&M0 data initialized (%zu bytes, network byte order)",
+              sizeof(im0_data_t));
+}
 
 /* ============================================================================
  * PNIO Error Recovery
@@ -234,9 +273,20 @@ int profinet_connect_callback(pnet_t *net, void *arg,
 
 int profinet_release_callback(pnet_t *net, void *arg,
                               uint32_t arep, pnet_result_t *result) {
-    UNUSED(net); UNUSED(arg); UNUSED(result);
+    UNUSED(net); UNUSED(arg);
 
     LOG_INFO("PROFINET release (arep=%u)", arep);
+
+    if (result &&
+        (result->pnio_status.error_code != 0 ||
+         result->pnio_status.error_code_1 != 0 ||
+         result->pnio_status.error_code_2 != 0)) {
+        LOG_WARNING(">>> release_callback result: err=0x%02X, err1=0x%02X, err2=0x%04X",
+                    result->pnio_status.error_code,
+                    result->pnio_status.error_code_1,
+                    result->pnio_status.error_code_2);
+    }
+
     profinet_manager_set_connected(false, 0);
     return 0;
 }
@@ -497,8 +547,6 @@ int profinet_write_callback(pnet_t *net, void *arg,
             }
             return -1;
     }
-
-    return 0;
 }
 
 /* ============================================================================
@@ -765,6 +813,10 @@ int profinet_signal_led_callback(pnet_t *net, void *arg, bool led_state) {
 #else /* !HAVE_PNET */
 
 /* Stub implementations when p-net is not available */
+
+void profinet_callbacks_init(void) {
+    /* No-op: I&M0 data only needed with real PROFINET stack */
+}
 
 int profinet_state_callback(void *net, void *arg, uint32_t arep, int event) {
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(event);

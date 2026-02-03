@@ -3,6 +3,15 @@
 
 #include "common.h"
 
+/**
+ * @brief Initialize PROFINET callback data structures
+ *
+ * Converts I&M0 multi-byte fields to network byte order (big-endian)
+ * and applies correct space-padding for text fields per PROFINET spec.
+ * Must be called once before any PROFINET callbacks are invoked.
+ */
+void profinet_callbacks_init(void);
+
 #ifdef HAVE_PNET
 #include <pnet_api.h>
 
