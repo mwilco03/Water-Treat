@@ -46,6 +46,19 @@ static const char *hardware_types[] = {
     "TCS34725", "JSN-SR04T", "Flow Sensor", "pH Sensor", "TDS Sensor",
     "Turbidity", "Float Switch", "Generic"
 };
+static const int hardware_types_count = 14;
+
+/* ADC module type only supports these hardware types (must have ADC drivers) */
+static const char *adc_hardware_types[] = {"ADS1115", "MCP3008"};
+static const int adc_hardware_types_count = 2;
+
+/* Physical module type hardware options (excludes ADC-only types) */
+static const char *physical_hardware_types[] = {
+    "DS18B20", "DHT22", "BME280", "HX711", "TCS34725", "JSN-SR04T",
+    "Flow Sensor", "pH Sensor", "TDS Sensor", "Turbidity",
+    "Float Switch", "Generic"
+};
+static const int physical_hardware_types_count = 12;
 
 static void init_form(sensor_form_t *form) {
     memset(form, 0, sizeof(*form));
@@ -128,8 +141,21 @@ static bool edit_field(WINDOW *dialog, sensor_form_t *form, int field) {
             break;
         case 4:
             {
-                int sel = dialog_select("Select Hardware", hardware_types, 14, 0);
-                if (sel >= 0) { strncpy(form->sensor_type, hardware_types[sel], 31); return true; }
+                /* Show hardware options appropriate for the selected module type */
+                const char **hw_list;
+                int hw_count;
+                if (strcmp(form->module_type, "adc") == 0) {
+                    hw_list = adc_hardware_types;
+                    hw_count = adc_hardware_types_count;
+                } else if (strcmp(form->module_type, "physical") == 0) {
+                    hw_list = physical_hardware_types;
+                    hw_count = physical_hardware_types_count;
+                } else {
+                    hw_list = hardware_types;
+                    hw_count = hardware_types_count;
+                }
+                int sel = dialog_select("Select Hardware", hw_list, hw_count, 0);
+                if (sel >= 0) { strncpy(form->sensor_type, hw_list[sel], 31); return true; }
             }
             break;
         case 5:

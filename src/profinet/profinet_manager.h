@@ -208,4 +208,46 @@ void profinet_manager_clear_app_slots(void);
  */
 void profinet_manager_remove_slot(int slot, int subslot);
 
+/**
+ * @brief Send PROFINET channel diagnosis alarm for a sensor submodule
+ *
+ * Per IEC 61158-6-10, sends a standard channel diagnosis alarm when a
+ * sensor transitions to BAD/NOT_CONNECTED, or clears the alarm when the
+ * sensor recovers to GOOD/UNCERTAIN.
+ *
+ * Wire-compliant: uses standard alarm types and channel diagnosis USI.
+ *
+ * @param slot      PROFINET slot number
+ * @param subslot   PROFINET subslot number
+ * @param quality   Current data quality
+ * @return RESULT_OK on success
+ */
+result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t quality);
+
+/**
+ * @brief Notify that controller cyclic data RUN bit has gone to 0
+ *
+ * Called from data status callback.  Triggers actuator disconnect handlers
+ * so they can enter safe state.
+ */
+void profinet_manager_on_data_run_stop(void);
+
+/**
+ * @brief Get the current Application Relationship Endpoint (AREP)
+ *
+ * @return AREP value, or 0 if not connected
+ */
+uint32_t profinet_manager_get_arep(void);
+
+/**
+ * @brief Set the controller-provided watchdog timeout
+ *
+ * Called by config_sync when the controller sends a device config (0xF841)
+ * that includes a watchdog_ms field.  This timeout overrides the default
+ * liveness check interval.
+ *
+ * @param watchdog_ms  Timeout in milliseconds (0 = use default)
+ */
+void profinet_manager_set_controller_watchdog(uint32_t watchdog_ms);
+
 #endif

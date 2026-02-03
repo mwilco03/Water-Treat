@@ -119,6 +119,7 @@ typedef struct {
     float value;
     bool success;
     data_quality_t quality;
+    data_quality_t prev_quality;  /* Previous quality for transition detection */
     float last_value;  /* For failed reads */
 } sensor_read_result_t;
 
@@ -157,6 +158,7 @@ static void* sensor_worker_thread(void *arg) {
                 upd->module_id = instance->module_id;
                 upd->slot = instance->slot;
                 upd->last_value = instance->current_value;
+                upd->prev_quality = instance->quality;
 
                 result_t result = sensor_instance_read(instance, &upd->value);
                 upd->success = (result == RESULT_OK);
@@ -254,6 +256,33 @@ static void* sensor_worker_thread(void *arg) {
                 }
 
                 LOG_WARNING("Failed to read sensor slot=%d", upd->slot);
+            }
+
+            /*
+             * Send PROFINET channel diagnosis alarm on quality transitions.
+             *
+             * This is standard PROFINET behavior per IEC 61158-6-10:
+             * - When a sensor transitions TO BAD or NOT_CONNECTED, send
+             *   a diagnosis-appears alarm (alarm type 0x0001)
+             * - When a sensor transitions FROM BAD/NOT_CONNECTED back to
+             *   GOOD or UNCERTAIN, send diagnosis-disappears (0x0002)
+             *
+             * Only sent on transitions to avoid alarm storms.  The controller
+             * uses these alarms for immediate fault notification rather than
+             * relying solely on polling IOPS/quality bytes.
+             *
+             * Cross-protocol parallel: OPC UA StatusChangeNotification,
+             * EtherNet/IP device-level ring fault, Modbus exception response.
+             */
+            if (mgr->profinet_mgr && upd->quality != upd->prev_quality) {
+                bool was_fault = (upd->prev_quality == QUALITY_BAD ||
+                                  upd->prev_quality == QUALITY_NOT_CONNECTED);
+                bool is_fault  = (upd->quality == QUALITY_BAD ||
+                                  upd->quality == QUALITY_NOT_CONNECTED);
+
+                if (is_fault != was_fault) {
+                    profinet_manager_send_diagnosis(upd->slot, 0, upd->quality);
+                }
             }
         }
 

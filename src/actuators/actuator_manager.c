@@ -814,6 +814,27 @@ result_t actuator_manager_reload(actuator_manager_t *mgr) {
         return r;
     }
 
+    /* Remove actuators that are no longer in the database or became disabled.
+     * Iterate backwards so index shifts from actuator_manager_remove don't
+     * cause us to skip entries. */
+    for (int i = mgr->actuator_count - 1; i >= 0; i--) {
+        int slot = mgr->actuators[i].config.profinet_slot;
+        bool found = false;
+
+        for (int j = 0; j < db_count; j++) {
+            if (db_actuators[j].slot == slot && db_actuators[j].enabled) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            LOG_INFO("Removing stale actuator at slot %d", slot);
+            profinet_manager_remove_slot(slot, 0);
+            actuator_manager_remove(mgr, slot);
+        }
+    }
+
     if (db_count == 0) {
         LOG_INFO("No actuators configured in database");
         if (db_actuators) free(db_actuators);
