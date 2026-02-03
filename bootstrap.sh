@@ -239,21 +239,28 @@ discover_network() {
 detect_network_interface() {
     # Priority order: eth* > enp* > ens* > wlan*
     local iface=""
-    for pattern in "eth*" "enp*" "ens*" "wlan*"; do
-        for candidate in /sys/class/net/$pattern; do
-            [[ -e "$candidate" ]] || continue
+
+    # Use find to avoid glob expansion issues
+    for pattern in "eth" "enp" "ens" "wlan"; do
+        while IFS= read -r candidate; do
+            [[ -z "$candidate" ]] && continue
             local name
             name=$(basename "$candidate")
             [[ "$name" == "lo" ]] && continue
+
             # Check if it has a valid MAC (not all zeros)
-            local mac
-            mac=$(cat "$candidate/address" 2>/dev/null || echo "")
-            if [[ -n "$mac" && "$mac" != "00:00:00:00:00:00" ]]; then
-                iface="$name"
-                break 2
+            local mac_file="${candidate}/address"
+            if [[ -f "$mac_file" ]]; then
+                local mac
+                mac=$(cat "$mac_file" 2>/dev/null || echo "")
+                if [[ -n "$mac" && "$mac" != "00:00:00:00:00:00" ]]; then
+                    iface="$name"
+                    break 2
+                fi
             fi
-        done
+        done < <(find /sys/class/net -maxdepth 1 -type l -name "${pattern}*" 2>/dev/null | sort)
     done
+
     echo "$iface"
 }
 
@@ -277,11 +284,13 @@ detect_network_interface() {
 detect_station_name() {
     local iface="$1"
     if [[ -z "$iface" ]]; then
+        log_warn "No interface provided to detect_station_name, using fallback"
         echo "rtu-0000"
         return
     fi
     local mac_file="/sys/class/net/${iface}/address"
     if [[ ! -f "$mac_file" ]]; then
+        log_warn "MAC address file not found: $mac_file, using fallback"
         echo "rtu-0000"
         return
     fi
@@ -289,7 +298,17 @@ detect_station_name() {
     # Example: aa:bb:cc:dd:ee:ff -> eeff
     local mac suffix
     mac=$(cat "$mac_file")
+    if [[ -z "$mac" ]]; then
+        log_warn "Empty MAC address from $mac_file, using fallback"
+        echo "rtu-0000"
+        return
+    fi
     suffix=$(echo "$mac" | awk -F: '{print tolower($5 $6)}')
+    if [[ -z "$suffix" || "$suffix" == "0000" ]]; then
+        log_warn "Invalid MAC suffix '$suffix' from $mac, using fallback"
+        echo "rtu-0000"
+        return
+    fi
     echo "rtu-${suffix}"
 }
 
@@ -1000,6 +1019,29 @@ install_files() {
     station_name=$(detect_station_name "$iface")
     log_info "Detected interface: ${iface:-none}"
     log_info "Detected station_name: $station_name"
+
+    # Set OS hostname to match station name (only if successfully detected, not fallback)
+    if [[ "$station_name" != "rtu-0000" ]]; then
+        local current_hostname
+        current_hostname=$(hostname 2>/dev/null || echo "")
+        if [[ "$current_hostname" != "$station_name" ]]; then
+            log_info "Setting OS hostname to match station name: $station_name"
+            # Try hostnamectl first (systemd), fallback to direct file edit
+            if command -v hostnamectl &>/dev/null; then
+                run_privileged hostnamectl set-hostname "$station_name" || \
+                    log_warn "Failed to set hostname via hostnamectl"
+            else
+                # Fallback: direct file edit
+                echo "$station_name" | run_privileged tee /etc/hostname > /dev/null
+                run_privileged hostname "$station_name" 2>/dev/null || true
+                log_info "Hostname set (fallback method)"
+            fi
+        else
+            log_info "Hostname already set to: $station_name"
+        fi
+    else
+        log_warn "Skipping hostname change (using fallback station name)"
+    fi
 
     # Create default config if not exists (proper INI format)
     if [[ ! -f "$CONFIG_DIR/water-treat.conf" ]]; then
