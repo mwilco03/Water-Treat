@@ -576,19 +576,78 @@ int profinet_exp_submodule_callback(pnet_t *net, void *arg,
  * Data Status Callback
  * ========================================================================== */
 
+/*
+ * Track previous data status so we only act on transitions.
+ * Bit meanings (IEC 61158-6-10):
+ *   Bit 0 (0x01): State — 1=Primary, 0=Backup
+ *   Bit 1 (0x02): Redundancy — for ring/MRP
+ *   Bit 2 (0x04): DataValid — 1=data in IOCR is valid
+ *   Bit 4 (0x10): ProviderState/Run — 1=RUN, 0=STOP
+ *   Bit 5 (0x20): StationProblemIndicator — 0=OK, 1=problem
+ *
+ * The most important for resilience are bits 2 (Valid) and 4 (Run):
+ *   RUN=0:   Controller has stopped sending output data.  Actuators must
+ *            enter safe state (analogous to EtherNet/IP production timeout).
+ *   Valid=0: Data in the IOCR is not valid.  Sensor readings from this
+ *            device should not be trusted by the controller.
+ */
+static uint8_t g_prev_data_status = 0xFF;  /* Force first transition */
+
 int profinet_new_data_status_callback(pnet_t *net, void *arg,
                                       uint32_t arep, uint32_t crep,
                                       uint8_t changes, uint8_t data_status) {
     UNUSED(net); UNUSED(arg); UNUSED(arep); UNUSED(crep);
-    
-    bool run = (data_status & 0x04) != 0;
-    bool valid = (data_status & 0x01) != 0;
-    
+
+    bool run       = (data_status & 0x10) != 0;
+    bool valid     = (data_status & 0x04) != 0;
+    bool prev_run  = (g_prev_data_status & 0x10) != 0;
+    bool prev_valid = (g_prev_data_status & 0x04) != 0;
+
     if (changes) {
-        LOG_DEBUG("PROFINET data status: run=%d, valid=%d, status=0x%02X", 
-                  run, valid, data_status);
+        LOG_INFO("PROFINET data status change: run=%d->%d, valid=%d->%d, status=0x%02X",
+                 prev_run, run, prev_valid, valid, data_status);
+
+        /*
+         * RUN transition 1->0: Controller has entered STOP mode.
+         *
+         * This is the standard PROFINET signal for "I am no longer providing
+         * cyclic output data."  The device MUST enter safe state for outputs
+         * per IEC 61784-3 (PROFIsafe principles apply to non-safety too as
+         * best practice).
+         *
+         * Cross-protocol parallels:
+         *   - OPC UA:      PublishResponse timeout → subscription transfer
+         *   - EtherNet/IP: Production inhibit timer expiry → connection timeout
+         *   - Modbus TCP:  TCP keepalive failure → slave goes to safe state
+         */
+        if (prev_run && !run) {
+            LOG_WARNING("PROFINET RUN->STOP: Controller stopped cyclic output. "
+                        "Actuators entering safe state.");
+            profinet_manager_on_data_run_stop();
+        }
+
+        /*
+         * RUN transition 0->1: Controller resumed cyclic output.
+         * This will be handled by normal cyclic data arrival, which triggers
+         * exit from degraded mode in the actuator watchdog.
+         */
+        if (!prev_run && run) {
+            LOG_INFO("PROFINET STOP->RUN: Controller resumed cyclic output.");
+        }
+
+        /*
+         * VALID transition 1->0: Data in our IOCR is marked invalid.
+         * This can happen during parameterization or if the controller
+         * detects a framing error.  Log but don't take drastic action —
+         * wait for a full RUN->STOP or ABORT for that.
+         */
+        if (prev_valid && !valid) {
+            LOG_WARNING("PROFINET data VALID->INVALID: IOCR data marked not valid");
+        }
+
+        g_prev_data_status = data_status;
     }
-    
+
     return 0;
 }
 

@@ -7,6 +7,7 @@
  */
 
 #include "config_sync.h"
+#include "profinet_manager.h"
 #include "utils/logger.h"
 #include <string.h>
 #include <pthread.h>
@@ -109,6 +110,17 @@ result_t config_sync_process_device(const uint8_t *data, uint16_t length) {
              g_cfg.watchdog_ms);
 
     pthread_mutex_unlock(&g_cfg.mutex);
+
+    /*
+     * Propagate the controller's watchdog timeout to the PROFINET manager
+     * for connection liveness supervision.  This allows the controller to
+     * configure how long the RTU should wait before declaring the connection
+     * stale — matching the EtherNet/IP pattern where the controller sets
+     * the production timeout multiplier.
+     */
+    if (g_cfg.watchdog_ms > 0) {
+        profinet_manager_set_controller_watchdog(g_cfg.watchdog_ms);
+    }
 
     return RESULT_OK;
 }
