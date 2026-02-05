@@ -4,6 +4,7 @@
  */
 
 #include "driver_common.h"
+#include "constants.h"
 #include <string.h>
 #include <strings.h>
 
@@ -24,14 +25,14 @@ static const driver_ops_t driver_jsn_sr04t_ops = {
     .read = NULL,
     .close = NULL,
     .set_calibration = NULL,
-    .name = "JSN-SR04T"
+    .name = DRIVER_NAME_JSN_SR04T
 };
 
 static const driver_ops_t driver_tcs34725_ops = {
     .read = NULL,
     .close = NULL,
     .set_calibration = NULL,
-    .name = "TCS34725"
+    .name = DRIVER_NAME_TCS34725
 };
 
 static const driver_ops_t driver_float_switch_ops = {
@@ -54,17 +55,17 @@ static const driver_ops_t driver_web_poll_ops = {
  * Add new drivers here when implementing them.
  */
 static const driver_registry_entry_t driver_registry[] = {
-    { DRIVER_TYPE_DS18B20,     "DS18B20",     &driver_ds18b20_ops },
-    { DRIVER_TYPE_DHT22,       "DHT22",       &driver_dht22_ops },
-    { DRIVER_TYPE_BME280,      "BME280",      &driver_bme280_ops },
-    { DRIVER_TYPE_HX711,       "HX711",       &driver_hx711_ops },
-    { DRIVER_TYPE_JSN_SR04T,   "JSN-SR04T",   &driver_jsn_sr04t_ops },
-    { DRIVER_TYPE_TCS34725,    "TCS34725",    &driver_tcs34725_ops },
-    { DRIVER_TYPE_FLOAT_SWITCH,"FloatSwitch", &driver_float_switch_ops },
-    { DRIVER_TYPE_ADS1115,     "ADS1115",     &driver_ads1115_ops },
-    { DRIVER_TYPE_MCP3008,     "MCP3008",     &driver_mcp3008_ops },
-    { DRIVER_TYPE_WEB_POLL,    "WebPoll",     &driver_web_poll_ops },
-    { DRIVER_TYPE_NONE,        NULL,          NULL }  /* Sentinel */
+    { DRIVER_TYPE_DS18B20,     DRIVER_NAME_DS18B20,  &driver_ds18b20_ops },
+    { DRIVER_TYPE_DHT22,       DRIVER_NAME_DHT22,    &driver_dht22_ops },
+    { DRIVER_TYPE_BME280,      DRIVER_NAME_BME280,   &driver_bme280_ops },
+    { DRIVER_TYPE_HX711,       DRIVER_NAME_HX711,    &driver_hx711_ops },
+    { DRIVER_TYPE_JSN_SR04T,   DRIVER_NAME_JSN_SR04T,&driver_jsn_sr04t_ops },
+    { DRIVER_TYPE_TCS34725,    DRIVER_NAME_TCS34725, &driver_tcs34725_ops },
+    { DRIVER_TYPE_FLOAT_SWITCH,"FloatSwitch",        &driver_float_switch_ops },
+    { DRIVER_TYPE_ADS1115,     DRIVER_NAME_ADS1115,  &driver_ads1115_ops },
+    { DRIVER_TYPE_MCP3008,     DRIVER_NAME_MCP3008,  &driver_mcp3008_ops },
+    { DRIVER_TYPE_WEB_POLL,    "WebPoll",            &driver_web_poll_ops },
+    { DRIVER_TYPE_NONE,        NULL,                 NULL }  /* Sentinel */
 };
 
 const driver_ops_t *driver_get_ops_by_type(driver_type_t type) {
@@ -92,7 +93,7 @@ const driver_ops_t *driver_get_ops_by_name(const char *name) {
     if (strcasecmp(name, "AM2302") == 0) {
         return driver_get_ops_by_type(DRIVER_TYPE_DHT22);
     }
-    if (strcasecmp(name, "BMP280") == 0) {
+    if (strcasecmp(name, DRIVER_NAME_BMP280) == 0) {
         return driver_get_ops_by_type(DRIVER_TYPE_BME280);
     }
     if (strcasecmp(name, "ADS1015") == 0) {
@@ -115,7 +116,7 @@ driver_type_t driver_get_type_by_name(const char *name) {
     if (strcasecmp(name, "DHT11") == 0 || strcasecmp(name, "AM2302") == 0) {
         return DRIVER_TYPE_DHT22;
     }
-    if (strcasecmp(name, "BMP280") == 0) {
+    if (strcasecmp(name, DRIVER_NAME_BMP280) == 0) {
         return DRIVER_TYPE_BME280;
     }
     if (strcasecmp(name, "ADS1015") == 0) {

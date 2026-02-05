@@ -15,6 +15,7 @@
 
 #include "dialog_io_wizard.h"
 #include "dialog_helpers.h"
+#include "constants.h"
 #include "../tui_common.h"
 #include "db/database.h"
 #include "db/db_modules.h"
@@ -1691,8 +1692,8 @@ static bool save_sensor(void) {
 
         db_physical_sensor_t phys = {0};
         phys.module_id = sensor_id;
-        SAFE_STRNCPY(phys.sensor_type, "DS18B20", sizeof(phys.sensor_type));
-        SAFE_STRNCPY(phys.hardware_type, "DS18B20", sizeof(phys.hardware_type));
+        SAFE_STRNCPY(phys.sensor_type, DRIVER_NAME_DS18B20, sizeof(phys.sensor_type));
+        SAFE_STRNCPY(phys.hardware_type, DRIVER_NAME_DS18B20, sizeof(phys.hardware_type));
         SAFE_STRNCPY(phys.interface, "1wire", sizeof(phys.interface));
         SAFE_STRNCPY(phys.address, g_wiz.selected_onewire_id, sizeof(phys.address));
         phys.bus = 0;
@@ -1743,7 +1744,7 @@ static bool save_sensor(void) {
 
         db_adc_sensor_t adc = {0};
         adc.module_id = sensor_id;
-        SAFE_STRNCPY(adc.adc_type, "ADS1115", sizeof(adc.adc_type));
+        SAFE_STRNCPY(adc.adc_type, DRIVER_NAME_ADS1115, sizeof(adc.adc_type));
         SAFE_STRNCPY(adc.interface, "i2c", sizeof(adc.interface));
         snprintf(adc.address, sizeof(adc.address), "0x%02X", g_wiz.selected_adc_address);
         adc.bus = g_wiz.selected_adc_bus;

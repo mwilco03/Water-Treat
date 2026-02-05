@@ -6,6 +6,7 @@
  */
 
 #include "hw_discover.h"
+#include "constants.h"
 #include "utils/logger.h"
 
 #include <stdio.h>
@@ -100,7 +101,7 @@ typedef struct {
 } onewire_family_info_t;
 
 static const onewire_family_info_t onewire_families[] = {
-    {0x28, ONEWIRE_DEVICE_DS18B20, "DS18B20", "Digital temperature sensor"},
+    {0x28, ONEWIRE_DEVICE_DS18B20, DRIVER_NAME_DS18B20, "Digital temperature sensor"},
     {0x10, ONEWIRE_DEVICE_DS18S20, "DS18S20", "Digital temperature sensor"},
     {0x22, ONEWIRE_DEVICE_DS1820,  "DS1820",  "Digital temperature sensor"},
     {0x42, ONEWIRE_DEVICE_DS28EA00, "DS28EA00", "Temperature sensor w/PIO"},
@@ -407,18 +408,18 @@ const char* i2c_device_type_name(i2c_device_type_t type)
 {
     switch (type) {
         case I2C_DEVICE_UNKNOWN:     return "Unknown";
-        case I2C_DEVICE_ADS1115:     return "ADS1115";
+        case I2C_DEVICE_ADS1115:     return DRIVER_NAME_ADS1115;
         case I2C_DEVICE_ADS1015:     return "ADS1015";
         case I2C_DEVICE_MCP3421:     return "MCP3421";
-        case I2C_DEVICE_BME280:      return "BME280";
-        case I2C_DEVICE_BMP280:      return "BMP280";
+        case I2C_DEVICE_BME280:      return DRIVER_NAME_BME280;
+        case I2C_DEVICE_BMP280:      return DRIVER_NAME_BMP280;
         case I2C_DEVICE_SHT31:       return "SHT31";
         case I2C_DEVICE_HTU21D:      return "HTU21D";
         case I2C_DEVICE_INA219:      return "INA219";
         case I2C_DEVICE_PCA9685:     return "PCA9685";
-        case I2C_DEVICE_PCF8574:     return "PCF8574";
-        case I2C_DEVICE_MCP23017:    return "MCP23017";
-        case I2C_DEVICE_AT24C:       return "AT24C";
+        case I2C_DEVICE_PCF8574:     return DRIVER_NAME_PCF8574;
+        case I2C_DEVICE_MCP23017:    return DRIVER_NAME_MCP23017;
+        case I2C_DEVICE_AT24C:       return DRIVER_NAME_AT24C;
         case I2C_DEVICE_DS3231:      return "DS3231";
         case I2C_DEVICE_OLED_SSD1306: return "SSD1306";
         default:                     return "Unknown";
@@ -429,7 +430,7 @@ const char* onewire_device_type_name(onewire_device_type_t type)
 {
     switch (type) {
         case ONEWIRE_DEVICE_UNKNOWN:  return "Unknown";
-        case ONEWIRE_DEVICE_DS18B20:  return "DS18B20";
+        case ONEWIRE_DEVICE_DS18B20:  return DRIVER_NAME_DS18B20;
         case ONEWIRE_DEVICE_DS18S20:  return "DS18S20";
         case ONEWIRE_DEVICE_DS1820:   return "DS1820";
         case ONEWIRE_DEVICE_DS28EA00: return "DS28EA00";

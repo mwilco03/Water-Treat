@@ -4,6 +4,7 @@
  */
 
 #include "db_actuators.h"
+#include "constants.h"
 #include "utils/logger.h"
 
 const char* actuator_type_to_string(actuator_type_t type) {
@@ -381,7 +382,7 @@ result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
     memset(conflict, 0, sizeof(*conflict));
     conflict->has_conflict = false;
 
-    const char *chip = gpio_chip && gpio_chip[0] ? gpio_chip : "gpiochip0";
+    const char *chip = gpio_chip && gpio_chip[0] ? gpio_chip : DEFAULT_GPIO_CHIP;
     char gpio_str[16];
     snprintf(gpio_str, sizeof(gpio_str), "%d", gpio_pin);
 

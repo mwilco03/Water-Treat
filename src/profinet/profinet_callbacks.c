@@ -14,6 +14,7 @@
 #include "profinet_manager.h"
 #include "rtu_registration.h"
 #include "config_sync.h"
+#include "constants.h"
 #include "auth/user_sync.h"
 #include "config/config.h"
 #include "utils/logger.h"
@@ -383,7 +384,7 @@ int profinet_read_callback(pnet_t *net, void *arg,
     LOG_DEBUG("PROFINET read: slot=%u.%u, idx=0x%04X", slot, subslot, idx);
 
     switch (idx) {
-        case 0x8000:  /* Identification & Maintenance 0 (mandatory) */
+        case PROFINET_RECORD_IM0:  /* Identification & Maintenance 0 (mandatory) */
             /*
              * Note: p-net v0.2.0 handles I&M0 reads internally from
              * pnet_cfg_t.im_0_data — this case is never reached.
@@ -404,7 +405,7 @@ int profinet_read_callback(pnet_t *net, void *arg,
             *length = 0;
             return 0;
 
-        case 0xF844: {
+        case PROFINET_RECORD_SLOT_MAP: {
             /*
              * Slot map record read - PROFINET fallback for slot discovery.
              * Step 5 in the controller's discovery chain (used when HTTP

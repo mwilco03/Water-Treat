@@ -11,6 +11,7 @@
 
 #include "rtu_registration.h"
 #include "controller_discovery.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include <pthread.h>
 #include <string.h>
@@ -325,7 +326,7 @@ static result_t do_http_registration(const char *controller_ip) {
     /* Setup request */
     struct memory_chunk response = {NULL, 0};
     struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Content-Type: " CONTENT_TYPE_JSON);
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);

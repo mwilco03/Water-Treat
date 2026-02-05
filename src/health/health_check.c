@@ -4,6 +4,7 @@
  */
 
 #include "health_check.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include "sensors/sensor_manager.h"
 #include "sensors/sensor_instance.h"
@@ -726,7 +727,7 @@ static void serve_gsdml_file(int client_fd) {
         char resp[512];
         int len = snprintf(resp, sizeof(resp),
             "HTTP/1.1 404 Not Found\r\n"
-            "Content-Type: application/json\r\n"
+            "Content-Type: CONTENT_TYPE_JSON\r\n"
             "Content-Length: %zu\r\n"
             "Connection: close\r\n"
             "\r\n%s", strlen(body), body);
@@ -745,7 +746,7 @@ static void serve_gsdml_file(int client_fd) {
     char header[256];
     int header_len = snprintf(header, sizeof(header),
         "HTTP/1.1 200 OK\r\n"
-        "Content-Type: application/xml\r\n"
+        "Content-Type: CONTENT_TYPE_XML\r\n"
         "Content-Length: %ld\r\n"
         "Connection: close\r\n"
         "Access-Control-Allow-Origin: *\r\n"
@@ -802,7 +803,7 @@ static void handle_http_request(int client_fd) {
     if (strcmp(path, "/health") == 0 || strcmp(path, "/") == 0) {
         /* JSON health endpoint */
         health_check_to_json(response_body, sizeof(response_body));
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
 
         /* Return 503 if system is critical */
         health_snapshot_t snap;
@@ -824,11 +825,11 @@ static void handle_http_request(int client_fd) {
         } else {
             snprintf(response_body, sizeof(response_body), "{\"ready\": true}");
         }
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
     } else if (strcmp(path, "/live") == 0 || strcmp(path, "/livez") == 0) {
         /* Kubernetes-style liveness probe (always true if server is running) */
         snprintf(response_body, sizeof(response_body), "{\"alive\": true}");
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
 #ifdef LED_SUPPORT
     } else if (strcmp(path, "/led/test") == 0) {
         /* LED test endpoint for commissioning */
@@ -844,7 +845,7 @@ static void handle_http_request(int client_fd) {
                     "{\"success\": false, \"error\": \"LED manager not initialized\"}");
             status_code = 503;
         }
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
     } else if (strcmp(path, "/led/status") == 0) {
         /* LED status endpoint */
         extern led_status_manager_t g_led_mgr;
@@ -864,12 +865,12 @@ static void handle_http_request(int client_fd) {
             snprintf(response_body, sizeof(response_body),
                     "{\"enabled\": false, \"error\": \"LED manager not initialized\"}");
         }
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
 #endif
     } else if (strcmp(path, "/config") == 0 || strcmp(path, "/config/export") == 0) {
         /* Configuration export endpoint */
         config_to_json(response_body, sizeof(response_body));
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
         LOG_DEBUG("Config export requested via HTTP");
     } else if (strcmp(path, "/api/v1/slots") == 0) {
         /* Slot discovery for controller fallback (non-standard) */
@@ -879,7 +880,7 @@ static void handle_http_request(int client_fd) {
                     "{\"error\": \"PROFINET subsystem unavailable\"}");
             status_code = 503;
         }
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
     } else if (strcmp(path, "/api/v1/gsdml") == 0) {
         /* Serve raw GSDML XML file — streamed directly due to file size */
         serve_gsdml_file(client_fd);
@@ -893,7 +894,7 @@ static void handle_http_request(int client_fd) {
                 ", \"/led/test\", \"/led/status\""
 #endif
                 "]}");
-        content_type = "application/json";
+        content_type = "CONTENT_TYPE_JSON";
         status_code = 404;
     }
 

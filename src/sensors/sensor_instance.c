@@ -4,6 +4,7 @@
  */
 
 #include "sensor_instance.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include "drivers/driver_ds18b20.h"
 #include "drivers/driver_dht22.h"
@@ -142,16 +143,16 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
         instance->timeout_ms = sensor.timeout_ms;
 
         // Initialize driver based on hardware type
-        if (strcmp(sensor.sensor_type, "DS18B20") == 0) {
+        if (strcmp(sensor.sensor_type, DRIVER_NAME_DS18B20) == 0) {
             instance->driver_type = PHYSICAL_DRIVER_DS18B20;
             result = driver_ds18b20_init(&instance->driver_handle, sensor.address);
-        } else if (strcmp(sensor.sensor_type, "DHT22") == 0 ||
+        } else if (strcmp(sensor.sensor_type, DRIVER_NAME_DHT22) == 0 ||
                    strcmp(sensor.sensor_type, "DHT11") == 0) {
             instance->driver_type = PHYSICAL_DRIVER_DHT22;
             int gpio_pin = atoi(sensor.address);
             result = driver_dht22_init(&instance->driver_handle, gpio_pin, false);
-        } else if (strcmp(sensor.sensor_type, "BME280") == 0 ||
-                   strcmp(sensor.sensor_type, "BMP280") == 0) {
+        } else if (strcmp(sensor.sensor_type, DRIVER_NAME_BME280) == 0 ||
+                   strcmp(sensor.sensor_type, DRIVER_NAME_BMP280) == 0) {
             instance->driver_type = PHYSICAL_DRIVER_BME280;
             uint8_t addr = 0x76;
             if (sensor.address[0] != '\0') {
@@ -159,12 +160,12 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
             }
             result = driver_bme280_init(&instance->driver_handle, sensor.bus, addr,
                                         BME280_READ_TEMPERATURE);
-        } else if (strcmp(sensor.sensor_type, "HX711") == 0) {
+        } else if (strcmp(sensor.sensor_type, DRIVER_NAME_HX711) == 0) {
             instance->driver_type = PHYSICAL_DRIVER_HX711;
             int dout_pin = 0, sck_pin = 0;
             sscanf(sensor.address, "%d,%d", &dout_pin, &sck_pin);
             result = driver_hx711_init(&instance->driver_handle, dout_pin, sck_pin, 1);
-        } else if (strcmp(sensor.sensor_type, "TCS34725") == 0) {
+        } else if (strcmp(sensor.sensor_type, DRIVER_NAME_TCS34725) == 0) {
             instance->driver_type = PHYSICAL_DRIVER_TCS34725;
             tcs34725_device_t *dev = calloc(1, sizeof(tcs34725_device_t));
             if (!dev) {
@@ -182,7 +183,7 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
                     free(dev);
                 }
             }
-        } else if (strcmp(sensor.sensor_type, "JSN-SR04T") == 0) {
+        } else if (strcmp(sensor.sensor_type, DRIVER_NAME_JSN_SR04T) == 0) {
             instance->driver_type = PHYSICAL_DRIVER_JSN_SR04T;
             jsn_sr04t_device_t *dev = calloc(1, sizeof(jsn_sr04t_device_t));
             if (!dev) {
@@ -233,14 +234,14 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
         instance->eng_max = sensor.eng_max;
 
         // Initialize driver based on hardware (use adc_type field)
-        if (strcmp(sensor.adc_type, "ADS1115") == 0 ||
+        if (strcmp(sensor.adc_type, DRIVER_NAME_ADS1115) == 0 ||
             strcmp(sensor.adc_type, "ADS1015") == 0) {
             instance->driver_type = ADC_DRIVER_ADS1115;
             if (strcmp(sensor.interface, "i2c") == 0) {
                 result = driver_ads1115_init(&instance->driver_handle, sensor.address,
                                             sensor.bus, sensor.channel, sensor.gain);
             }
-        } else if (strcmp(sensor.adc_type, "MCP3008") == 0) {
+        } else if (strcmp(sensor.adc_type, DRIVER_NAME_MCP3008) == 0) {
             instance->driver_type = ADC_DRIVER_MCP3008;
             int spi_bus, spi_device;
             parse_spi_device(sensor.address, &spi_bus, &spi_device);

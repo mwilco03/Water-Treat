@@ -4,6 +4,7 @@
  */
 
 #include "data_logger.h"
+#include "constants.h"
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "db/db_events.h"
@@ -155,7 +156,7 @@ static result_t send_to_remote(log_entry_t *entries, int count) {
     if (!json_str) return RESULT_NO_MEMORY;
     
     struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Content-Type: " CONTENT_TYPE_JSON);
     
     if (g_logger.api_key && strlen(g_logger.api_key) > 0) {
         char auth_header[256];
