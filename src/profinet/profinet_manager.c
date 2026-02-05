@@ -548,10 +548,10 @@ static result_t load_modules_from_db(void) {
  * when the controller rejects due to identity mismatch. All identity values
  * must match the GSDML file (gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml).
  *
- * Checked values:
- *   - vendor_id  must equal PN_VENDOR_ID  (0x0493)
- *   - device_id  must equal PN_DEVICE_ID  (0x0001)
- *   - min_device_interval must equal PN_MIN_DEVICE_INTERVAL (32)
+ * Checked values (from profinet_identity.h):
+ *   - vendor_id  must equal PN_VENDOR_ID
+ *   - device_id  must equal PN_DEVICE_ID
+ *   - min_device_interval must equal PN_MIN_DEVICE_INTERVAL
  *
  * @param config  Runtime PROFINET configuration
  * @return true if all values match GSDML, false on mismatch (logged)

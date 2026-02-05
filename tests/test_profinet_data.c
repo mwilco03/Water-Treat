@@ -4,6 +4,7 @@
  */
 
 #include "test_framework.h"
+#include "profinet_identity.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -162,9 +163,9 @@ void test_profinet_roundtrip(void) {
 
 /* Test vendor/device ID encoding */
 void test_profinet_id_encoding(void) {
-    /* From profinet_callbacks.c - vendor ID 0x0493 */
-    uint16_t vendor_id = 0x0493;
-    uint16_t device_id = 0x0001;
+    /* Use constants from profinet_identity.h */
+    uint16_t vendor_id = PN_VENDOR_ID;
+    uint16_t device_id = PN_DEVICE_ID;
 
     /* These are typically stored in little-endian in memory
      * but transmitted big-endian on wire */

@@ -4,6 +4,7 @@
  */
 
 #include "test_framework.h"
+#include "profinet_identity.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -70,8 +71,8 @@ void test_config_parse_int(void) {
 
 /* Test hexadecimal parsing */
 void test_config_parse_hex(void) {
-    TEST_ASSERT_EQ(0x0493, parse_int("0x0493", 0));
-    TEST_ASSERT_EQ(0x0001, parse_int("0x0001", 0));
+    TEST_ASSERT_EQ(PN_VENDOR_ID, parse_int("0x0272", 0));
+    TEST_ASSERT_EQ(PN_DEVICE_ID, parse_int("0x0DC0", 0));
     TEST_ASSERT_EQ(0xFF, parse_int("0xFF", 0));
     TEST_ASSERT_EQ(0xABCD, parse_int("0xABCD", 0));
 }
@@ -138,13 +139,13 @@ void test_config_defaults(void) {
      * Fallback is rtu-0000 if MAC detection fails
      * Note: interface is empty by default to trigger auto-detection (board-agnostic) */
     char default_interface[] = "";  /* Empty triggers auto-detection */
-    int default_vendor_id = 0x0493;
-    int default_device_id = 0x0001;
+    int default_vendor_id = PN_VENDOR_ID;
+    int default_device_id = PN_DEVICE_ID;
     int default_log_interval = 60;
 
     TEST_ASSERT_STR_EQ("", default_interface);
-    TEST_ASSERT_EQ(0x0493, default_vendor_id);
-    TEST_ASSERT_EQ(0x0001, default_device_id);
+    TEST_ASSERT_EQ(PN_VENDOR_ID, default_vendor_id);
+    TEST_ASSERT_EQ(PN_DEVICE_ID, default_device_id);
     TEST_ASSERT_EQ(60, default_log_interval);
 }
 

@@ -90,7 +90,7 @@ typedef struct {
     uint16_t block_header_length;   // 54
     uint8_t  block_header_version;  // 1.0
     uint8_t  block_header_reserved;
-    uint16_t vendor_id;             // 0x0493 (matches GSD)
+    uint16_t vendor_id;             // PN_VENDOR_ID from profinet_identity.h
     char     order_id[20];          // Order number (ASCII, space-padded)
     char     serial_number[16];     // Serial number (ASCII, space-padded)
     uint16_t hardware_revision;     // HW revision
