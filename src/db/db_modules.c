@@ -418,6 +418,35 @@ result_t db_adc_sensor_get(database_t *db, int module_id, db_adc_sensor_t *senso
     return RESULT_OK;
 }
 
+result_t db_adc_sensor_update(database_t *db, db_adc_sensor_t *sensor) {
+    CHECK_NULL(db); CHECK_NULL(sensor);
+    if (!db->db) return RESULT_NOT_INITIALIZED;
+
+    const char *sql = "UPDATE adc_sensors SET adc_type=?, interface=?, address=?, bus=?, channel=?, gain=?, reference_voltage=?, unit=?, raw_min=?, raw_max=?, eng_min=?, eng_max=?, poll_rate_ms=? WHERE module_id=?;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
+
+    sqlite3_bind_text(stmt, 1, sensor->adc_type, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, sensor->interface, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, sensor->address, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 4, sensor->bus);
+    sqlite3_bind_int(stmt, 5, sensor->channel);
+    sqlite3_bind_int(stmt, 6, sensor->gain);
+    sqlite3_bind_double(stmt, 7, sensor->reference_voltage);
+    sqlite3_bind_text(stmt, 8, sensor->unit, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 9, sensor->raw_min);
+    sqlite3_bind_int(stmt, 10, sensor->raw_max);
+    sqlite3_bind_double(stmt, 11, sensor->eng_min);
+    sqlite3_bind_double(stmt, 12, sensor->eng_max);
+    sqlite3_bind_int(stmt, 13, sensor->poll_rate_ms);
+    sqlite3_bind_int(stmt, 14, sensor->module_id);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? RESULT_OK : RESULT_ERROR;
+}
+
 /* ============================================================================
  * Web Poll Sensor Operations
  * ========================================================================== */

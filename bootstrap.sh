@@ -237,23 +237,31 @@ discover_network() {
 # =============================================================================
 
 detect_network_interface() {
-    # Priority order: eth* > enp* > ens* > wlan*
+    # Priority order: eth* > enp* > ens* > enx* (USB with MAC) > wlan*
     local iface=""
-    for pattern in "eth*" "enp*" "ens*" "wlan*"; do
-        for candidate in /sys/class/net/$pattern; do
-            [[ -e "$candidate" ]] || continue
+
+    # Use find to avoid glob expansion issues
+    # enx* = USB Ethernet with MAC address in name (e.g., enx001e0639ec3b)
+    for pattern in "eth" "enp" "ens" "enx" "wlan"; do
+        while IFS= read -r candidate; do
+            [[ -z "$candidate" ]] && continue
             local name
             name=$(basename "$candidate")
             [[ "$name" == "lo" ]] && continue
+
             # Check if it has a valid MAC (not all zeros)
-            local mac
-            mac=$(cat "$candidate/address" 2>/dev/null || echo "")
-            if [[ -n "$mac" && "$mac" != "00:00:00:00:00:00" ]]; then
-                iface="$name"
-                break 2
+            local mac_file="${candidate}/address"
+            if [[ -f "$mac_file" ]]; then
+                local mac
+                mac=$(cat "$mac_file" 2>/dev/null || echo "")
+                if [[ -n "$mac" && "$mac" != "00:00:00:00:00:00" ]]; then
+                    iface="$name"
+                    break 2
+                fi
             fi
-        done
+        done < <(find /sys/class/net -maxdepth 1 -type l -name "${pattern}*" 2>/dev/null | sort)
     done
+
     echo "$iface"
 }
 
@@ -291,6 +299,11 @@ detect_station_name() {
     # Example: aa:bb:cc:dd:ee:ff -> eeff
     local mac suffix
     mac=$(cat "$mac_file")
+    if [[ -z "$mac" ]]; then
+        log_warn "Empty MAC address from $mac_file, using fallback"
+        echo "rtu-0000"
+        return
+    fi
     suffix=$(echo "$mac" | awk -F: '{print tolower($5 $6)}')
 
     # Validate the suffix is exactly 4 hex chars
@@ -431,6 +444,123 @@ purge_pnet_nv_storage() {
 # Legacy alias for backwards compatibility
 purge_pnet_contamination() {
     purge_pnet_nv_storage "$@"
+}
+
+# =============================================================================
+# p-net Installation Verification (MANDATORY)
+# =============================================================================
+# CRITICAL: p-net is the PROFINET stack that handles:
+#   - UDP 34964 binding for DCE/RPC (Connect, Release, Read, Write)
+#   - Raw Ethernet socket for cyclic data and DCP discovery
+#   - AR (Application Relationship) state machine
+#
+# Without p-net, the RTU cannot communicate with any PROFINET controller.
+# The code compiles but all PROFINET functions become no-op stubs.
+#
+# This function performs a hard verification that p-net is installed.
+# If verification fails, bootstrap MUST abort -- there is no fallback.
+# =============================================================================
+
+verify_pnet_installed() {
+    log_step "Verifying p-net (PROFINET stack) installation..."
+
+    local pnet_lib=""
+    local pnet_header=""
+
+    # Check for library (p-net installs as libprofinet.so, we symlink to libpnet.so)
+    if [[ -f /usr/local/lib/libprofinet.so ]]; then
+        pnet_lib="/usr/local/lib/libprofinet.so"
+    elif [[ -f /usr/local/lib/libpnet.so ]]; then
+        pnet_lib="/usr/local/lib/libpnet.so"
+    elif [[ -f /usr/local/lib/libprofinet.a ]]; then
+        pnet_lib="/usr/local/lib/libprofinet.a"
+    elif [[ -f /usr/local/lib/libpnet.a ]]; then
+        pnet_lib="/usr/local/lib/libpnet.a"
+    fi
+
+    # Check for header
+    if [[ -f /usr/local/include/pnet_api.h ]]; then
+        pnet_header="/usr/local/include/pnet_api.h"
+    fi
+
+    # Both must exist
+    if [[ -n "$pnet_lib" && -n "$pnet_header" ]]; then
+        log_info "p-net verified: $pnet_lib"
+        log_verbose "Header: $pnet_header"
+        return 0
+    fi
+
+    # Verification failed - hard error
+    log_error "=============================================="
+    log_error "CRITICAL: p-net (PROFINET stack) NOT INSTALLED"
+    log_error "=============================================="
+    log_error ""
+    log_error "p-net is REQUIRED for PROFINET communication."
+    log_error "Without it, the RTU cannot:"
+    log_error "  - Respond to DCP discovery"
+    log_error "  - Accept PROFINET connections on UDP 34964"
+    log_error "  - Exchange cyclic data with the controller"
+    log_error ""
+    if [[ -z "$pnet_lib" ]]; then
+        log_error "Missing: libprofinet.so (or libpnet.so)"
+    fi
+    if [[ -z "$pnet_header" ]]; then
+        log_error "Missing: pnet_api.h"
+    fi
+    log_error ""
+    log_error "install-deps.sh should have built p-net from source."
+    log_error "Check the output above for build errors."
+    log_error ""
+    log_error "Manual fix:"
+    log_error "  cd /tmp && git clone https://github.com/rtlabs-com/p-net.git"
+    log_error "  cd p-net && git checkout v0.2.0"
+    log_error "  cmake -B build && cmake --build build"
+    log_error "  sudo cmake --install build"
+    log_error "=============================================="
+
+    return 1
+}
+
+# Verify HAVE_PNET is defined in the built binary
+verify_binary_has_profinet() {
+    local binary="$1"
+
+    if [[ ! -f "$binary" ]]; then
+        log_error "Binary not found: $binary"
+        return 1
+    fi
+
+    log_step "Verifying binary has PROFINET support..."
+
+    # Check if the binary has p-net symbols (pnet_init, pnet_handle_periodic)
+    # If compiled without HAVE_PNET, these symbols won't be present
+    if nm "$binary" 2>/dev/null | grep -q "pnet_init"; then
+        log_info "Binary verified: PROFINET support enabled"
+        return 0
+    fi
+
+    # Also check with strings for version info
+    if strings "$binary" 2>/dev/null | grep -qE "p-net|PROFINET.*connected"; then
+        log_info "Binary verified: PROFINET support enabled"
+        return 0
+    fi
+
+    log_error "=============================================="
+    log_error "CRITICAL: Binary compiled WITHOUT PROFINET"
+    log_error "=============================================="
+    log_error ""
+    log_error "The water-treat binary does not have p-net linked."
+    log_error "This means HAVE_PNET was not defined during build."
+    log_error ""
+    log_error "Possible causes:"
+    log_error "  1. CMake did not find p-net (check cmake output)"
+    log_error "  2. Build cache is stale (try: rm -rf build && bootstrap.sh fresh)"
+    log_error "  3. p-net was installed after initial cmake run"
+    log_error ""
+    log_error "Fix: Run 'bootstrap.sh fresh' to rebuild from scratch"
+    log_error "=============================================="
+
+    return 1
 }
 
 # =============================================================================
@@ -992,6 +1122,13 @@ build_from_source() {
         return 1
     fi
 
+    # MANDATORY: Verify p-net is installed before proceeding to build.
+    # This is a hard gate -- if p-net is missing, the RTU is non-functional.
+    verify_pnet_installed || {
+        log_error "Cannot proceed without p-net. Aborting build."
+        return 1
+    }
+
     # Fetch shared protocol headers from Water-Controller
     fetch_shared_protocols "$source_dir" || {
         log_error "Cannot build without protocol headers from Water-Controller"
@@ -1000,6 +1137,11 @@ build_from_source() {
 
     local build_dir="$source_dir/build"
     mkdir -p "$build_dir"
+
+    # Refresh library cache so CMake can find p-net
+    # p-net installs to /usr/local/lib which may not be in default search path
+    log_verbose "Refreshing library cache..."
+    run_privileged ldconfig 2>/dev/null || true
 
     log_info "Running cmake..."
     local cmake_output
@@ -1010,13 +1152,29 @@ build_from_source() {
     }
     echo "$cmake_output" >&2
 
-    # CRITICAL: Verify p-net was found.  Without it the PROFINET subsystem
-    # compiles to stubs and the RTU cannot communicate with the controller.
-    if echo "$cmake_output" | grep -q "p-net not found"; then
-        log_error "p-net (PROFINET stack) was NOT found by CMake"
-        log_error "The RTU binary will have no PROFINET support -- aborting"
-        log_error "Run: scripts/install-deps.sh  to build p-net from source"
+    # CRITICAL: Verify p-net was found by CMake.
+    # Check both negative (explicit "not found" message) and positive (HAVE_PNET)
+    if echo "$cmake_output" | grep -qiE "p-net not found|PNET_LIBRARY.*NOTFOUND"; then
+        log_error "=============================================="
+        log_error "CRITICAL: CMake did NOT find p-net"
+        log_error "=============================================="
+        log_error ""
+        log_error "p-net library files exist but CMake cannot find them."
+        log_error "This usually means the library cache is stale."
+        log_error ""
+        log_error "Attempted fixes:"
+        log_error "  1. ldconfig was just run (check output above)"
+        log_error "  2. Verify: ls -la /usr/local/lib/libp*"
+        log_error "  3. Try: rm -rf $build_dir && bootstrap.sh fresh"
+        log_error "=============================================="
         return 1
+    fi
+
+    # Positive confirmation: CMake should report finding p-net
+    if ! echo "$cmake_output" | grep -qiE "pnet.*found|HAVE_PNET"; then
+        log_warn "CMake output does not confirm p-net was found"
+        log_warn "Build will proceed but may not have PROFINET support"
+        log_warn "The binary verification step will catch this if so"
     fi
 
     log_info "Compiling (this may take a few minutes)..."
@@ -1032,7 +1190,16 @@ build_from_source() {
         return 1
     fi
 
-    log_info "Build successful"
+    # MANDATORY: Verify the binary was compiled WITH PROFINET support.
+    # This catches the case where p-net is installed but CMake didn't find it
+    # (e.g., stale build cache, wrong library path, etc.)
+    verify_binary_has_profinet "$build_dir/water-treat" || {
+        log_error "Binary does not have PROFINET support. Aborting."
+        log_error "Try: rm -rf $build_dir && bootstrap.sh fresh"
+        return 1
+    }
+
+    log_info "Build successful: PROFINET-enabled binary ready"
     return 0
 }
 

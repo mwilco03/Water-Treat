@@ -49,34 +49,6 @@ static bool find_thermal_zone(char *path_out) {
 }
 
 /**
- * @brief Read CPU temperature from sysfs thermal zone
- *
- * Works on all Linux SBCs (Raspberry Pi, BeagleBone, etc.)
- * Returns temperature in degrees Celsius.
- *
- * @param temp_path Path to thermal zone temp file (e.g., /sys/class/thermal/thermal_zone0/temp)
- * @param temperature Output temperature in Celsius
- * @return RESULT_OK on success
- */
-static result_t read_cpu_temperature(const char *temp_path, float *temperature) {
-    FILE *fp = fopen(temp_path, "r");
-    if (!fp) {
-        return RESULT_ERROR;
-    }
-
-    int millidegrees;
-    if (fscanf(fp, "%d", &millidegrees) != 1) {
-        fclose(fp);
-        return RESULT_ERROR;
-    }
-    fclose(fp);
-
-    /* Convert millidegrees to Celsius */
-    *temperature = (float)millidegrees / 1000.0f;
-    return RESULT_OK;
-}
-
-/**
  * @brief Create default CPU temperature sensor
  *
  * Called when no sensors are configured in database.
@@ -129,17 +101,12 @@ static sensor_instance_t* create_cpu_temp_sensor(void) {
 
     pthread_mutex_init(&instance->mutex, NULL);
 
-    /* Do initial read to verify sensor works */
+    /* Do initial read to verify sensor works (uses same SYSTEM path as runtime reads) */
     float temp;
-    if (read_cpu_temperature(thermal_path, &temp) == RESULT_OK) {
-        instance->current_value = temp;
-        instance->driver.system_temp.last_temp = temp;
-        instance->driver.system_temp.last_read_time = get_time_ms();
-        instance->connected = true;
+    if (sensor_instance_read(instance, &temp) == RESULT_OK) {
         strncpy(instance->status, "OK", sizeof(instance->status));
         LOG_INFO("CPU temperature sensor initialized: %.1f°C", temp);
     } else {
-        instance->connected = false;
         strncpy(instance->status, "ERROR", sizeof(instance->status));
     }
 
@@ -154,6 +121,7 @@ typedef struct {
     float value;
     bool success;
     data_quality_t quality;
+    data_quality_t prev_quality;  /* Previous quality for transition detection */
     float last_value;  /* For failed reads */
 } sensor_read_result_t;
 
@@ -193,6 +161,7 @@ static void* sensor_worker_thread(void *arg) {
                 upd->slot = instance->slot;
                 upd->subslot = instance->subslot;
                 upd->last_value = instance->current_value;
+                upd->prev_quality = instance->quality;
 
                 result_t result = sensor_instance_read(instance, &upd->value);
                 upd->success = (result == RESULT_OK);
@@ -291,6 +260,33 @@ static void* sensor_worker_thread(void *arg) {
 
                 LOG_WARNING("Failed to read sensor slot=%d", upd->slot);
             }
+
+            /*
+             * Send PROFINET channel diagnosis alarm on quality transitions.
+             *
+             * This is standard PROFINET behavior per IEC 61158-6-10:
+             * - When a sensor transitions TO BAD or NOT_CONNECTED, send
+             *   a diagnosis-appears alarm (alarm type 0x0001)
+             * - When a sensor transitions FROM BAD/NOT_CONNECTED back to
+             *   GOOD or UNCERTAIN, send diagnosis-disappears (0x0002)
+             *
+             * Only sent on transitions to avoid alarm storms.  The controller
+             * uses these alarms for immediate fault notification rather than
+             * relying solely on polling IOPS/quality bytes.
+             *
+             * Cross-protocol parallel: OPC UA StatusChangeNotification,
+             * EtherNet/IP device-level ring fault, Modbus exception response.
+             */
+            if (mgr->profinet_enabled && upd->quality != upd->prev_quality) {
+                bool was_fault = (upd->prev_quality == QUALITY_BAD ||
+                                  upd->prev_quality == QUALITY_NOT_CONNECTED);
+                bool is_fault  = (upd->quality == QUALITY_BAD ||
+                                  upd->quality == QUALITY_NOT_CONNECTED);
+
+                if (is_fault != was_fault) {
+                    profinet_manager_send_diagnosis(upd->slot, 0, upd->quality);
+                }
+            }
         }
 
         // Sleep for a short interval (10ms)
@@ -373,6 +369,15 @@ void sensor_manager_destroy(sensor_manager_t *mgr) {
 result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
     pthread_mutex_lock(&mgr->mutex);
     
+    /* Remove PROFINET slots for old sensor instances before destroying them */
+    if (mgr->profinet_enabled) {
+        for (int i = 0; i < mgr->instance_count; i++) {
+            if (mgr->instances[i] && mgr->instances[i]->slot > 0) {
+                profinet_manager_remove_slot(mgr->instances[i]->slot, 0);
+            }
+        }
+    }
+
     // Destroy existing instances and clear slot map
     for (int i = 0; i < mgr->instance_count; i++) {
         if (mgr->instances[i]) {
@@ -384,7 +389,7 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
 
     mgr->instance_count = 0;
     memset(mgr->slot_map, 0, sizeof(mgr->slot_map));
-    
+
     // Load modules from database
     db_module_t *modules = NULL;
     int module_count = 0;

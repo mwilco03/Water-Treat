@@ -216,4 +216,71 @@ int profinet_manager_init_all_inputs(void);
  */
 void profinet_manager_dump_slots(void);
 
+/**
+ * @brief Clear all application module slots (not DAP)
+ *
+ * Must be called before re-adding modules during reload to prevent
+ * stale slots from persisting. Only clears slot tracking; does not
+ * unplug from p-net (which requires a connection reset).
+ */
+void profinet_manager_clear_app_slots(void);
+
+/**
+ * @brief Remove a specific application module slot
+ *
+ * Targeted removal for individual slot cleanup (e.g., when a sensor is
+ * deleted). Safer than clear_app_slots when only one subsystem reloads.
+ *
+ * @param slot     Slot number to remove (must be > 0; DAP cannot be removed)
+ * @param subslot  Subslot number
+ */
+void profinet_manager_remove_slot(int slot, int subslot);
+
+/**
+ * @brief Send PROFINET channel diagnosis alarm for a sensor submodule
+ *
+ * Per IEC 61158-6-10, sends a standard channel diagnosis alarm when a
+ * sensor transitions to BAD/NOT_CONNECTED, or clears the alarm when the
+ * sensor recovers to GOOD/UNCERTAIN.
+ *
+ * Uses p-net diagnosis API (pnet_diag_add/remove) which:
+ *   - Stores diagnosis state in the IO-Device (per PROFINET spec)
+ *   - Automatically sends alarm type 0x0001 (appears) when diagnosis added
+ *   - Automatically sends alarm type 0x0002 (disappears) when diagnosis removed
+ *
+ * Wire-compliant: uses standard diagnosis alarm types and USI 0x8000.
+ *
+ * @param slot      PROFINET slot number
+ * @param subslot   PROFINET subslot number
+ * @param quality   Current data quality
+ * @return RESULT_OK on success
+ */
+result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t quality);
+
+/**
+ * @brief Notify that controller cyclic data RUN bit has gone to 0
+ *
+ * Called from data status callback.  Triggers actuator disconnect handlers
+ * so they can enter safe state.
+ */
+void profinet_manager_on_data_run_stop(void);
+
+/**
+ * @brief Get the current Application Relationship Endpoint (AREP)
+ *
+ * @return AREP value, or 0 if not connected
+ */
+uint32_t profinet_manager_get_arep(void);
+
+/**
+ * @brief Set the controller-provided watchdog timeout
+ *
+ * Called by config_sync when the controller sends a device config (0xF841)
+ * that includes a watchdog_ms field.  This timeout overrides the default
+ * liveness check interval.
+ *
+ * @param watchdog_ms  Timeout in milliseconds (0 = use default)
+ */
+void profinet_manager_set_controller_watchdog(uint32_t watchdog_ms);
+
 #endif

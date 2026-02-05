@@ -892,3 +892,213 @@ The current controller sends ExpectedSubmoduleBlockReq with 16 hardcoded slots (
 - [ ] For SUBSTITUTE: accept, do not error
 - [ ] Recalculate frame offsets after removing slots
 - [ ] Enter cyclic exchange with adjusted IO map
+
+### Phase 4: Connection Resilience (Critical for Production)
+
+This phase implements the supervision, monitoring, and recovery patterns
+required for reliable controller-RTU communication.  All mechanisms below
+are wire-compliant PROFINET unless explicitly marked as application-layer
+additions.
+
+#### 4.1: IOPS/IOCS Monitoring (Standard PROFINET)
+
+The RTU now correctly propagates sensor quality to the IOPS byte of each
+input submodule.  The controller MUST monitor IOPS in every Input CR frame:
+
+```
+For each input slot at its frame offset:
+  Read IOPS byte (immediately after data + quality bytes)
+
+  If IOPS == 0x80 (GOOD):
+    Sensor data is trustworthy.  Use the value + quality byte.
+
+  If IOPS == 0x00 (BAD):
+    The RTU is reporting that this sensor has failed.
+    - Do NOT use the data value for control decisions
+    - Check the quality byte (byte 4) for specific reason:
+        0x80 = BAD (sensor read failures)
+        0xC0 = NOT_CONNECTED (hardware not detected)
+    - Fall back to last known good value or alarm
+```
+
+**Cross-protocol parallel:** This is equivalent to OPC UA StatusCode on
+each monitored item, or EtherNet/IP connection status per produced tag.
+
+- [ ] On every Input CR: check IOPS for each input slot
+- [ ] If IOPS transitions GOOD→BAD: mark data unreliable, raise alarm
+- [ ] If IOPS transitions BAD→GOOD: resume using data
+
+#### 4.2: Diagnosis Alarm Handling (Standard PROFINET)
+
+The RTU sends standard channel diagnosis alarms (IEC 61158-6-10) when a
+sensor transitions to/from a fault state.  This provides immediate
+notification rather than waiting for the next cyclic frame.
+
+**Alarm types the RTU sends:**
+
+| Type | USI | Meaning |
+|------|-----|---------|
+| 0x0001 | 0x8000 | Diagnosis appears (sensor fault) |
+| 0x0002 | 0x8000 | Diagnosis disappears (sensor recovered) |
+
+**Diagnosis payload (6 bytes):**
+```
+Bytes 0-1: Channel number (0x0000 = whole submodule)
+Bytes 2-3: Channel properties (0x0000 = input, accumulative)
+Bytes 4-5: Channel error type:
+           0x001F = Sensor not available (QUALITY_NOT_CONNECTED)
+           0x0008 = Data transmission impossible (QUALITY_BAD)
+           0x0000 = No error (cleared)
+```
+
+**Controller action:**
+- On alarm type 0x0001: Mark slot as faulted, raise operator alarm
+- On alarm type 0x0002: Clear fault, resume normal operation
+- Always ACK the alarm via `pnet_alarm_send_ack()`
+
+**Cross-protocol parallel:** OPC UA StatusChangeNotification, EtherNet/IP
+device-level ring fault detection.
+
+- [ ] Register alarm indication callback
+- [ ] Parse USI 0x8000 diagnosis payload (6 bytes: channel + props + error)
+- [ ] Map alarm to slot and track fault state
+- [ ] Send alarm ACK after processing
+- [ ] Log all alarm transitions for audit trail
+
+#### 4.3: Data Status Monitoring (Standard PROFINET)
+
+The APDU status in each cyclic frame contains a `ProviderState (RUN)` bit
+(bit 4, 0x10) and a `DataValid` bit (bit 2, 0x04).  The RTU now monitors
+these and acts on transitions:
+
+```
+Controller Output CR → data_status byte:
+  Bit 4 (0x10): RUN    — 1=controller is actively sending, 0=STOP mode
+  Bit 2 (0x04): Valid  — 1=data valid, 0=data invalid
+```
+
+**Controller-side requirements:**
+
+When the controller enters STOP mode (e.g., PLC program stopped):
+- Set ProviderState=0 in the Output CR APDU status
+- The RTU will detect RUN→STOP and enter safe state for actuators
+
+When the controller resumes:
+- Set ProviderState=1
+- The RTU will detect STOP→RUN and resume normal operation
+
+**Cross-protocol parallel:**
+- EtherNet/IP: production inhibit timer expiry
+- OPC UA: session keepalive timeout
+- Modbus TCP: TCP keepalive + application-level timeout
+
+- [ ] Set ProviderState=RUN (bit 4) in Output CR when actively controlling
+- [ ] Set ProviderState=STOP when PLC program is stopped
+- [ ] Monitor RTU's ProviderState in Input CR for RTU-side stops
+
+#### 4.4: Connection Liveness / Watchdog (Application Layer)
+
+The RTU implements application-level liveness supervision that runs
+independently of p-net's DataHoldTimer.  This catches scenarios where the
+PROFINET AR is technically established but no meaningful output data flows.
+
+**Configuring the watchdog via Record Write 0xF841:**
+
+The `watchdog_ms` field in the device config packet controls how long the
+RTU waits before declaring the connection stale:
+
+```
+Device config packet (Record Write index 0xF841):
+  ...
+  Bytes 8-11: uint32_t watchdog_ms (network byte order)
+              0 = use RTU default (5000ms)
+              Recommended: 3× your cyclic send interval
+  ...
+```
+
+**RTU behavior on liveness timeout:**
+1. Logs warning with diagnostic context (cycle count, output poll count)
+2. Notifies actuator manager → enters degraded mode
+3. After 30 seconds in degraded mode → applies safe state (all actuators OFF)
+
+**Recovery:** When the controller resumes sending valid output data, the RTU
+automatically exits degraded mode and resumes normal actuator control.
+
+**Cross-protocol parallel:**
+- EtherNet/IP: `O→T RPI × multiplier` = production timeout
+- OPC UA: `RevisedSessionTimeout / 3` = keepalive interval
+- Modbus TCP: application-level "no response" counter
+
+- [ ] Set `watchdog_ms` in device config to 3× your cyclic send interval
+- [ ] Monitor actuator IOCS in Input CR for confirmation of command receipt
+- [ ] Implement reconnect-on-timeout: if liveness timeout + Release, wait 2s, reconnect
+
+#### 4.5: Reconnection Strategy
+
+When the PROFINET connection is lost (ABORT, DataHoldTimer expiry, or
+the controller decides to release), implement this reconnection pattern:
+
+```
+[CONNECTION_LOST]
+  |
+  v
+[WAIT 2 SECONDS] -----> Required for p-net v0.2.0 AR state reset
+  |
+  v
+[DCP_RE_IDENTIFY] -----> Verify RTU is still reachable via DCP
+  |
+  | Success                    | Failure
+  v                            v
+[RESOLVE_SLOTS]         [EXPONENTIAL_BACKOFF]
+  |                            |
+  | Got slots                  | Retry: 2s, 4s, 8s, 16s, max 60s
+  v                            |
+[CONNECT]                      +-----> [DCP_RE_IDENTIFY]
+  |
+  | Success
+  v
+[CYCLIC_EXCHANGE]
+```
+
+**Reconnection rules:**
+1. Always wait 2 seconds after Release/ABORT before reconnecting
+2. Re-verify slot configuration (may have changed during downtime)
+3. Use cached config first (source 2), HTTP fallback (source 3) on mismatch
+4. Exponential backoff on repeated failures: 2s, 4s, 8s, 16s, cap at 60s
+5. Log every reconnection attempt with attempt count and reason
+6. Reset backoff on successful connection
+
+**Cross-protocol parallel:**
+- TCP: exponential backoff with jitter (RFC 6298)
+- OPC UA: session reactivation with channel renewal
+- EtherNet/IP: Forward Open retry with timeout multiplier
+
+- [ ] Implement 2-second wait after any connection termination
+- [ ] Re-run DCP Identify before reconnect (verify RTU reachable)
+- [ ] Re-resolve slots (cached → HTTP → DAP fallback)
+- [ ] Implement exponential backoff: 2s, 4s, 8s, 16s, cap 60s
+- [ ] Log reconnection attempts with attempt number and reason
+- [ ] Reset backoff counter on successful connection
+
+#### 4.6: Quality Propagation Summary
+
+The complete data quality path from RTU sensor to controller application:
+
+```
+Sensor Hardware
+  → driver_xxx_read()        returns RESULT_OK or RESULT_ERROR
+  → sensor_instance_read()   updates consecutive_failures, timestamp
+  → determine_quality()      computes GOOD/UNCERTAIN/BAD/NOT_CONNECTED
+  → sensor_manager worker    sends to PROFINET:
+      ├── Quality byte (cyclic data byte 4):    0x00/0x40/0x80/0xC0
+      ├── IOPS byte (after data):               0x80 (GOOD) or 0x00 (BAD)
+      └── Diagnosis alarm (on transitions):     0x0001 (appears) / 0x0002 (disappears)
+  → Controller receives all three signals
+```
+
+**Controller should use this priority for quality assessment:**
+1. **IOPS byte** — definitive "is the RTU providing valid data for this slot?"
+2. **Quality byte** — fine-grained reason (uncertain vs bad vs disconnected)
+3. **Diagnosis alarm** — immediate async notification of state change
+
+All three are standard PROFINET mechanisms.  No proprietary extensions.

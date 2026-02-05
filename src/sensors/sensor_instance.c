@@ -10,6 +10,11 @@
 #include "drivers/driver_ads1115.h"
 #include "drivers/driver_mcp3008.h"
 #include "drivers/driver_web_poll.h"
+#include "drivers/driver_bme280.h"
+#include "drivers/driver_hx711.h"
+#include "drivers/driver_tcs34725.h"
+#include "drivers/driver_jsn_sr04t.h"
+#include "drivers/driver_float_switch.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -145,9 +150,71 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
             instance->driver_type = PHYSICAL_DRIVER_DHT22;
             int gpio_pin = atoi(sensor.address);
             result = driver_dht22_init(&instance->driver_handle, gpio_pin, false);
+        } else if (strcmp(sensor.sensor_type, "BME280") == 0 ||
+                   strcmp(sensor.sensor_type, "BMP280") == 0) {
+            instance->driver_type = PHYSICAL_DRIVER_BME280;
+            uint8_t addr = 0x76;
+            if (sensor.address[0] != '\0') {
+                addr = (uint8_t)strtol(sensor.address, NULL, 0);
+            }
+            result = driver_bme280_init(&instance->driver_handle, sensor.bus, addr,
+                                        BME280_READ_TEMPERATURE);
+        } else if (strcmp(sensor.sensor_type, "HX711") == 0) {
+            instance->driver_type = PHYSICAL_DRIVER_HX711;
+            int dout_pin = 0, sck_pin = 0;
+            sscanf(sensor.address, "%d,%d", &dout_pin, &sck_pin);
+            result = driver_hx711_init(&instance->driver_handle, dout_pin, sck_pin, 1);
+        } else if (strcmp(sensor.sensor_type, "TCS34725") == 0) {
+            instance->driver_type = PHYSICAL_DRIVER_TCS34725;
+            tcs34725_device_t *dev = calloc(1, sizeof(tcs34725_device_t));
+            if (!dev) {
+                result = RESULT_NO_MEMORY;
+            } else {
+                uint8_t addr = 0x29;
+                if (sensor.address[0] != '\0') {
+                    addr = (uint8_t)strtol(sensor.address, NULL, 0);
+                }
+                result = tcs34725_init(dev, sensor.bus, addr);
+                if (result == RESULT_OK) {
+                    tcs34725_enable(dev);
+                    instance->driver_handle = dev;
+                } else {
+                    free(dev);
+                }
+            }
+        } else if (strcmp(sensor.sensor_type, "JSN-SR04T") == 0) {
+            instance->driver_type = PHYSICAL_DRIVER_JSN_SR04T;
+            jsn_sr04t_device_t *dev = calloc(1, sizeof(jsn_sr04t_device_t));
+            if (!dev) {
+                result = RESULT_NO_MEMORY;
+            } else {
+                int trig = 0, echo = 0;
+                sscanf(sensor.address, "%d,%d", &trig, &echo);
+                result = jsn_sr04t_init(dev, trig, echo);
+                if (result == RESULT_OK) {
+                    instance->driver_handle = dev;
+                } else {
+                    free(dev);
+                }
+            }
+        } else if (strcmp(sensor.sensor_type, "Float Switch") == 0 ||
+                   strcmp(sensor.sensor_type, "FLOAT_SWITCH") == 0) {
+            instance->driver_type = PHYSICAL_DRIVER_FLOAT_SWITCH;
+            float_switch_t *dev = calloc(1, sizeof(float_switch_t));
+            if (!dev) {
+                result = RESULT_NO_MEMORY;
+            } else {
+                int gpio_pin = atoi(sensor.address);
+                result = float_switch_init(dev, gpio_pin, false);
+                if (result == RESULT_OK) {
+                    instance->driver_handle = dev;
+                } else {
+                    free(dev);
+                }
+            }
         } else {
-            LOG_WARNING("Unknown physical sensor type: %s", sensor.sensor_type);
-            result = RESULT_ERROR;
+            LOG_ERROR("Unsupported physical sensor type: %s", sensor.sensor_type);
+            result = RESULT_NOT_SUPPORTED;
         }
 
     } else if (strcmp(module->module_type, "adc") == 0) {
@@ -179,6 +246,9 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
             parse_spi_device(sensor.address, &spi_bus, &spi_device);
             result = driver_mcp3008_init(&instance->driver_handle, spi_bus, spi_device,
                                          sensor.channel, sensor.reference_voltage);
+        } else {
+            LOG_ERROR("Unsupported ADC type: %s", sensor.adc_type);
+            result = RESULT_NOT_SUPPORTED;
         }
 
     } else if (strcmp(module->module_type, "web_poll") == 0) {
@@ -283,6 +353,30 @@ void sensor_instance_destroy(sensor_instance_t *instance) {
             case PHYSICAL_DRIVER_DHT22:
                 driver_dht22_close(instance->driver_handle);
                 break;
+            case PHYSICAL_DRIVER_BME280:
+                driver_bme280_close(instance->driver_handle);
+                break;
+            case PHYSICAL_DRIVER_HX711:
+                driver_hx711_close(instance->driver_handle);
+                break;
+            case PHYSICAL_DRIVER_TCS34725: {
+                tcs34725_device_t *dev = (tcs34725_device_t *)instance->driver_handle;
+                tcs34725_destroy(dev);
+                free(dev);
+                break;
+            }
+            case PHYSICAL_DRIVER_JSN_SR04T: {
+                jsn_sr04t_device_t *dev = (jsn_sr04t_device_t *)instance->driver_handle;
+                jsn_sr04t_destroy(dev);
+                free(dev);
+                break;
+            }
+            case PHYSICAL_DRIVER_FLOAT_SWITCH: {
+                float_switch_t *dev = (float_switch_t *)instance->driver_handle;
+                float_switch_destroy(dev);
+                free(dev);
+                break;
+            }
             case ADC_DRIVER_ADS1115:
                 driver_ads1115_close(instance->driver_handle);
                 break;
@@ -334,6 +428,36 @@ result_t sensor_instance_read(sensor_instance_t *instance, float *value) {
                     case PHYSICAL_DRIVER_DHT22:
                         result = driver_dht22_read(instance->driver_handle, &raw_value);
                         break;
+                    case PHYSICAL_DRIVER_BME280:
+                        result = driver_bme280_read(instance->driver_handle, &raw_value);
+                        break;
+                    case PHYSICAL_DRIVER_HX711:
+                        result = driver_hx711_read(instance->driver_handle, &raw_value);
+                        break;
+                    case PHYSICAL_DRIVER_TCS34725: {
+                        tcs34725_device_t *dev = (tcs34725_device_t *)instance->driver_handle;
+                        tcs34725_data_t data;
+                        result = tcs34725_read_raw(dev, &data);
+                        if (result == RESULT_OK) {
+                            tcs34725_calculate_lux(&data);
+                            raw_value = (float)data.lux;
+                        }
+                        break;
+                    }
+                    case PHYSICAL_DRIVER_JSN_SR04T: {
+                        jsn_sr04t_device_t *dev = (jsn_sr04t_device_t *)instance->driver_handle;
+                        result = jsn_sr04t_read_distance_cm(dev, &raw_value);
+                        break;
+                    }
+                    case PHYSICAL_DRIVER_FLOAT_SWITCH: {
+                        float_switch_t *dev = (float_switch_t *)instance->driver_handle;
+                        bool water_detected = false;
+                        result = float_switch_read(dev, &water_detected);
+                        if (result == RESULT_OK) {
+                            raw_value = water_detected ? 1.0f : 0.0f;
+                        }
+                        break;
+                    }
                     default:
                         LOG_ERROR("Unknown physical driver type: %d", instance->driver_type);
                         result = RESULT_NOT_SUPPORTED;

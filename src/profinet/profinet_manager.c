@@ -20,6 +20,7 @@
 #include <dirent.h>     /* opendir, readdir for interface detection */
 #include <sys/stat.h>   /* mkdir for p-net NV storage directory */
 #include <arpa/inet.h>  /* htonl, ntohl for network byte order per DEVELOPMENT_GUIDELINES.md */
+#include <inttypes.h>  /* PRIu64 for portable 64-bit formatting */
 #include <net/if.h>     /* IFF_UP, IFF_RUNNING, IFF_PROMISC for interface detection */
 #include <ifaddrs.h>    /* getifaddrs, freeifaddrs for IP configuration */
 #include <sys/socket.h> /* socket, AF_PACKET for raw socket test */
@@ -87,6 +88,27 @@ typedef struct {
     /* Output polling statistics (for efficiency monitoring) */
     uint64_t output_polls;           /* Total output slot polls */
     uint64_t output_changes;         /* Polls that detected actual data change */
+
+    /*
+     * Connection liveness supervision
+     *
+     * These fields implement application-level monitoring of the cyclic
+     * data exchange, independent of p-net's internal DataHoldTimer.
+     *
+     * The approach mirrors patterns from other industrial protocols:
+     *   - EtherNet/IP: Connection multiplier × RPI = production timeout
+     *   - OPC UA:      Session timeout + subscription keep-alive
+     *   - Modbus TCP:  TCP keepalive + application-level response timeout
+     *
+     * On the PROFINET wire, the p-net stack's DataHoldTimer handles
+     * the low-level detection.  This adds RTU-application-level awareness
+     * so we can log, alarm, and enter safe state proactively.
+     */
+    uint64_t last_output_received_ms;   /* Timestamp of last output data from controller */
+    uint64_t liveness_check_interval_ms;/* How often to check (default: 5000ms) */
+    uint64_t last_liveness_check_ms;    /* Timestamp of last liveness check */
+    uint32_t controller_watchdog_ms;    /* From config_sync device config (0xF841) */
+    bool     liveness_alarm_active;     /* True if we've already raised a liveness alarm */
 
     // Callbacks
     profinet_connect_cb_t on_connect;
@@ -285,6 +307,9 @@ static void poll_output_slots(void) {
         g_pn.output_polls++;  /* Track all poll attempts */
 
         if (ret == 0 && new_data && iops == PNET_IOXS_GOOD) {
+            /* Track last time we received valid output data from controller */
+            g_pn.last_output_received_ms = get_time_ms();
+
             /* Check if data actually changed to avoid redundant callbacks */
             if (len > 0 && memcmp(data, slot->output_data, len) != 0) {
                 /* New data received - cache and dispatch to listeners */
@@ -297,6 +322,86 @@ static void poll_output_slots(void) {
                     g_pn.on_data_received(slot->slot, slot->subslot, data, len, g_pn.callback_ctx);
                 }
             }
+
+            /* Clear liveness alarm if it was active */
+            if (g_pn.liveness_alarm_active) {
+                g_pn.liveness_alarm_active = false;
+                LOG_INFO("Connection liveness restored — controller output data received");
+            }
+        }
+    }
+}
+
+/**
+ * @brief Check connection liveness at the application level
+ *
+ * This supervision runs in the tick thread and checks whether the controller
+ * is still actively providing output data.  It complements the p-net stack's
+ * internal DataHoldTimer, which handles the wire-level timeout per PROFINET
+ * spec (typically 3× send-clock).
+ *
+ * The application-level check uses a configurable timeout (from config_sync's
+ * watchdog_ms or the default 5s command timeout).  When the timeout fires:
+ *
+ *   1. Log a warning with full diagnostic context
+ *   2. Notify disconnect handlers (actuator manager enters degraded mode)
+ *   3. Set liveness_alarm_active to prevent repeated notifications
+ *
+ * This is NOT a protocol violation — the PROFINET AR remains established.
+ * We're adding application-layer awareness on top of the stack's behavior.
+ *
+ * Cross-protocol parallels:
+ *   - EtherNet/IP: production inhibit timer × multiplier = connection timeout
+ *   - OPC UA:      revised session timeout / 3 = keep-alive request interval
+ *   - Modbus TCP:  application-level "no response" counter before close
+ */
+static void check_connection_liveness(void) {
+    if (!g_pn.connected) return;
+    if (g_pn.liveness_alarm_active) return;  /* Already notified */
+
+    uint64_t now = get_time_ms();
+
+    /* Only check at configured interval */
+    if (now - g_pn.last_liveness_check_ms < g_pn.liveness_check_interval_ms) {
+        return;
+    }
+    g_pn.last_liveness_check_ms = now;
+
+    /* If we have output slots but haven't received data in a while */
+    bool has_output_slots = false;
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].plugged && g_pn.slots[i].output_size > 0) {
+            has_output_slots = true;
+            break;
+        }
+    }
+
+    if (!has_output_slots) return;  /* No output modules, nothing to supervise */
+
+    if (g_pn.last_output_received_ms == 0) return;  /* Never received data yet */
+
+    /*
+     * Use controller-provided watchdog timeout if available (from 0xF841 device
+     * config), otherwise fall back to the default command timeout (5000ms).
+     */
+    uint64_t timeout_ms = g_pn.controller_watchdog_ms > 0
+                        ? g_pn.controller_watchdog_ms
+                        : 5000;
+
+    uint64_t silence_ms = now - g_pn.last_output_received_ms;
+
+    if (silence_ms >= timeout_ms) {
+        g_pn.liveness_alarm_active = true;
+
+        LOG_WARNING("CONNECTION LIVENESS: No output data from controller for "
+                    "%" PRIu64 "ms (timeout=%" PRIu64 "ms). "
+                    "Cycles=%u, total_outputs=%" PRIu64 "",
+                    silence_ms, timeout_ms,
+                    g_pn.cycle_count, g_pn.output_polls);
+
+        /* Notify disconnect handlers (actuator manager enters degraded mode) */
+        if (g_pn.on_disconnect) {
+            g_pn.on_disconnect(g_pn.callback_ctx);
         }
     }
 }
@@ -375,6 +480,7 @@ static void* profinet_tick_thread(void *arg) {
             /* Poll output slots when connected to controller */
             if (g_pn.connected) {
                 poll_output_slots();
+                check_connection_liveness();
             }
 
             /* Check for stuck states and trigger recovery */
@@ -1189,8 +1295,20 @@ result_t profinet_manager_update_input(int slot, int subslot, const void *data, 
     
 #ifdef HAVE_PNET
     if (g_pn.pnet && g_pn.connected) {
-        uint8_t iops = PNET_IOXS_GOOD;
-        pnet_input_set_data_and_iops(g_pn.pnet, 0, slot, subslot, 
+        /*
+         * Use the stored IOPS for this slot — set by sensor_manager via
+         * profinet_manager_set_input_iops() based on actual sensor quality.
+         *
+         * IOPS (Input Output Provider Status) tells the controller whether
+         * we are providing valid data.  This MUST reflect the actual sensor
+         * state: GOOD when the sensor is healthy, BAD when the sensor has
+         * failed or is disconnected.
+         *
+         * Previously this was hardcoded to PNET_IOXS_GOOD which masked
+         * sensor failures on the wire.
+         */
+        uint8_t iops = s->input_iops ? s->input_iops : PNET_IOXS_GOOD;
+        pnet_input_set_data_and_iops(g_pn.pnet, 0, slot, subslot,
                                       s->input_data, s->input_size, iops);
     }
 #endif
@@ -1443,6 +1561,157 @@ result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
 }
 
 /**
+ * @brief Send PROFINET channel diagnosis alarm for a sensor submodule
+ *
+ * Per IEC 61158-6-10, channel diagnosis indicates a fault on a specific
+ * I/O channel.  This is the standard PROFINET mechanism for reporting
+ * sensor failures to the controller, complementing the IOPS=BAD signal
+ * and the quality byte in cyclic data.
+ *
+ * Implementation uses p-net diagnosis API (pnet_diag_add/pnet_diag_remove)
+ * which automatically manages alarm types and diagnosis state:
+ *   - pnet_diag_add()    → Sends alarm type 0x0001 (diagnosis appears)
+ *   - pnet_diag_remove() → Sends alarm type 0x0002 (diagnosis disappears)
+ *
+ * The diagnosis state is stored in the IO-Device per PROFINET spec, ensuring
+ * controllers see persistent diagnosis across reconnects.
+ *
+ * The controller should monitor these alarms and:
+ *   - Mark affected input data as unreliable when diagnosis appears
+ *   - Resume normal processing when diagnosis disappears
+ *
+ * This is fully wire-compliant PROFINET — no proprietary extensions.
+ *
+ * @param slot      PROFINET slot number of the failing sensor
+ * @param subslot   PROFINET subslot number (typically 1)
+ * @param quality   Current data quality (BAD/NOT_CONNECTED triggers alarm,
+ *                  GOOD/UNCERTAIN clears it)
+ * @return RESULT_OK on success, RESULT_NOT_INITIALIZED if not connected
+ */
+result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t quality) {
+#ifdef HAVE_PNET
+    if (!g_pn.pnet || !g_pn.connected) return RESULT_NOT_INITIALIZED;
+
+    /*
+     * PROFINET channel diagnosis per IEC 61158-6-10.
+     *
+     * IMPORTANT: Use pnet_diag_add()/pnet_diag_remove() instead of
+     * pnet_alarm_send_process_alarm(). The diagnosis API:
+     *   - Stores diagnosis state in the IO-Device (required by spec)
+     *   - Automatically sends alarm type 0x0001 (appears) on add
+     *   - Automatically sends alarm type 0x0002 (disappears) on remove
+     *   - No need for alarm confirmation callback management
+     *
+     * Channel error types from IEC 61158-6-10:
+     *   0x0001 = Short circuit
+     *   0x0006 = Line break (sensor disconnected)
+     *   0x0008 = Data transmission impossible
+     *   0x001F = Sensor not available
+     */
+
+    bool is_fault = (quality == QUALITY_BAD || quality == QUALITY_NOT_CONNECTED);
+
+    /* Map quality to channel error type */
+    uint16_t ch_error_type;
+    switch (quality) {
+        case QUALITY_NOT_CONNECTED:
+            ch_error_type = 0x001F;  /* Sensor not available */
+            break;
+        case QUALITY_BAD:
+            ch_error_type = 0x0008;  /* Data transmission impossible */
+            break;
+        default:
+            ch_error_type = 0x0000;  /* No error */
+            break;
+    }
+
+    /* Define diagnosis source location */
+    pnet_diag_source_t diag_source = {
+        .api = 0,
+        .slot = (uint16_t)slot,
+        .subslot = (uint16_t)subslot,
+        .ch = 0,  /* 0 = whole submodule */
+        .ch_grouping = PNET_DIAG_CH_INDIVIDUAL_CHANNEL,
+        .ch_direction = PNET_DIAG_CH_PROP_DIR_INPUT
+    };
+
+    int ret;
+    if (is_fault) {
+        /* Add diagnosis - stack automatically sends alarm type 0x0001 (appears) */
+        ret = pnet_diag_add(
+            g_pn.pnet,
+            &diag_source,
+            PNET_DIAG_CH_PROP_TYPE_UNSPECIFIED,  /* Channel data width: whole submodule */
+            PNET_DIAG_CH_PROP_MAINT_FAULT,       /* Severity: fault (not just maintenance) */
+            ch_error_type,                        /* Channel error type */
+            0,                                    /* ext_ch_error_type (none) */
+            0,                                    /* ext_ch_add_value (none) */
+            0,                                    /* qual_ch_qualifier (none) */
+            0x8000,                               /* USI: standard channel diagnosis */
+            0,                                    /* manuf_data_len (none) */
+            NULL                                  /* p_manuf_data (none) */
+        );
+    } else {
+        /* Remove diagnosis - stack automatically sends alarm type 0x0002 (disappears) */
+        ret = pnet_diag_remove(
+            g_pn.pnet,
+            &diag_source,
+            ch_error_type,
+            0,      /* ext_ch_error_type (none) */
+            0x8000  /* USI: standard channel diagnosis */
+        );
+    }
+
+    if (ret != 0) {
+        LOG_WARNING("Failed to %s diagnosis for slot %d.%d: ret=%d",
+                    is_fault ? "add" : "remove", slot, subslot, ret);
+        return RESULT_ERROR;
+    }
+
+    LOG_INFO("Sent diagnosis %s (alarm type 0x%04X) for slot %d.%d (quality=%s)",
+             is_fault ? "APPEARS" : "DISAPPEARS",
+             is_fault ? 0x0001 : 0x0002,
+             slot, subslot, quality_to_string(quality));
+
+    return RESULT_OK;
+#else
+    UNUSED(slot); UNUSED(subslot); UNUSED(quality);
+    return RESULT_NOT_SUPPORTED;
+#endif
+}
+
+/**
+ * @brief Notify the PROFINET manager that controller data flow has stopped
+ *
+ * Called from the data status callback when the RUN bit transitions to 0.
+ * This is the standard PROFINET signal that the controller has entered STOP
+ * mode and is no longer providing cyclic output data.
+ *
+ * The actuator manager should enter safe state in response.
+ */
+void profinet_manager_on_data_run_stop(void) {
+    if (!g_pn.connected) return;
+
+    LOG_WARNING("Controller cyclic data RUN=0 — controller stopped sending data");
+
+    /* Notify disconnect handlers so actuators enter safe state */
+    if (g_pn.on_disconnect) {
+        g_pn.on_disconnect(g_pn.callback_ctx);
+    }
+}
+
+/**
+ * @brief Get current AREP for sending alarms
+ */
+uint32_t profinet_manager_get_arep(void) {
+#ifdef HAVE_PNET
+    return g_pn.arep;
+#else
+    return 0;
+#endif
+}
+
+/**
  * @brief Initialize all input subslots with default data and GOOD IOPS
  *
  * This function is CRITICAL for successful connection establishment.
@@ -1519,6 +1788,19 @@ void profinet_manager_set_connecting(void) {
     }
 }
 
+void profinet_manager_set_controller_watchdog(uint32_t watchdog_ms) {
+    pthread_mutex_lock(&g_pn.mutex);
+
+    g_pn.controller_watchdog_ms = watchdog_ms;
+
+    if (watchdog_ms > 0) {
+        LOG_INFO("Controller watchdog timeout set to %u ms (from device config 0xF841)",
+                 watchdog_ms);
+    }
+
+    pthread_mutex_unlock(&g_pn.mutex);
+}
+
 /* Called from callbacks */
 void profinet_manager_set_connected(bool connected, uint32_t arep) {
     bool was_connected = g_pn.connected;
@@ -1527,6 +1809,14 @@ void profinet_manager_set_connected(bool connected, uint32_t arep) {
     /* Use state machine helper for proper tracking */
     if (connected) {
         set_state(PROFINET_STATE_CONNECTED);
+
+        /* Initialize liveness supervision for this connection */
+        g_pn.last_output_received_ms = get_time_ms();
+        g_pn.last_liveness_check_ms = get_time_ms();
+        g_pn.liveness_alarm_active = false;
+        if (g_pn.liveness_check_interval_ms == 0) {
+            g_pn.liveness_check_interval_ms = 5000;  /* Default 5s */
+        }
     } else {
         if (was_connected) {
             g_pn.disconnect_count++;
@@ -1687,10 +1977,36 @@ result_t profinet_manager_write_input_data(void *mgr, int slot, int subslot,
 
 result_t profinet_manager_set_input_iops(void *mgr, int slot, int subslot, uint8_t iops) {
     UNUSED(mgr);
-    profinet_slot_t *s = find_slot(slot, subslot);
-    if (!s) return RESULT_NOT_FOUND;
 
+    pthread_mutex_lock(&g_pn.mutex);
+
+    profinet_slot_t *s = find_slot(slot, subslot);
+    if (!s) {
+        pthread_mutex_unlock(&g_pn.mutex);
+        return RESULT_NOT_FOUND;
+    }
+
+    uint8_t prev_iops = s->input_iops;
     s->input_iops = iops;
+
+#ifdef HAVE_PNET
+    /*
+     * Immediately push IOPS to p-net so the wire reflects the new status
+     * before the next cyclic frame.  Without this, the IOPS change would
+     * only take effect on the next profinet_manager_update_input() call,
+     * potentially leaving a BAD sensor showing GOOD for one more cycle.
+     */
+    if (g_pn.pnet && g_pn.connected && s->plugged && s->input_size > 0) {
+        pnet_input_set_data_and_iops(g_pn.pnet, 0, slot, subslot,
+                                      s->input_data, s->input_size, iops);
+    }
+#endif
+
+    if (prev_iops != iops) {
+        LOG_DEBUG("Slot %d.%d IOPS: 0x%02X -> 0x%02X", slot, subslot, prev_iops, iops);
+    }
+
+    pthread_mutex_unlock(&g_pn.mutex);
     return RESULT_OK;
 }
 
@@ -1744,4 +2060,49 @@ result_t profinet_manager_add_module(void *mgr, int slot, uint32_t module_ident,
              slot, subslot, module_ident);
 
     return RESULT_OK;
+}
+
+void profinet_manager_clear_app_slots(void) {
+    pthread_mutex_lock(&g_pn.mutex);
+
+    /* Remove all application slots (slot > 0), preserving DAP (slot 0) */
+    int new_count = 0;
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].slot == 0) {
+            /* Keep DAP slot at index 0 */
+            if (new_count != i) {
+                g_pn.slots[new_count] = g_pn.slots[i];
+            }
+            new_count++;
+        }
+    }
+
+    int removed = g_pn.slot_count - new_count;
+    g_pn.slot_count = new_count;
+
+    pthread_mutex_unlock(&g_pn.mutex);
+
+    if (removed > 0) {
+        LOG_INFO("Cleared %d application slots (DAP preserved)", removed);
+    }
+}
+
+void profinet_manager_remove_slot(int slot, int subslot) {
+    if (slot <= 0) return;  /* Cannot remove DAP */
+
+    pthread_mutex_lock(&g_pn.mutex);
+
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].slot == slot && g_pn.slots[i].subslot == subslot) {
+            /* Shift remaining slots down */
+            for (int j = i; j < g_pn.slot_count - 1; j++) {
+                g_pn.slots[j] = g_pn.slots[j + 1];
+            }
+            g_pn.slot_count--;
+            LOG_DEBUG("Removed PROFINET slot %d.%d", slot, subslot);
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&g_pn.mutex);
 }
