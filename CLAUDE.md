@@ -1,5 +1,54 @@
 # Claude Code Project Instructions
 
+## ⚠️ POTENTIAL REGRESSION WARNING
+
+**Reported**: 2026-02-05 ~20:30 UTC
+**Symptom**: RTU was responding, now it is not responding
+
+### Suspect Commits (newest first)
+
+| Commit | Date/Time (UTC) | Description | Files Changed |
+|--------|-----------------|-------------|---------------|
+| `a55145a` | 2026-02-05 20:10:24 | mandatory p-net verification in bootstrap | `bootstrap.sh` |
+| `88191bc` | 2026-02-03 15:27:42 | PROFINET resilience — IOPS propagation, diagnosis alarms, liveness supervision | `src/profinet/profinet_manager.c`, `profinet_callbacks.c`, `config_sync.c`, `sensor_manager.c` |
+| `6434070` | 2026-02-03 14:37:16 | actuator reload stale cleanup, constrain ADC hardware types | `src/actuators/`, `src/sensors/` |
+| `0792d39` | 2026-02-03 14:03:09 | audit sensor add/edit flow, driver dispatch, PROFINET lifecycle | `src/profinet/`, `src/sensors/`, `src/drivers/` |
+
+### Most Likely Culprits
+
+1. **`88191bc` - PROFINET resilience** (HIGH SUSPICION)
+   - Changed IOPS propagation logic in `profinet_manager_update_input()`
+   - Added diagnosis alarm sending
+   - Added liveness supervision with watchdog
+   - Added RUN/STOP data status actions
+
+2. **`0792d39` - audit sensor flow** (MEDIUM SUSPICION)
+   - Modified PROFINET lifecycle
+   - Changed driver dispatch logic
+
+### Rollback Commands
+
+```bash
+# To test if 88191bc caused the regression:
+git checkout 6434070 -- src/profinet/
+
+# To test if 0792d39 caused the regression:
+git checkout b0b58ee -- src/profinet/ src/sensors/ src/drivers/
+
+# Full rollback to last known good (before audit):
+git checkout b0b58ee
+```
+
+### Investigation Checklist
+
+- [ ] Check RTU logs for errors after startup
+- [ ] Verify PROFINET stack initializes (UDP 34964 listening)
+- [ ] Check if HTTP API responds (curl http://localhost:9081/api/v1/slots)
+- [ ] Check if diagnosis alarm code path has null pointer issues
+- [ ] Check if liveness supervision is prematurely disconnecting
+
+---
+
 ## Critical Security Requirements
 
 ### Default Credentials Must ALWAYS Work
