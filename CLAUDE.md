@@ -42,10 +42,34 @@ git checkout b0b58ee
 ### Investigation Checklist
 
 - [ ] Check RTU logs for errors after startup
-- [ ] Verify PROFINET stack initializes (UDP 34964 listening)
-- [ ] Check if HTTP API responds (curl http://localhost:9081/api/v1/slots)
+- [x] Verify PROFINET stack initializes (UDP 34964 listening) — **CONFIRMED**
+- [x] Check if HTTP API responds (curl http://localhost:9081/api/v1/slots) — **CONFIRMED**
 - [ ] Check if diagnosis alarm code path has null pointer issues
 - [ ] Check if liveness supervision is prematurely disconnecting
+
+### Pcap Analysis (28ddae8_.pcapng)
+
+| Frame | Time | Direction | Protocol | Result |
+|-------|------|-----------|----------|--------|
+| 1 | 0.00s | Controller → RTU | PNIO Connect | **NO RESPONSE** |
+| 2-10 | 5.00s | Both | HTTP/TCP | Works (GET /api/v1/slots) |
+| 11 | 5.01s | Controller → RTU | PNIO Connect | **NO RESPONSE** |
+| 13-16 | 20+s | Controller → RTU | PNIO Connect/Control | **NO RESPONSE** |
+
+**Finding**: RTU receives Connect requests on UDP 34964 but sends **NO response**.
+HTTP API works fine, so application is running. p-net is initialized (UDP bound).
+
+### Fix Applied
+
+**Likely Cause**: `send_hello = true` added in merge from main.
+This configuration tells p-net to send DCP Hello at startup. May have interaction bug.
+
+**Fix**: Disabled `send_hello` in `src/profinet/profinet_manager.c:651`
+
+If this doesn't resolve the issue, next steps:
+1. Check if `connect_callback` LOG_INFO appears in RTU logs
+2. If not, p-net is rejecting before reaching application layer
+3. Investigate station name mismatch or I&M0 configuration
 
 ---
 
