@@ -599,9 +599,12 @@ static int config_to_json(char *buffer, size_t buffer_size) {
  * DAP (slot 0) is NOT included — its configuration is fixed in the GSDML.
  * ========================================================================== */
 
-/* GSDML file search paths (installed, then development) */
-#define GSDML_INSTALL_PATH "/opt/water-treat/gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml"
-#define GSDML_DEV_PATH     "gsd/GSDML-V2.4-WaterTreat-RTU-20241222.xml"
+/* GSDML file search paths (production, FHS, dev from repo root, dev from build dir) */
+#define GSDML_FILENAME     "GSDML-V2.4-WaterTreat-RTU-20241222.xml"
+#define GSDML_INSTALL_PATH "/opt/water-treat/gsd/" GSDML_FILENAME
+#define GSDML_FHS_PATH     "/usr/share/water-treat/gsd/" GSDML_FILENAME
+#define GSDML_DEV_PATH     "gsd/" GSDML_FILENAME
+#define GSDML_BUILD_PATH   "../gsd/" GSDML_FILENAME
 
 /**
  * @brief Build JSON response for /api/v1/slots endpoint
@@ -698,17 +701,27 @@ static int slots_to_json(char *buffer, size_t buffer_size) {
 static void serve_gsdml_file(int client_fd) {
     const char *paths[] = {
         GSDML_INSTALL_PATH,
+        GSDML_FHS_PATH,
         GSDML_DEV_PATH,
+        GSDML_BUILD_PATH,
         NULL
     };
 
     FILE *fp = NULL;
+    const char *found_path = NULL;
     for (int i = 0; paths[i]; i++) {
         fp = fopen(paths[i], "r");
-        if (fp) break;
+        if (fp) {
+            found_path = paths[i];
+            break;
+        }
     }
 
     if (!fp) {
+        LOG_WARNING("GSDML file not found in any search path:");
+        for (int i = 0; paths[i]; i++) {
+            LOG_WARNING("  tried: %s", paths[i]);
+        }
         const char *body = "{\"error\": \"GSDML file not found\"}";
         char resp[512];
         int len = snprintf(resp, sizeof(resp),
@@ -721,6 +734,7 @@ static void serve_gsdml_file(int client_fd) {
         close(client_fd);
         return;
     }
+    LOG_DEBUG("Serving GSDML from: %s", found_path);
 
     /* Get file size */
     fseek(fp, 0, SEEK_END);
@@ -905,7 +919,8 @@ static void* http_thread_func(void *arg) {
 
     g_health.http_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_health.http_socket < 0) {
-        LOG_ERROR("Failed to create HTTP socket");
+        LOG_ERROR("Failed to create HTTP socket: %s", strerror(errno));
+        LOG_ERROR("Controller discovery via /api/v1/slots and /api/v1/gsdml will be unavailable");
         return NULL;
     }
 
@@ -919,14 +934,17 @@ static void* http_thread_func(void *arg) {
     addr.sin_port = htons(g_health.config.http_port);
 
     if (bind(g_health.http_socket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        LOG_ERROR("Failed to bind HTTP socket to port %d", g_health.config.http_port);
+        LOG_ERROR("Failed to bind HTTP socket to port %d: %s",
+                  g_health.config.http_port, strerror(errno));
+        LOG_ERROR("Is another process using port %d? Check: ss -tlnp | grep %d",
+                  g_health.config.http_port, g_health.config.http_port);
         close(g_health.http_socket);
         g_health.http_socket = -1;
         return NULL;
     }
 
     if (listen(g_health.http_socket, 5) < 0) {
-        LOG_ERROR("Failed to listen on HTTP socket");
+        LOG_ERROR("Failed to listen on HTTP socket: %s", strerror(errno));
         close(g_health.http_socket);
         g_health.http_socket = -1;
         return NULL;
@@ -1013,6 +1031,25 @@ result_t health_check_init(database_t *db, const health_config_t *config) {
     g_health.initialized = true;
     LOG_INFO("Health check module initialized (port=%d, file=%s)",
              config->http_port, config->file_path);
+
+    /* Validate GSDML file accessibility at startup */
+    const char *gsdml_paths[] = {
+        GSDML_INSTALL_PATH, GSDML_FHS_PATH,
+        GSDML_DEV_PATH, GSDML_BUILD_PATH, NULL
+    };
+    bool gsdml_found = false;
+    for (int i = 0; gsdml_paths[i]; i++) {
+        if (access(gsdml_paths[i], R_OK) == 0) {
+            LOG_INFO("GSDML file found at: %s", gsdml_paths[i]);
+            gsdml_found = true;
+            break;
+        }
+    }
+    if (!gsdml_found) {
+        LOG_WARNING("GSDML file not found — /api/v1/gsdml endpoint will return 404");
+        LOG_WARNING("Controller discovery step 2 (HTTP GSDML fetch) will be unavailable");
+        LOG_WARNING("Expected file: %s", GSDML_FILENAME);
+    }
 
     return RESULT_OK;
 }

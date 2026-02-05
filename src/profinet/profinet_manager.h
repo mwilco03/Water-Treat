@@ -155,6 +155,34 @@ void profinet_manager_set_connected(bool connected, uint32_t arep);
 void profinet_manager_handle_output_data(int slot, int subslot, const uint8_t *data, size_t len);
 
 /**
+ * @brief Look up plugged module ident for a slot (any subslot)
+ *
+ * Used by exp_module_callback to validate the controller's expected
+ * module ident against what the RTU actually plugged.
+ *
+ * @param slot          Slot number to look up
+ * @param module_ident  Output: module ident if found (may be NULL)
+ * @return true if a module is plugged in this slot
+ */
+bool profinet_manager_get_plugged_module_ident(int slot, uint32_t *module_ident);
+
+/**
+ * @brief Look up plugged submodule ident for a slot+subslot
+ *
+ * Used by exp_submodule_callback to validate the controller's expected
+ * submodule ident against what the RTU actually plugged.
+ *
+ * @param slot             Slot number
+ * @param subslot          Subslot number
+ * @param module_ident     Output: module ident if found (may be NULL)
+ * @param submodule_ident  Output: submodule ident if found (may be NULL)
+ * @return true if a submodule is plugged at this slot+subslot
+ */
+bool profinet_manager_get_plugged_submodule_ident(int slot, int subslot,
+                                                   uint32_t *module_ident,
+                                                   uint32_t *submodule_ident);
+
+/**
  * @brief Clear stale AR state to recover from connection errors
  *
  * Auto-recovery for PNIO errors 0x03 (AR exists) and 0x04 (session mismatch).
@@ -215,7 +243,12 @@ void profinet_manager_remove_slot(int slot, int subslot);
  * sensor transitions to BAD/NOT_CONNECTED, or clears the alarm when the
  * sensor recovers to GOOD/UNCERTAIN.
  *
- * Wire-compliant: uses standard alarm types and channel diagnosis USI.
+ * Uses p-net diagnosis API (pnet_diag_add/remove) which:
+ *   - Stores diagnosis state in the IO-Device (per PROFINET spec)
+ *   - Automatically sends alarm type 0x0001 (appears) when diagnosis added
+ *   - Automatically sends alarm type 0x0002 (disappears) when diagnosis removed
+ *
+ * Wire-compliant: uses standard diagnosis alarm types and USI 0x8000.
  *
  * @param slot      PROFINET slot number
  * @param subslot   PROFINET subslot number

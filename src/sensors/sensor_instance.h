@@ -77,6 +77,7 @@ typedef struct {
     int id;
     int module_id;
     int slot;
+    int subslot;
     char name[MAX_NAME_LEN];
     sensor_instance_type_t type;
     sensor_driver_type_t driver_type;  // Specific driver for cleanup

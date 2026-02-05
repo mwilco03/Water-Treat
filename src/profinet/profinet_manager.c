@@ -168,6 +168,26 @@ static profinet_slot_t* add_slot(int slot, int subslot) {
     return s;
 }
 
+bool profinet_manager_get_plugged_module_ident(int slot, uint32_t *module_ident) {
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].slot == slot) {
+            if (module_ident) *module_ident = g_pn.slots[i].module_ident;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool profinet_manager_get_plugged_submodule_ident(int slot, int subslot,
+                                                   uint32_t *module_ident,
+                                                   uint32_t *submodule_ident) {
+    profinet_slot_t *s = find_slot(slot, subslot);
+    if (!s) return false;
+    if (module_ident) *module_ident = s->module_ident;
+    if (submodule_ident) *submodule_ident = s->submodule_ident;
+    return true;
+}
+
 /**
  * @brief Determine if a module is an actuator (output) based on GSDML ident
  *
@@ -627,6 +647,32 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     // Note: physical_ports[0].netif_name is set in profinet_manager_start()
     // after we know the interface name
 
+    // Send DCP Hello at startup so controllers can discover us proactively
+    g_pn.pnet_cfg.send_hello = true;
+
+    // I&M0 (Identification & Maintenance) data - served by p-net internally
+    // Note: p-net handles index 0x8000 reads from this struct directly;
+    // the application read_cb is NOT called for I&M0.
+    g_pn.pnet_cfg.im_0_data.im_vendor_id_hi = PN_VENDOR_ID_HI;
+    g_pn.pnet_cfg.im_0_data.im_vendor_id_lo = PN_VENDOR_ID_LO;
+    snprintf(g_pn.pnet_cfg.im_0_data.im_order_id,
+             sizeof(g_pn.pnet_cfg.im_0_data.im_order_id),
+             "WaterTreat-RTU");
+    snprintf(g_pn.pnet_cfg.im_0_data.im_serial_number,
+             sizeof(g_pn.pnet_cfg.im_0_data.im_serial_number),
+             "RTU-000000001");
+    g_pn.pnet_cfg.im_0_data.im_hardware_revision = 1;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_prefix = 'V';
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_functional_enhancement = 1;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_bug_fix = 0;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_internal_change = 0;
+    g_pn.pnet_cfg.im_0_data.im_revision_counter = 0;
+    g_pn.pnet_cfg.im_0_data.im_profile_id = 0;
+    g_pn.pnet_cfg.im_0_data.im_profile_specific_type = 0;
+    g_pn.pnet_cfg.im_0_data.im_version_major = 1;
+    g_pn.pnet_cfg.im_0_data.im_version_minor = 1;
+    g_pn.pnet_cfg.im_0_data.im_supported = 0x001E; /* I&M1-4 supported (I&M0 always implicit) */
+
     // Callbacks
     g_pn.pnet_cfg.state_cb = profinet_state_callback;
     g_pn.pnet_cfg.connect_cb = profinet_connect_callback;
@@ -875,8 +921,12 @@ result_t profinet_manager_start(const char *interface) {
 
     // Enable promiscuous mode for PROFINET raw Ethernet frames
     if (!enable_promiscuous_mode(g_netif_name)) {
-        LOG_WARNING("Could not enable promiscuous mode - PROFINET may not work correctly");
-        // Continue anyway - p-net might still work if already in promisc mode
+        LOG_ERROR("Could not enable promiscuous mode on '%s'", g_netif_name);
+        LOG_ERROR("PROFINET requires promiscuous mode for raw Ethernet frames");
+        LOG_ERROR("Check: CAP_NET_ADMIN capability, or run as root");
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Cannot enable promiscuous mode on '%s' (need CAP_NET_ADMIN or root)", g_netif_name);
+        return RESULT_ERROR;
     }
 
     // Configure physical port (single port device - same as main interface)
@@ -1078,7 +1128,7 @@ result_t profinet_manager_start(const char *interface) {
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
         LOG_WARNING("Failed to plug DAP interface submodule at slot 0.0x8000");
-        // Non-fatal - some controllers don't require this
+        LOG_WARNING("Controller tolerates this (ModuleDiffBlock warning), but functionality may be limited");
     } else {
         LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000 (ident=0x%08X)", GSDML_SUBMOD_DAP_INTERFACE);
     }
@@ -1089,7 +1139,7 @@ result_t profinet_manager_start(const char *interface) {
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
         LOG_WARNING("Failed to plug DAP port submodule at slot 0.0x8001");
-        // Non-fatal - some controllers don't require this
+        LOG_WARNING("Controller tolerates this (ModuleDiffBlock warning), but functionality may be limited");
     } else {
         LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001 (ident=0x%08X)", GSDML_SUBMOD_DAP_PORT);
     }
@@ -1160,14 +1210,18 @@ result_t profinet_manager_start(const char *interface) {
     LOG_INFO("Slots plugged: DAP + %d application modules", g_pn.slot_count);
     LOG_INFO("If connect_callback is NOT called, p-net rejects before app layer");
     LOG_INFO("=== End Config Summary ===");
-#else
-    UNUSED(interface);
-    LOG_WARNING("PROFINET support not compiled in (HAVE_PNET not defined)");
-    g_pn.running = true;
-    set_state(PROFINET_STATE_READY);
-#endif
 
     return RESULT_OK;
+#else
+    UNUSED(interface);
+    LOG_ERROR("PROFINET support not compiled in (HAVE_PNET not defined)");
+    LOG_ERROR("The RTU cannot communicate without p-net. Rebuild with p-net installed.");
+    LOG_ERROR("Run: bash scripts/install-deps.sh && cd build && cmake .. && make");
+    snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+             "PROFINET not compiled in (HAVE_PNET undefined). Rebuild with p-net installed.");
+    set_state(PROFINET_STATE_ERROR);
+    return RESULT_ERROR;
+#endif
 }
 
 result_t profinet_manager_stop(void) {
@@ -1514,9 +1568,13 @@ result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
  * sensor failures to the controller, complementing the IOPS=BAD signal
  * and the quality byte in cyclic data.
  *
- * alarm_type values used:
- *   0x0001 = Diagnosis (channel fault appears)
- *   0x0002 = Diagnosis disappears (channel fault cleared)
+ * Implementation uses p-net diagnosis API (pnet_diag_add/pnet_diag_remove)
+ * which automatically manages alarm types and diagnosis state:
+ *   - pnet_diag_add()    → Sends alarm type 0x0001 (diagnosis appears)
+ *   - pnet_diag_remove() → Sends alarm type 0x0002 (diagnosis disappears)
+ *
+ * The diagnosis state is stored in the IO-Device per PROFINET spec, ensuring
+ * controllers see persistent diagnosis across reconnects.
  *
  * The controller should monitor these alarms and:
  *   - Mark affected input data as unreliable when diagnosis appears
@@ -1535,9 +1593,14 @@ result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t q
     if (!g_pn.pnet || !g_pn.connected) return RESULT_NOT_INITIALIZED;
 
     /*
-     * Build channel diagnosis data (USI = 0x8000 per PROFINET standard).
-     * Payload: 2-byte channel number (0 = whole submodule) +
-     *          2-byte channel properties + 2-byte channel error type.
+     * PROFINET channel diagnosis per IEC 61158-6-10.
+     *
+     * IMPORTANT: Use pnet_diag_add()/pnet_diag_remove() instead of
+     * pnet_alarm_send_process_alarm(). The diagnosis API:
+     *   - Stores diagnosis state in the IO-Device (required by spec)
+     *   - Automatically sends alarm type 0x0001 (appears) on add
+     *   - Automatically sends alarm type 0x0002 (disappears) on remove
+     *   - No need for alarm confirmation callback management
      *
      * Channel error types from IEC 61158-6-10:
      *   0x0001 = Short circuit
@@ -1545,45 +1608,71 @@ result_t profinet_manager_send_diagnosis(int slot, int subslot, data_quality_t q
      *   0x0008 = Data transmission impossible
      *   0x001F = Sensor not available
      */
-    uint8_t diag_data[6];
-    uint16_t channel_num = 0;  /* Whole submodule */
-    uint16_t channel_props = htons(0x0000);  /* Input, accumulative */
-    uint16_t error_type;
 
+    bool is_fault = (quality == QUALITY_BAD || quality == QUALITY_NOT_CONNECTED);
+
+    /* Map quality to channel error type */
+    uint16_t ch_error_type;
     switch (quality) {
         case QUALITY_NOT_CONNECTED:
-            error_type = htons(0x001F);  /* Sensor not available */
+            ch_error_type = 0x001F;  /* Sensor not available */
             break;
         case QUALITY_BAD:
-            error_type = htons(0x0008);  /* Data transmission impossible */
+            ch_error_type = 0x0008;  /* Data transmission impossible */
             break;
         default:
-            error_type = htons(0x0000);  /* No error */
+            ch_error_type = 0x0000;  /* No error */
             break;
     }
 
-    memcpy(diag_data + 0, &channel_num, 2);
-    memcpy(diag_data + 2, &channel_props, 2);
-    memcpy(diag_data + 4, &error_type, 2);
+    /* Define diagnosis source location */
+    pnet_diag_source_t diag_source = {
+        .api = 0,
+        .slot = (uint16_t)slot,
+        .subslot = (uint16_t)subslot,
+        .ch = 0,  /* 0 = whole submodule */
+        .ch_grouping = PNET_DIAG_CH_INDIVIDUAL_CHANNEL,
+        .ch_direction = PNET_DIAG_CH_PROP_DIR_INPUT
+    };
 
-    bool is_fault = (quality == QUALITY_BAD || quality == QUALITY_NOT_CONNECTED);
-    uint16_t alarm_type = is_fault ? 0x0001 : 0x0002;  /* Appears / Disappears */
-
-    int ret = pnet_alarm_send_process_alarm(
-        g_pn.pnet, g_pn.arep, 0,
-        (uint16_t)slot, (uint16_t)subslot,
-        0x8000,  /* USI: channel diagnosis */
-        sizeof(diag_data), diag_data
-    );
+    int ret;
+    if (is_fault) {
+        /* Add diagnosis - stack automatically sends alarm type 0x0001 (appears) */
+        ret = pnet_diag_add(
+            g_pn.pnet,
+            &diag_source,
+            PNET_DIAG_CH_PROP_TYPE_UNSPECIFIED,  /* Channel data width: whole submodule */
+            PNET_DIAG_CH_PROP_MAINT_FAULT,       /* Severity: fault (not just maintenance) */
+            ch_error_type,                        /* Channel error type */
+            0,                                    /* ext_ch_error_type (none) */
+            0,                                    /* ext_ch_add_value (none) */
+            0,                                    /* qual_ch_qualifier (none) */
+            0x8000,                               /* USI: standard channel diagnosis */
+            0,                                    /* manuf_data_len (none) */
+            NULL                                  /* p_manuf_data (none) */
+        );
+    } else {
+        /* Remove diagnosis - stack automatically sends alarm type 0x0002 (disappears) */
+        ret = pnet_diag_remove(
+            g_pn.pnet,
+            &diag_source,
+            ch_error_type,
+            0,      /* ext_ch_error_type (none) */
+            0x8000  /* USI: standard channel diagnosis */
+        );
+    }
 
     if (ret != 0) {
-        LOG_WARNING("Failed to send diagnosis alarm for slot %d: ret=%d", slot, ret);
+        LOG_WARNING("Failed to %s diagnosis for slot %d.%d: ret=%d",
+                    is_fault ? "add" : "remove", slot, subslot, ret);
         return RESULT_ERROR;
     }
 
-    LOG_INFO("Sent diagnosis %s for slot %d.%d (quality=%s)",
+    LOG_INFO("Sent diagnosis %s (alarm type 0x%04X) for slot %d.%d (quality=%s)",
              is_fault ? "APPEARS" : "DISAPPEARS",
+             is_fault ? 0x0001 : 0x0002,
              slot, subslot, quality_to_string(quality));
+
     return RESULT_OK;
 #else
     UNUSED(slot); UNUSED(subslot); UNUSED(quality);
@@ -1925,6 +2014,17 @@ result_t profinet_manager_add_module(void *mgr, int slot, uint32_t module_ident,
                                      int subslot, uint32_t submodule_ident,
                                      size_t input_len, size_t output_len) {
     UNUSED(mgr);
+
+    /*
+     * Warn if called after PROFINET stack is already running.
+     * p-net v0.2.0 does not support hot-plugging modules — pnet_plug_module()
+     * must be called before the first connection. Modules added after start
+     * will only take effect after a full restart.
+     */
+    if (g_pn.running) {
+        LOG_WARNING("Module added to slot %d.%d after PROFINET started — "
+                    "requires restart to take effect on PROFINET", slot, subslot);
+    }
 
     /* Check if slot already exists (may be loaded from database) */
     profinet_slot_t *s = find_slot(slot, subslot);

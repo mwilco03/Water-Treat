@@ -547,7 +547,8 @@ void config_get_defaults(app_config_t *c) {
         /* Fallback to common defaults if board detection fails */
         SAFE_STRNCPY(c->led.spi_device, "/dev/spidev0.0", sizeof(c->led.spi_device));
         c->led.gpio_pin = 18;
-        LOG_DEBUG("Config: Board detection failed, using default SPI/GPIO");
+        LOG_WARNING("Board detection failed — using fallback SPI=/dev/spidev0.0, GPIO=18. "
+                    "Verify these are correct for your hardware.");
     }
 
     /* Watchdog defaults - see config_defaults.h for rationale */

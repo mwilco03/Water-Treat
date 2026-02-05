@@ -309,8 +309,8 @@ static result_t init_profinet(void) {
 
     r = profinet_manager_start(g_app_config.network.interface);
     if (r != RESULT_OK) {
-        LOG_WARNING("Failed to start PROFINET stack (may need p-net library)");
-        // Non-fatal - continue without PROFINET
+        LOG_ERROR("Failed to start PROFINET stack - RTU cannot communicate");
+        return r;
     }
 
     /* Initialize RTU registration subsystem */
@@ -337,10 +337,7 @@ static result_t init_profinet(void) {
 }
 
 static result_t init_sensors(void) {
-    // Pass NULL for profinet_mgr if PROFINET is disabled
-    void *pn_mgr = g_app_config.profinet.enabled ? (void*)1 : NULL;
-
-    result_t r = sensor_manager_init(&g_sensor_mgr, &g_db, (profinet_manager_t*)pn_mgr);
+    result_t r = sensor_manager_init(&g_sensor_mgr, &g_db, g_app_config.profinet.enabled);
     if (r != RESULT_OK) {
         LOG_ERROR("Failed to initialize sensor manager");
         return r;
@@ -842,9 +839,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Initialize PROFINET
+    // Initialize PROFINET - FATAL: RTU cannot operate without PROFINET
     if (init_profinet() != RESULT_OK) {
-        LOG_WARNING("PROFINET initialization failed, continuing without it");
+        LOG_ERROR("PROFINET initialization failed - RTU cannot operate without it");
+        shutdown_subsystems();
+        logger_shutdown();
+        return 1;
     }
 
     // Initialize sensors

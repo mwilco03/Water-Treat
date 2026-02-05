@@ -71,6 +71,7 @@ static sensor_instance_t* create_cpu_temp_sensor(void) {
     instance->id = -1;  /* Not from database */
     instance->module_id = -1;
     instance->slot = CPU_TEMP_SLOT;
+    instance->subslot = 1;  /* Standard PROFINET application subslot */
     strncpy(instance->name, "CPU Temperature", sizeof(instance->name) - 1);
     instance->type = SENSOR_INSTANCE_SYSTEM;
     instance->driver_type = PHYSICAL_DRIVER_NONE;
@@ -116,6 +117,7 @@ static sensor_instance_t* create_cpu_temp_sensor(void) {
 typedef struct {
     int module_id;
     int slot;
+    int subslot;
     float value;
     bool success;
     data_quality_t quality;
@@ -157,6 +159,7 @@ static void* sensor_worker_thread(void *arg) {
                 sensor_read_result_t *upd = &updates[update_count];
                 upd->module_id = instance->module_id;
                 upd->slot = instance->slot;
+                upd->subslot = instance->subslot;
                 upd->last_value = instance->current_value;
                 upd->prev_quality = instance->quality;
 
@@ -214,18 +217,18 @@ static void* sensor_worker_thread(void *arg) {
                  *   Bytes 0-3: Float32 value (big-endian)
                  *   Byte 4:    Quality indicator
                  */
-                if (mgr->profinet_mgr) {
+                if (mgr->profinet_enabled) {
                     profinet_manager_update_input_with_quality(
                         upd->slot,
-                        0,  /* subslot */
+                        upd->subslot,
                         upd->value,
                         upd->quality
                     );
 
                     /* Set IOPS based on quality */
                     uint8_t iops = (upd->quality == QUALITY_GOOD) ? PNET_IOXS_GOOD : PNET_IOXS_BAD;
-                    profinet_manager_set_input_iops(mgr->profinet_mgr,
-                                                   upd->slot, 0, iops);
+                    profinet_manager_set_input_iops(NULL,
+                                                   upd->slot, upd->subslot, iops);
                 }
 
                 LOG_DEBUG("Read sensor slot=%d: %.2f", upd->slot, upd->value);
@@ -243,15 +246,15 @@ static void* sensor_worker_thread(void *arg) {
                  * Send last known value with BAD quality on error
                  * Per DEVELOPMENT_GUIDELINES.md - stale data is marked, not hidden
                  */
-                if (mgr->profinet_mgr) {
+                if (mgr->profinet_enabled) {
                     profinet_manager_update_input_with_quality(
                         upd->slot,
-                        0,  /* subslot */
+                        upd->subslot,
                         upd->last_value,  /* last known value */
                         upd->quality  /* will be BAD or NOT_CONNECTED */
                     );
-                    profinet_manager_set_input_iops(mgr->profinet_mgr,
-                                                   upd->slot, 0,
+                    profinet_manager_set_input_iops(NULL,
+                                                   upd->slot, upd->subslot,
                                                    PNET_IOXS_BAD);
                 }
 
@@ -274,7 +277,7 @@ static void* sensor_worker_thread(void *arg) {
              * Cross-protocol parallel: OPC UA StatusChangeNotification,
              * EtherNet/IP device-level ring fault, Modbus exception response.
              */
-            if (mgr->profinet_mgr && upd->quality != upd->prev_quality) {
+            if (mgr->profinet_enabled && upd->quality != upd->prev_quality) {
                 bool was_fault = (upd->prev_quality == QUALITY_BAD ||
                                   upd->prev_quality == QUALITY_NOT_CONNECTED);
                 bool is_fault  = (upd->quality == QUALITY_BAD ||
@@ -294,12 +297,12 @@ static void* sensor_worker_thread(void *arg) {
     return NULL;
 }
 
-result_t sensor_manager_init(sensor_manager_t *mgr, database_t *db, 
-                             profinet_manager_t *profinet_mgr) {
+result_t sensor_manager_init(sensor_manager_t *mgr, database_t *db,
+                             bool profinet_enabled) {
     memset(mgr, 0, sizeof(*mgr));
-    
+
     mgr->db = db;
-    mgr->profinet_mgr = profinet_mgr;
+    mgr->profinet_enabled = profinet_enabled;
     
     pthread_mutex_init(&mgr->mutex, NULL);
     
@@ -367,7 +370,7 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
     pthread_mutex_lock(&mgr->mutex);
     
     /* Remove PROFINET slots for old sensor instances before destroying them */
-    if (mgr->profinet_mgr) {
+    if (mgr->profinet_enabled) {
         for (int i = 0; i < mgr->instance_count; i++) {
             if (mgr->instances[i] && mgr->instances[i]->slot > 0) {
                 profinet_manager_remove_slot(mgr->instances[i]->slot, 0);
@@ -422,7 +425,7 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
             }
 
             // Add module to PROFINET if configured
-            if (mgr->profinet_mgr && instance->type != SENSOR_INSTANCE_CALCULATED) {
+            if (mgr->profinet_enabled && instance->type != SENSOR_INSTANCE_CALCULATED) {
                 /* Determine GSDML module ident from sensor type */
                 uint32_t mod_ident = GSDML_MOD_SENSOR_GENERIC;
                 uint32_t submod_ident = GSDML_SUBMOD_SENSOR_GENERIC;
@@ -443,10 +446,10 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
                 }
 
                 profinet_manager_add_module(
-                    mgr->profinet_mgr,
+                    NULL,
                     instance->slot,
                     mod_ident,
-                    0,           // subslot
+                    instance->subslot,
                     submod_ident,
                     GSDML_SENSOR_INPUT_SIZE,  /* 5 bytes: float + quality */
                     0            // output_length
@@ -478,12 +481,12 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
             }
 
             /* Register with PROFINET as temperature sensor module */
-            if (mgr->profinet_mgr) {
+            if (mgr->profinet_enabled) {
                 profinet_manager_add_module(
-                    mgr->profinet_mgr,
+                    NULL,
                     cpu_sensor->slot,           /* slot 1 */
                     GSDML_MOD_SENSOR_TEMP,      /* 0x00000040 */
-                    0,                          /* subslot */
+                    cpu_sensor->subslot,        /* from instance */
                     GSDML_MOD_SENSOR_TEMP + 1,  /* 0x00000041 */
                     GSDML_SENSOR_INPUT_SIZE,    /* 5 bytes: float + quality */
                     0                           /* output_length */

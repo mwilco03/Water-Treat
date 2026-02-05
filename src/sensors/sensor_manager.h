@@ -6,15 +6,12 @@
 #include "db/database.h"
 #include <pthread.h>
 
-// Forward declarations
-typedef struct profinet_manager_t profinet_manager_t;
-
 /* Maximum slot number for O(1) lookup (matches Modbus address limit) */
 #define SENSOR_MAX_SLOT 247
 
 typedef struct {
     database_t *db;
-    profinet_manager_t *profinet_mgr;
+    bool profinet_enabled;
 
     sensor_instance_t *instances[MAX_SENSOR_INSTANCES];
     int instance_count;
@@ -31,7 +28,7 @@ typedef struct {
     uint64_t failed_reads;
 } sensor_manager_t;
 
-result_t sensor_manager_init(sensor_manager_t *mgr, database_t *db, profinet_manager_t *profinet_mgr);
+result_t sensor_manager_init(sensor_manager_t *mgr, database_t *db, bool profinet_enabled);
 result_t sensor_manager_start(sensor_manager_t *mgr);
 result_t sensor_manager_stop(sensor_manager_t *mgr);
 void sensor_manager_destroy(sensor_manager_t *mgr);

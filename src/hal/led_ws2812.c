@@ -125,6 +125,7 @@ void led_config_defaults(led_config_t *config) {
         /* Fallback to common defaults */
         SAFE_STRNCPY(config->spi_device, "/dev/spidev0.0", sizeof(config->spi_device));
         config->gpio_pin = 18;
+        LOG_WARNING("LED: board detection failed — using fallback SPI=/dev/spidev0.0, GPIO=18");
     }
 
     /* RP2040 USB defaults */
