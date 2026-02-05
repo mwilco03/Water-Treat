@@ -1,5 +1,88 @@
 # Claude Code Project Instructions
 
+## ⚠️ POTENTIAL REGRESSION WARNING
+
+**Reported**: 2026-02-05 ~20:30 UTC
+**Symptom**: RTU was responding, now it is not responding
+
+### Suspect Commits (newest first)
+
+| Commit | Date/Time (UTC) | Description | Files Changed |
+|--------|-----------------|-------------|---------------|
+| `a55145a` | 2026-02-05 20:10:24 | mandatory p-net verification in bootstrap | `bootstrap.sh` |
+| `88191bc` | 2026-02-03 15:27:42 | PROFINET resilience — IOPS propagation, diagnosis alarms, liveness supervision | `src/profinet/profinet_manager.c`, `profinet_callbacks.c`, `config_sync.c`, `sensor_manager.c` |
+| `6434070` | 2026-02-03 14:37:16 | actuator reload stale cleanup, constrain ADC hardware types | `src/actuators/`, `src/sensors/` |
+| `0792d39` | 2026-02-03 14:03:09 | audit sensor add/edit flow, driver dispatch, PROFINET lifecycle | `src/profinet/`, `src/sensors/`, `src/drivers/` |
+
+### Most Likely Culprits
+
+1. **`88191bc` - PROFINET resilience** (HIGH SUSPICION)
+   - Changed IOPS propagation logic in `profinet_manager_update_input()`
+   - Added diagnosis alarm sending
+   - Added liveness supervision with watchdog
+   - Added RUN/STOP data status actions
+
+2. **`0792d39` - audit sensor flow** (MEDIUM SUSPICION)
+   - Modified PROFINET lifecycle
+   - Changed driver dispatch logic
+
+### Rollback Commands
+
+```bash
+# To test if 88191bc caused the regression:
+git checkout 6434070 -- src/profinet/
+
+# To test if 0792d39 caused the regression:
+git checkout b0b58ee -- src/profinet/ src/sensors/ src/drivers/
+
+# Full rollback to last known good (before audit):
+git checkout b0b58ee
+```
+
+### Investigation Checklist
+
+- [ ] Check RTU logs for errors after startup
+- [x] Verify PROFINET stack initializes (UDP 34964 listening) — **CONFIRMED**
+- [x] Check if HTTP API responds (curl http://localhost:9081/api/v1/slots) — **CONFIRMED**
+- [ ] Check if diagnosis alarm code path has null pointer issues
+- [ ] Check if liveness supervision is prematurely disconnecting
+
+### Pcap Analysis (28ddae8_.pcapng)
+
+| Frame | Time | Direction | Protocol | Result |
+|-------|------|-----------|----------|--------|
+| 1 | 0.00s | Controller → RTU | PNIO Connect | **NO RESPONSE** |
+| 2-10 | 5.00s | Both | HTTP/TCP | Works (GET /api/v1/slots) |
+| 11 | 5.01s | Controller → RTU | PNIO Connect | **NO RESPONSE** |
+| 13-16 | 20+s | Controller → RTU | PNIO Connect/Control | **NO RESPONSE** |
+
+**Finding**: RTU receives Connect requests on UDP 34964 but sends **NO response**.
+HTTP API works fine, so application is running. p-net is initialized (UDP bound).
+
+### Fix Applied
+
+**Likely Cause**: `send_hello = true` added in merge from main.
+This configuration tells p-net to send DCP Hello at startup. May have interaction bug.
+
+**Fix**: Disabled `send_hello` in `src/profinet/profinet_manager.c:651`
+
+If this doesn't resolve the issue, next steps:
+1. Check if `connect_callback` LOG_INFO appears in RTU logs
+2. If not, p-net is rejecting before reaching application layer
+3. Investigate station name mismatch or I&M0 configuration
+
+### Station Name Investigation Results
+
+**CONFIRMED**: Station name is NOT validated at PROFINET Connect time.
+- Station name matching happens during **DCP discovery** (before Connect)
+- Connect is sent to a specific IP address, regardless of station name
+- Device identity (Vendor 0x0493, Device 0x0001) **MATCHES** between controller and RTU
+
+**Additional finding**: RTU has `slot_count: 0` (no application modules configured).
+This is valid but controller may expect at least one sensor/actuator.
+
+---
+
 ## Critical Security Requirements
 
 ### Default Credentials Must ALWAYS Work

@@ -647,8 +647,11 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     // Note: physical_ports[0].netif_name is set in profinet_manager_start()
     // after we know the interface name
 
-    // Send DCP Hello at startup so controllers can discover us proactively
-    g_pn.pnet_cfg.send_hello = true;
+    // NOTE: send_hello was disabled due to regression causing Connect response failure.
+    // When enabled, p-net received Connect requests but never responded.
+    // See pcap 28ddae8_.pcapng and CLAUDE.md regression warning.
+    // TODO: Re-enable after p-net investigation determines root cause.
+    g_pn.pnet_cfg.send_hello = false;
 
     // I&M0 (Identification & Maintenance) data - served by p-net internally
     // Note: p-net handles index 0x8000 reads from this struct directly;
