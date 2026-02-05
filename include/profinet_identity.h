@@ -21,11 +21,11 @@
  * Device Identity (must match GSDML <DeviceIdentity>)
  * ========================================================================== */
 
-/** VendorID from GSDML: <DeviceIdentity VendorID="0x0493"> */
-#define PN_VENDOR_ID                0x0493
+/** VendorID 0x0272 (626 decimal) */
+#define PN_VENDOR_ID                0x0272
 
-/** DeviceID from GSDML: <DeviceIdentity DeviceID="0x0001"> */
-#define PN_DEVICE_ID                0x0001
+/** DeviceID 0x0DC0 (3520 decimal - Defensive Cyber Operations) */
+#define PN_DEVICE_ID                0x0DC0
 
 /** Instance identifier for PROFINET Object UUID suffix */
 #define PN_INSTANCE_ID              0x0001
@@ -76,15 +76,15 @@
  *                             {vendor_id_hi}{vendor_id_lo}
  *
  * For this device:
- *   DEA00000-6C97-11D1-8271-000100010493
+ *   DEA00000-6C97-11D1-8271-00010DC00272
  *
  * Byte breakdown of the 6-byte suffix:
  *   [0] = (PN_INSTANCE_ID >> 8) & 0xFF = 0x00
  *   [1] = PN_INSTANCE_ID & 0xFF        = 0x01
- *   [2] = (PN_DEVICE_ID >> 8) & 0xFF   = 0x00
- *   [3] = PN_DEVICE_ID & 0xFF          = 0x01
- *   [4] = (PN_VENDOR_ID >> 8) & 0xFF   = 0x04
- *   [5] = PN_VENDOR_ID & 0xFF          = 0x93
+ *   [2] = (PN_DEVICE_ID >> 8) & 0xFF   = 0x0D
+ *   [3] = PN_DEVICE_ID & 0xFF          = 0xC0
+ *   [4] = (PN_VENDOR_ID >> 8) & 0xFF   = 0x02
+ *   [5] = PN_VENDOR_ID & 0xFF          = 0x72
  */
 
 #define PN_VENDOR_ID_HI     ((PN_VENDOR_ID >> 8) & 0xFF)

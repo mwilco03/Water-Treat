@@ -38,9 +38,9 @@
     </ProfileHeader>
 
     <ProfileBody>
-        <DeviceIdentity VendorID="0x0493" DeviceID="0x0001">
+        <DeviceIdentity VendorID="0x0272" DeviceID="0x0DC0">
             <InfoText TextId="IDT_DeviceInfo"/>
-            <VendorName Value="Water Treatment Training"/>
+            <VendorName Value="Defensive Cyber Operations"/>
         </DeviceIdentity>
 
         <DeviceFunction>
