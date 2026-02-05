@@ -168,6 +168,26 @@ static profinet_slot_t* add_slot(int slot, int subslot) {
     return s;
 }
 
+bool profinet_manager_get_plugged_module_ident(int slot, uint32_t *module_ident) {
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        if (g_pn.slots[i].slot == slot) {
+            if (module_ident) *module_ident = g_pn.slots[i].module_ident;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool profinet_manager_get_plugged_submodule_ident(int slot, int subslot,
+                                                   uint32_t *module_ident,
+                                                   uint32_t *submodule_ident) {
+    profinet_slot_t *s = find_slot(slot, subslot);
+    if (!s) return false;
+    if (module_ident) *module_ident = s->module_ident;
+    if (submodule_ident) *submodule_ident = s->submodule_ident;
+    return true;
+}
+
 /**
  * @brief Determine if a module is an actuator (output) based on GSDML ident
  *
@@ -627,6 +647,32 @@ result_t profinet_manager_init(database_t *db, const profinet_config_t *config) 
     // Note: physical_ports[0].netif_name is set in profinet_manager_start()
     // after we know the interface name
 
+    // Send DCP Hello at startup so controllers can discover us proactively
+    g_pn.pnet_cfg.send_hello = true;
+
+    // I&M0 (Identification & Maintenance) data - served by p-net internally
+    // Note: p-net handles index 0x8000 reads from this struct directly;
+    // the application read_cb is NOT called for I&M0.
+    g_pn.pnet_cfg.im_0_data.im_vendor_id_hi = PN_VENDOR_ID_HI;
+    g_pn.pnet_cfg.im_0_data.im_vendor_id_lo = PN_VENDOR_ID_LO;
+    snprintf(g_pn.pnet_cfg.im_0_data.im_order_id,
+             sizeof(g_pn.pnet_cfg.im_0_data.im_order_id),
+             "WaterTreat-RTU");
+    snprintf(g_pn.pnet_cfg.im_0_data.im_serial_number,
+             sizeof(g_pn.pnet_cfg.im_0_data.im_serial_number),
+             "RTU-000000001");
+    g_pn.pnet_cfg.im_0_data.im_hardware_revision = 1;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_prefix = 'V';
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_functional_enhancement = 1;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_bug_fix = 0;
+    g_pn.pnet_cfg.im_0_data.im_sw_revision_internal_change = 0;
+    g_pn.pnet_cfg.im_0_data.im_revision_counter = 0;
+    g_pn.pnet_cfg.im_0_data.im_profile_id = 0;
+    g_pn.pnet_cfg.im_0_data.im_profile_specific_type = 0;
+    g_pn.pnet_cfg.im_0_data.im_version_major = 1;
+    g_pn.pnet_cfg.im_0_data.im_version_minor = 1;
+    g_pn.pnet_cfg.im_0_data.im_supported = 0x001E; /* I&M1-4 supported (I&M0 always implicit) */
+
     // Callbacks
     g_pn.pnet_cfg.state_cb = profinet_state_callback;
     g_pn.pnet_cfg.connect_cb = profinet_connect_callback;
@@ -875,8 +921,12 @@ result_t profinet_manager_start(const char *interface) {
 
     // Enable promiscuous mode for PROFINET raw Ethernet frames
     if (!enable_promiscuous_mode(g_netif_name)) {
-        LOG_WARNING("Could not enable promiscuous mode - PROFINET may not work correctly");
-        // Continue anyway - p-net might still work if already in promisc mode
+        LOG_ERROR("Could not enable promiscuous mode on '%s'", g_netif_name);
+        LOG_ERROR("PROFINET requires promiscuous mode for raw Ethernet frames");
+        LOG_ERROR("Check: CAP_NET_ADMIN capability, or run as root");
+        snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+                 "Cannot enable promiscuous mode on '%s' (need CAP_NET_ADMIN or root)", g_netif_name);
+        return RESULT_ERROR;
     }
 
     // Configure physical port (single port device - same as main interface)
@@ -1078,7 +1128,7 @@ result_t profinet_manager_start(const char *interface) {
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
         LOG_WARNING("Failed to plug DAP interface submodule at slot 0.0x8000");
-        // Non-fatal - some controllers don't require this
+        LOG_WARNING("Controller tolerates this (ModuleDiffBlock warning), but functionality may be limited");
     } else {
         LOG_DEBUG("Plugged DAP interface submodule at slot 0.0x8000 (ident=0x%08X)", GSDML_SUBMOD_DAP_INTERFACE);
     }
@@ -1089,7 +1139,7 @@ result_t profinet_manager_start(const char *interface) {
                                    PNET_DIR_NO_IO, 0, 0);
     if (dap_ret != 0) {
         LOG_WARNING("Failed to plug DAP port submodule at slot 0.0x8001");
-        // Non-fatal - some controllers don't require this
+        LOG_WARNING("Controller tolerates this (ModuleDiffBlock warning), but functionality may be limited");
     } else {
         LOG_DEBUG("Plugged DAP port submodule at slot 0.0x8001 (ident=0x%08X)", GSDML_SUBMOD_DAP_PORT);
     }
@@ -1160,14 +1210,18 @@ result_t profinet_manager_start(const char *interface) {
     LOG_INFO("Slots plugged: DAP + %d application modules", g_pn.slot_count);
     LOG_INFO("If connect_callback is NOT called, p-net rejects before app layer");
     LOG_INFO("=== End Config Summary ===");
-#else
-    UNUSED(interface);
-    LOG_WARNING("PROFINET support not compiled in (HAVE_PNET not defined)");
-    g_pn.running = true;
-    set_state(PROFINET_STATE_READY);
-#endif
 
     return RESULT_OK;
+#else
+    UNUSED(interface);
+    LOG_ERROR("PROFINET support not compiled in (HAVE_PNET not defined)");
+    LOG_ERROR("The RTU cannot communicate without p-net. Rebuild with p-net installed.");
+    LOG_ERROR("Run: bash scripts/install-deps.sh && cd build && cmake .. && make");
+    snprintf(g_pn_init_error, sizeof(g_pn_init_error),
+             "PROFINET not compiled in (HAVE_PNET undefined). Rebuild with p-net installed.");
+    set_state(PROFINET_STATE_ERROR);
+    return RESULT_ERROR;
+#endif
 }
 
 result_t profinet_manager_stop(void) {
@@ -1960,6 +2014,17 @@ result_t profinet_manager_add_module(void *mgr, int slot, uint32_t module_ident,
                                      int subslot, uint32_t submodule_ident,
                                      size_t input_len, size_t output_len) {
     UNUSED(mgr);
+
+    /*
+     * Warn if called after PROFINET stack is already running.
+     * p-net v0.2.0 does not support hot-plugging modules — pnet_plug_module()
+     * must be called before the first connection. Modules added after start
+     * will only take effect after a full restart.
+     */
+    if (g_pn.running) {
+        LOG_WARNING("Module added to slot %d.%d after PROFINET started — "
+                    "requires restart to take effect on PROFINET", slot, subslot);
+    }
 
     /* Check if slot already exists (may be loaded from database) */
     profinet_slot_t *s = find_slot(slot, subslot);

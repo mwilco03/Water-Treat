@@ -112,6 +112,7 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
 
     instance->module_id = module->id;
     instance->slot = module->slot;
+    instance->subslot = module->subslot;
     SAFE_STRNCPY(instance->name, module->name, sizeof(instance->name));
     instance->scale_factor = 1.0f;  // Default scale
 
