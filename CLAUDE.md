@@ -71,6 +71,16 @@ If this doesn't resolve the issue, next steps:
 2. If not, p-net is rejecting before reaching application layer
 3. Investigate station name mismatch or I&M0 configuration
 
+### Station Name Investigation Results
+
+**CONFIRMED**: Station name is NOT validated at PROFINET Connect time.
+- Station name matching happens during **DCP discovery** (before Connect)
+- Connect is sent to a specific IP address, regardless of station name
+- Device identity (Vendor 0x0493, Device 0x0001) **MATCHES** between controller and RTU
+
+**Additional finding**: RTU has `slot_count: 0` (no application modules configured).
+This is valid but controller may expect at least one sensor/actuator.
+
 ---
 
 ## Critical Security Requirements
