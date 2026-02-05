@@ -1284,8 +1284,8 @@ dhcp_enabled = true
 [profinet]
 enabled = true
 station_name = $station_name
-vendor_id = 0x0493
-device_id = 0x0001
+vendor_id = 0x0272
+device_id = 0x0DC0
 product_name = Water Treatment RTU
 min_device_interval = 32
 data_dir = $PNET_DATA_DIR
