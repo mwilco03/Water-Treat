@@ -40,7 +40,7 @@
     <ProfileBody>
         <DeviceIdentity VendorID="0x0272" DeviceID="0x0DC0">
             <InfoText TextId="IDT_DeviceInfo"/>
-            <VendorName Value="Defensive Cyber Operations"/>
+            <VendorName Value="Phoenix Guardians"/>
         </DeviceIdentity>
 
         <DeviceFunction>
