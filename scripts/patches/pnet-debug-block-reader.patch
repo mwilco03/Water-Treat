@@ -1,0 +1,18 @@
+diff --git a/src/device/pf_block_reader.c b/src/device/pf_block_reader.c
+index bc5b7de..ee92689 100644
+--- a/src/device/pf_block_reader.c
++++ b/src/device/pf_block_reader.c
+@@ -358,6 +358,13 @@ void pf_get_ar_param (pf_get_info_t * p_info, uint16_t * p_pos, pf_ar_t * p_ar)
+       pf_get_bits (temp_u32, 4, 1);
+    p_ar->ar_param.ar_properties.device_access =
+       (pf_get_bits (temp_u32, 8, 1) != 0);
++   LOG_ERROR (
++      PF_RPC_LOG,
++      "CMRPC(%d): ar_properties=0x%08X, bit8=%u, device_access=%s\n",
++      __LINE__,
++      (unsigned)temp_u32,
++      (unsigned)pf_get_bits (temp_u32, 8, 1),
++      p_ar->ar_param.ar_properties.device_access ? "TRUE" : "FALSE");
+    p_ar->ar_param.ar_properties.companion_ar =
+       (uint16_t)pf_get_bits (temp_u32, 9, 2);
+    p_ar->ar_param.ar_properties.acknowledge_companion_ar =

@@ -681,6 +681,24 @@ build_pnet() {
         }
     fi
 
+    # Apply debug patches to p-net for PROFINET troubleshooting
+    detail "Applying debug patches to p-net..."
+    local patch_dir="${SCRIPT_DIR}/patches"
+    if [[ -f "${patch_dir}/pnet-debug-block-reader.patch" ]]; then
+        if patch -p1 --forward < "${patch_dir}/pnet-debug-block-reader.patch" >/dev/null 2>&1; then
+            detail "Applied pnet-debug-block-reader.patch"
+        else
+            detail "Patch already applied or failed (non-fatal)"
+        fi
+    fi
+    if [[ -f "${patch_dir}/pnet-debug-cmrpc.patch" ]]; then
+        if patch -p1 --forward < "${patch_dir}/pnet-debug-cmrpc.patch" >/dev/null 2>&1; then
+            detail "Applied pnet-debug-cmrpc.patch"
+        else
+            detail "Patch already applied or failed (non-fatal)"
+        fi
+    fi
+
     # Create build directory
     mkdir -p build || {
         breaking "Cannot create build directory"
