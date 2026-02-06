@@ -1171,7 +1171,7 @@ build_from_source() {
     fi
 
     # Positive confirmation: CMake should report finding p-net
-    if ! echo "$cmake_output" | grep -qiE "pnet.*found|HAVE_PNET"; then
+    if ! echo "$cmake_output" | grep -qiE "p-?net.*found|HAVE_PNET"; then
         log_warn "CMake output does not confirm p-net was found"
         log_warn "Build will proceed but may not have PROFINET support"
         log_warn "The binary verification step will catch this if so"
