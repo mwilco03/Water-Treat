@@ -7,6 +7,7 @@
 #include "profinet_manager.h"
 #include "profinet_callbacks.h"
 #include "controller_discovery.h"
+#include "constants.h"
 #include "db/database.h"
 #include "db/db_modules.h"
 #include "utils/logger.h"
@@ -386,7 +387,7 @@ static void check_connection_liveness(void) {
      */
     uint64_t timeout_ms = g_pn.controller_watchdog_ms > 0
                         ? g_pn.controller_watchdog_ms
-                        : 5000;
+                        : TIMEOUT_CONNECT_MS;
 
     uint64_t silence_ms = now - g_pn.last_output_received_ms;
 
@@ -443,7 +444,7 @@ static void check_stuck_state(void) {
              * If we've been in READY for > 60s, log but don't reset
              * (controller may be offline).
              */
-            if (state_duration > 60000 && (state_duration % 60000) < RECOVERY_CHECK_INTERVAL_MS) {
+            if (state_duration > TIMEOUT_REGISTRATION_MS && (state_duration % TIMEOUT_REGISTRATION_MS) < RECOVERY_CHECK_INTERVAL_MS) {
                 LOG_DEBUG("Waiting for controller connection (%llu s)...",
                           (unsigned long long)(state_duration / 1000));
             }
@@ -454,7 +455,7 @@ static void check_stuck_state(void) {
              * Auto-recover from ERROR state after clearing NV files.
              * Give it 5 seconds then try to go back to READY.
              */
-            if (state_duration > 5000) {
+            if (state_duration > TIMEOUT_CONNECT_MS) {
                 LOG_INFO("Recovering from ERROR state, clearing AR and retrying");
                 profinet_manager_clear_ar_state();
                 set_state(PROFINET_STATE_READY);
@@ -916,7 +917,7 @@ result_t profinet_manager_start(const char *interface) {
             snprintf(g_pn_init_error, sizeof(g_pn_init_error),
                      "No network interface found. Set [network] interface in config file.");
             LOG_ERROR("Could not auto-detect network interface and none configured. "
-                      "Set [network] interface in /etc/water-treat/water-treat.conf");
+                      "Set [network] interface in " PATH_CONFIG_FILE);
             return RESULT_ERROR;
         }
     }
@@ -1818,7 +1819,7 @@ void profinet_manager_set_connected(bool connected, uint32_t arep) {
         g_pn.last_liveness_check_ms = get_time_ms();
         g_pn.liveness_alarm_active = false;
         if (g_pn.liveness_check_interval_ms == 0) {
-            g_pn.liveness_check_interval_ms = 5000;  /* Default 5s */
+            g_pn.liveness_check_interval_ms = TIMEOUT_CONNECT_MS;  /* Default 5s */
         }
     } else {
         if (was_connected) {

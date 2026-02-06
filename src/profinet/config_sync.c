@@ -8,6 +8,7 @@
 
 #include "config_sync.h"
 #include "profinet_manager.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include <string.h>
 #include <pthread.h>
@@ -18,12 +19,12 @@
  * ============================================================================ */
 
 static uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
-    uint16_t crc = 0xFFFF;
+    uint16_t crc = CRC16_INIT;
     for (size_t i = 0; i < len; i++) {
         crc ^= (uint16_t)data[i] << 8;
         for (int j = 0; j < 8; j++) {
             if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021;
+                crc = (crc << 1) ^ CRC16_CCITT_POLY;
             } else {
                 crc <<= 1;
             }
@@ -310,7 +311,7 @@ result_t config_sync_init(void) {
     pthread_mutex_init(&g_cfg.mutex, NULL);
 
     g_cfg.authority = AUTHORITY_AUTONOMOUS;  /* Default to autonomous */
-    g_cfg.watchdog_ms = 5000;                /* 5 second default */
+    g_cfg.watchdog_ms = TIMEOUT_CONNECT_MS;  /* 5 second default */
 
     g_cfg.initialized = true;
     LOG_INFO("Config sync initialized");

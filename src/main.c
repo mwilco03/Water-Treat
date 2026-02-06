@@ -8,6 +8,7 @@
  */
 
 #include "common.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include "config/config.h"
 #include "config/config_validate.h"
@@ -93,9 +94,9 @@ static void setup_signal_handlers(void) {
 
 static const char* find_config_file(void) {
     static const char *paths[] = {
-        "/etc/water-treat/water-treat.conf",
-        "/etc/water-treat.conf",
-        "./water-treat.conf",
+        PATH_CONFIG_FILE,
+        "/etc/" APP_NAME ".conf",
+        "./" APP_NAME ".conf",
         NULL
     };
 
@@ -123,11 +124,12 @@ static result_t load_configuration(const char *config_path) {
         }
     } else if (config_path) {
         LOG_WARNING("Config file '%s' not accessible, using defaults. "
-                    "Searched: /etc/water-treat/water-treat.conf, "
-                    "/etc/water-treat.conf, ./water-treat.conf", config_path);
+                    "Searched: %s, /etc/%s.conf, ./%s.conf", config_path,
+                    PATH_CONFIG_FILE, APP_NAME, APP_NAME);
     } else {
-        LOG_INFO("No configuration file found (searched: /etc/water-treat/water-treat.conf, "
-                 "/etc/water-treat.conf, ./water-treat.conf), using defaults");
+        LOG_INFO("No configuration file found (searched: %s, "
+                 "/etc/%s.conf, ./%s.conf), using defaults",
+                 PATH_CONFIG_FILE, APP_NAME, APP_NAME);
     }
 
     /* Validate configuration and log warnings/errors */
@@ -742,7 +744,7 @@ int main(int argc, char *argv[]) {
         .include_timestamp = true,
         .include_source = true
     };
-    SAFE_STRNCPY(log_cfg.syslog_ident, "water-treat", sizeof(log_cfg.syslog_ident));
+    SAFE_STRNCPY(log_cfg.syslog_ident, APP_NAME, sizeof(log_cfg.syslog_ident));
 
     // Daemon mode: syslog primary (always available), file secondary if writable
     // Interactive mode: console primary, file secondary if writable
@@ -754,19 +756,19 @@ int main(int argc, char *argv[]) {
 
     // Additionally enable file logging if a writable directory exists
     // Use tmpfs (/run) to avoid SD card wear - logs are volatile (lost on reboot)
-    const char *log_dir_primary = "/run/water-treat";
+    const char *log_dir_primary = PATH_RUN_DIR;
     bool log_file_ok = false;
 
     if (mkdir_p(log_dir_primary, 0755) == 0 && access(log_dir_primary, W_OK) == 0) {
         snprintf(log_cfg.log_file_path, sizeof(log_cfg.log_file_path),
-                 "%s/water-treat.log", log_dir_primary);
+                 "%s/%s.log", log_dir_primary, APP_NAME);
         log_file_ok = true;
     } else {
         // Fall back to user data directory
         const char *user_dir = get_user_data_dir();
         if (mkdir_p(user_dir, 0755) == 0 && access(user_dir, W_OK) == 0) {
             snprintf(log_cfg.log_file_path, sizeof(log_cfg.log_file_path),
-                     "%s/water-treat.log", user_dir);
+                     "%s/%s.log", user_dir, APP_NAME);
             log_file_ok = true;
         }
     }

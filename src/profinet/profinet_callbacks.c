@@ -431,8 +431,8 @@ int profinet_read_callback(pnet_t *net, void *arg,
         }
 
         default:
-            /* Standard parameter indices (0x0000-0x7FFF) - let p-net handle */
-            if (idx <= 0x7FFF) {
+            /* Standard parameter indices (0x0000-PROFINET_PARAM_INDEX_MAX) - let p-net handle */
+            if (idx <= PROFINET_PARAM_INDEX_MAX) {
                 LOG_DEBUG("Standard read index 0x%04X, deferring to p-net", idx);
                 *data = NULL;
                 *length = 0;
@@ -484,8 +484,8 @@ int profinet_write_callback(pnet_t *net, void *arg,
         return 0;
     }
 
-    /* Standard parameterization data (0x0000-0x7FFF) is accepted */
-    if (idx <= 0x7FFF) {
+    /* Standard parameterization data (0x0000-PROFINET_PARAM_INDEX_MAX) is accepted */
+    if (idx <= PROFINET_PARAM_INDEX_MAX) {
         LOG_INFO("Parameter write slot %u.%u idx 0x%04X: %u bytes",
                  slot, subslot, idx, write_length);
         return 0;
@@ -671,7 +671,7 @@ int profinet_alarm_ack_cnf_callback(pnet_t *net, void *arg,
  * System Callbacks
  * ========================================================================== */
 
-#define BACKUP_DIR "/var/backup/water-treat"
+#define BACKUP_DIR PATH_BACKUP_DIR
 
 /**
  * @brief Copy a file to a destination path.

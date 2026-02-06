@@ -175,11 +175,11 @@ result_t hw_discover_i2c(int bus, hw_discovery_result_t *result)
 
     LOG_INFO("Scanning I2C bus %d...", bus);
 
-    /* Scan address range 0x03 to 0x77 (standard 7-bit addresses) */
-    for (uint8_t addr = 0x03; addr <= 0x77 && result->i2c_count < MAX_I2C_DEVICES; addr++) {
+    /* Scan address range I2C_ADDR_MIN to I2C_ADDR_MAX (standard 7-bit addresses) */
+    for (uint8_t addr = I2C_ADDR_MIN; addr <= I2C_ADDR_MAX && result->i2c_count < MAX_I2C_DEVICES; addr++) {
         /* Skip reserved addresses */
-        if (addr >= 0x30 && addr <= 0x37) continue;  /* Reserved */
-        if (addr >= 0x78 && addr <= 0x7F) continue;  /* 10-bit addressing */
+        if (addr >= I2C_ADDR_RESERVED_MIN && addr <= I2C_ADDR_RESERVED_MAX) continue;  /* Reserved */
+        if (addr >= I2C_ADDR_10BIT_MIN && addr <= I2C_ADDR_10BIT_MAX) continue;  /* 10-bit addressing */
 
         if (i2c_probe_address(fd, addr)) {
             i2c_device_t *dev = &result->i2c_devices[result->i2c_count];

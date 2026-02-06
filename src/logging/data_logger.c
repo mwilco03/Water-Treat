@@ -386,7 +386,7 @@ result_t data_logger_init(database_t *db, const data_logger_config_t *config) {
     // Store & Forward defaults (can be overridden by config)
     g_logger.queue_when_offline = config->queue_when_offline ? config->queue_when_offline : true;
     g_logger.flush_on_reconnect = config->flush_on_reconnect ? config->flush_on_reconnect : true;
-    g_logger.max_queue_age_seconds = config->max_queue_age_seconds > 0 ? config->max_queue_age_seconds : 3600;
+    g_logger.max_queue_age_seconds = config->max_queue_age_seconds > 0 ? config->max_queue_age_seconds : LIMIT_LOG_INTERVAL_MAX_SEC;
     g_logger.network_connected = true;  // Assume connected initially
 
     g_logger.initialized = true;
@@ -581,8 +581,8 @@ result_t data_logger_enable(bool enabled) {
 }
 
 result_t data_logger_set_interval(int seconds) {
-    if (seconds < 1) seconds = 1;
-    if (seconds > 3600) seconds = 3600;
+    if (seconds < LIMIT_LOG_INTERVAL_MIN_SEC) seconds = LIMIT_LOG_INTERVAL_MIN_SEC;
+    if (seconds > LIMIT_LOG_INTERVAL_MAX_SEC) seconds = LIMIT_LOG_INTERVAL_MAX_SEC;
     g_logger.config.interval_seconds = seconds;
     LOG_INFO("Logging interval set to %d seconds", seconds);
     return RESULT_OK;

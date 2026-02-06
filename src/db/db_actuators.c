@@ -9,10 +9,10 @@
 
 const char* actuator_type_to_string(actuator_type_t type) {
     switch (type) {
-        case ACTUATOR_TYPE_RELAY: return "relay";
-        case ACTUATOR_TYPE_PWM: return "pwm";
-        case ACTUATOR_TYPE_LATCHING: return "latching";
-        case ACTUATOR_TYPE_MOMENTARY: return "momentary";
+        case ACTUATOR_TYPE_RELAY: return ACTUATOR_TYPE_RELAY_STR;
+        case ACTUATOR_TYPE_PWM: return ACTUATOR_TYPE_PWM_STR;
+        case ACTUATOR_TYPE_LATCHING: return ACTUATOR_TYPE_LATCHING_STR;
+        case ACTUATOR_TYPE_MOMENTARY: return ACTUATOR_TYPE_MOMENTARY_STR;
         default: return "unknown";
     }
 }
@@ -28,9 +28,9 @@ const char* safe_state_to_string(safe_state_t state) {
 
 static actuator_type_t string_to_actuator_type(const char *str) {
     if (!str) return ACTUATOR_TYPE_RELAY;
-    if (strcmp(str, "pwm") == 0) return ACTUATOR_TYPE_PWM;
-    if (strcmp(str, "latching") == 0) return ACTUATOR_TYPE_LATCHING;
-    if (strcmp(str, "momentary") == 0) return ACTUATOR_TYPE_MOMENTARY;
+    if (strcmp(str, ACTUATOR_TYPE_PWM_STR) == 0) return ACTUATOR_TYPE_PWM;
+    if (strcmp(str, ACTUATOR_TYPE_LATCHING_STR) == 0) return ACTUATOR_TYPE_LATCHING;
+    if (strcmp(str, ACTUATOR_TYPE_MOMENTARY_STR) == 0) return ACTUATOR_TYPE_MOMENTARY;
     return ACTUATOR_TYPE_RELAY;
 }
 

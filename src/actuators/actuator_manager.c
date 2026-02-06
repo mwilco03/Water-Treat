@@ -7,6 +7,7 @@
 #include "profinet/profinet_manager.h"
 #include "alarms/alarm_manager.h"
 #include "config/config.h"
+#include "constants.h"
 #include "db/db_events.h"
 #include "db/db_modules.h"
 #include "drivers/digital/relay_output.h"
@@ -21,10 +22,10 @@
 extern app_config_t g_app_config;
 
 /* Default timeout values - can be overridden via [actuator] section in config */
-#define DEFAULT_WATCHDOG_INTERVAL_MS    1000
-#define DEFAULT_COMMAND_TIMEOUT_MS      5000    // Consider disconnected if no command for 5s
+#define DEFAULT_WATCHDOG_INTERVAL_MS    INTERVAL_SENSOR_POLL_MS
+#define DEFAULT_COMMAND_TIMEOUT_MS      TIMEOUT_ACTUATOR_COMMAND_MS    // Consider disconnected if no command for 5s
 #define DEFAULT_DEGRADED_ALARM_DELAY_MS 3000    // Wait before declaring degraded mode
-#define DEFAULT_SAFE_STATE_TIMEOUT_MS   30000   // Apply safe state after 30s in degraded mode
+#define DEFAULT_SAFE_STATE_TIMEOUT_MS   TIMEOUT_PROFINET_WATCHDOG_MS   // Apply safe state after 30s in degraded mode
 
 /* Runtime configurable timeouts (initialized from config on start) */
 static int g_watchdog_interval_ms = DEFAULT_WATCHDOG_INTERVAL_MS;
@@ -93,7 +94,7 @@ static result_t init_actuator_driver(actuator_instance_t *act) {
         case ACTUATOR_TYPE_PUMP:
             cfg.type = act->config.pwm_capable ? OUTPUT_TYPE_PWM : OUTPUT_TYPE_RELAY;
             cfg.pwm_frequency_hz = act->config.pwm_frequency_hz > 0 ?
-                                   act->config.pwm_frequency_hz : 1000;
+                                   act->config.pwm_frequency_hz : DEFAULT_PWM_FREQUENCY_HZ;
             break;
         case ACTUATOR_TYPE_VALVE:
             cfg.type = OUTPUT_TYPE_RELAY;

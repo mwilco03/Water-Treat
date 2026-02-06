@@ -120,7 +120,7 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
     /* Initialize quality tracking with defaults per DEVELOPMENT_GUIDELINES.md */
     instance->quality = QUALITY_NOT_CONNECTED;
     instance->timestamp_us = 0;
-    instance->stale_timeout_ms = 5000;   /* 5 seconds default */
+    instance->stale_timeout_ms = TIMEOUT_SENSOR_STALE_MS;   /* 5 seconds default */
     instance->failure_threshold = 3;     /* 3 failures before BAD */
     instance->range_min = -FLT_MAX;      /* No range check by default */
     instance->range_max = FLT_MAX;
@@ -130,7 +130,7 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
     result_t result = RESULT_OK;
 
     // Load sensor based on type
-    if (strcmp(module->module_type, "physical") == 0) {
+    if (strcmp(module->module_type, MODULE_TYPE_PHYSICAL) == 0) {
         instance->type = SENSOR_INSTANCE_PHYSICAL;
 
         db_physical_sensor_t sensor;
@@ -218,7 +218,7 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
             result = RESULT_NOT_SUPPORTED;
         }
 
-    } else if (strcmp(module->module_type, "adc") == 0) {
+    } else if (strcmp(module->module_type, MODULE_TYPE_ADC) == 0) {
         instance->type = SENSOR_INSTANCE_ADC;
 
         db_adc_sensor_t sensor;
@@ -252,7 +252,7 @@ result_t sensor_instance_create_from_db(sensor_instance_t *instance,
             result = RESULT_NOT_SUPPORTED;
         }
 
-    } else if (strcmp(module->module_type, "web_poll") == 0) {
+    } else if (strcmp(module->module_type, MODULE_TYPE_WEB_POLL) == 0) {
         instance->type = SENSOR_INSTANCE_WEB_POLL;
 
         db_web_poll_sensor_t sensor;
