@@ -36,6 +36,19 @@ typedef struct {
     uint64_t output_changes;         /**< Polls that detected actual changes */
 } profinet_stats_t;
 
+/**
+ * Public slot information for HTTP API
+ * Contains only fields needed for /slots endpoint
+ */
+typedef struct {
+    int slot;
+    int subslot;
+    uint32_t module_ident;
+    uint32_t submodule_ident;
+    size_t input_size;
+    size_t output_size;
+} profinet_slot_info_t;
+
 // PROFINET IOXS values (only define when p-net is not available)
 // When HAVE_PNET is defined, these come from pnet_api.h as enum values
 #ifndef HAVE_PNET
@@ -94,6 +107,20 @@ profinet_state_t profinet_manager_get_state(void);
 bool profinet_manager_is_connected(void);
 bool profinet_manager_is_running(void);
 result_t profinet_manager_get_stats(profinet_stats_t *stats);
+
+/**
+ * @brief Get list of all plugged PROFINET slots (database + runtime)
+ *
+ * Returns ALL slots registered with PROFINET manager, including:
+ * - Database-configured sensors/actuators
+ * - Runtime-created sensors (e.g., CPU temperature at slot 1)
+ *
+ * @param slots Output array pointer (caller must free)
+ * @param count Output slot count
+ * @return RESULT_OK on success, RESULT_NOT_INITIALIZED if PROFINET not started
+ */
+result_t profinet_manager_get_slot_list(profinet_slot_info_t **slots, int *count);
+
 result_t profinet_manager_send_alarm(int slot, int subslot, uint16_t alarm_type,
                                      const uint8_t *data, size_t data_len);
 

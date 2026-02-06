@@ -596,7 +596,7 @@ static int config_to_json(char *buffer, size_t buffer_size) {
 
 /* ============================================================================
  * Slot Discovery API
- * Per CLAUDE.md: /api/v1/slots returns application modules from database.
+ * /slots returns ALL plugged modules (database + runtime like CPU temp).
  * DAP (slot 0) is NOT included — its configuration is fixed in the GSDML.
  * ========================================================================== */
 
@@ -608,21 +608,21 @@ static int config_to_json(char *buffer, size_t buffer_size) {
 #define GSDML_BUILD_PATH   "../gsd/" GSDML_FILENAME
 
 /**
- * @brief Build JSON response for /api/v1/slots endpoint
+ * @brief Build JSON response for /slots endpoint
  *
- * Queries db_module_list() for all configured application modules.
+ * Queries PROFINET manager for ALL plugged modules (database + runtime).
  * Each module is emitted with 6 fields: slot, subslot, module_ident,
  * submodule_ident, direction, data_size.
  *
  * @param buffer Output buffer for JSON
  * @param buffer_size Size of output buffer
- * @return Bytes written on success, -1 on database error
+ * @return Bytes written on success, -1 on PROFINET subsystem error
  */
 static int slots_to_json(char *buffer, size_t buffer_size) {
-    db_module_t *modules = NULL;
+    profinet_slot_info_t *slots = NULL;
     int count = 0;
 
-    result_t rc = db_module_list(g_health.db, &modules, &count);
+    result_t rc = profinet_manager_get_slot_list(&slots, &count);
     if (rc != RESULT_OK) {
         return -1;
     }
@@ -643,8 +643,14 @@ static int slots_to_json(char *buffer, size_t buffer_size) {
     int pos = header_len;
 
     for (int i = 0; i < count; i++) {
-        /* Actuator modules have bit 8 set (0x100 range) per gsdml_modules.h */
-        bool is_actuator = (modules[i].module_ident & MODULE_IDENT_ACTUATOR_FLAG) != 0;
+        /* Skip DAP (slot 0) - only report application modules */
+        if (slots[i].slot == 0) {
+            continue;
+        }
+
+        /* Determine direction from actual sizes (not module ident flag) */
+        bool is_actuator = (slots[i].output_size > 0);
+        int data_size = is_actuator ? slots[i].output_size : slots[i].input_size;
 
         /* Pre-check: need at least ~140 bytes for one entry + closing ]} */
         if ((size_t)pos >= buffer_size - 160) {
@@ -661,11 +667,11 @@ static int slots_to_json(char *buffer, size_t buffer_size) {
             "{\"slot\": %d, \"subslot\": %d, "
             "\"module_ident\": %u, \"submodule_ident\": %u, "
             "\"direction\": \"%s\", \"data_size\": %d}",
-            modules[i].slot, modules[i].subslot,
-            (unsigned)modules[i].module_ident,
-            (unsigned)modules[i].submodule_ident,
+            slots[i].slot, slots[i].subslot,
+            (unsigned)slots[i].module_ident,
+            (unsigned)slots[i].submodule_ident,
             is_actuator ? "output" : "input",
-            is_actuator ? GSDML_ACTUATOR_OUTPUT_SIZE : GSDML_SENSOR_INPUT_SIZE);
+            data_size);
 
         emitted++;
     }
@@ -687,7 +693,7 @@ static int slots_to_json(char *buffer, size_t buffer_size) {
         }
     }
 
-    free(modules);
+    free(slots);
     return pos;
 }
 
@@ -872,7 +878,7 @@ static void handle_http_request(int client_fd) {
         config_to_json(response_body, sizeof(response_body));
         content_type = CONTENT_TYPE_JSON;
         LOG_DEBUG("Config export requested via HTTP");
-    } else if (strcmp(path, "/api/v1/slots") == 0) {
+    } else if (strcmp(path, "/slots") == 0) {
         /* Slot discovery for controller fallback (non-standard) */
         int ret = slots_to_json(response_body, sizeof(response_body));
         if (ret < 0) {
@@ -881,7 +887,7 @@ static void handle_http_request(int client_fd) {
             status_code = HTTP_STATUS_UNAVAILABLE;
         }
         content_type = CONTENT_TYPE_JSON;
-    } else if (strcmp(path, "/api/v1/gsdml") == 0) {
+    } else if (strcmp(path, "/gsdml") == 0) {
         /* Serve raw GSDML XML file — streamed directly due to file size */
         serve_gsdml_file(client_fd);
         return;  /* Response already sent and fd closed */
@@ -889,7 +895,7 @@ static void handle_http_request(int client_fd) {
         /* 404 Not Found */
         snprintf(response_body, sizeof(response_body),
                 "{\"error\": \"Not Found\", \"endpoints\": [\"/health\", \"/metrics\", \"/ready\", \"/live\", \"/config\""
-                ", \"/api/v1/slots\", \"/api/v1/gsdml\""
+                ", \"/slots\", \"/gsdml\""
 #ifdef LED_SUPPORT
                 ", \"/led/test\", \"/led/status\""
 #endif
