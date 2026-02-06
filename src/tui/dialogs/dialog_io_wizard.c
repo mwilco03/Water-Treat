@@ -39,10 +39,14 @@
 #define MAX_MENU_ITEMS    32
 #define SCAN_DELAY_MS     50
 
-/* PROFINET slot ranges (slots 1-246 available, slot 0 = DAP) */
-#define SENSOR_SLOT_MIN   1
+/* PROFINET slot ranges
+ * Slot 0 = DAP (reserved by PROFINET)
+ * Slot 1 = CPU Temperature (reserved, always present)
+ * Slots 2-246 = User-configurable sensors/actuators
+ */
+#define SENSOR_SLOT_MIN   2
 #define SENSOR_SLOT_MAX   246
-#define ACTUATOR_SLOT_MIN 1
+#define ACTUATOR_SLOT_MIN 2
 #define ACTUATOR_SLOT_MAX 246
 
 /* ============================================================================
