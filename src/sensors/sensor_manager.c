@@ -418,6 +418,15 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
         
         result = sensor_instance_create_from_db(instance, module, mgr->db);
         if (result == RESULT_OK) {
+            /* Reject sensors trying to use reserved slot 1 (CPU temperature) */
+            if (instance->slot == CPU_TEMP_SLOT) {
+                LOG_ERROR("Sensor '%s' (id=%d) assigned to reserved slot %d - skipping",
+                         instance->name, instance->id, CPU_TEMP_SLOT);
+                LOG_ERROR("Slot 1 is reserved for CPU temperature sensor. Reassign to slot 2 or higher.");
+                free(instance);
+                continue;
+            }
+
             mgr->instances[mgr->instance_count++] = instance;
 
             /* Update slot_map for O(1) lookup */
@@ -465,36 +474,39 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
     free(modules);
 
     /*
-     * If no sensors configured in database, create default CPU temperature sensor.
-     * This ensures every RTU has at least one sensor for PROFINET connectivity testing.
+     * Always create CPU temperature sensor at slot 1 (RESERVED).
+     * Provides guaranteed sensor for PROFINET connectivity testing and RTU health monitoring.
      * CPU temperature is available on all Linux boards via sysfs thermal zone.
+     * Per CONTROLLER_IMPLEMENTATION_GUIDE.md: "Fresh RTU has DAP (slot 0) + CPU temp (slot 1)"
+     *
+     * Note: Database sensors attempting to use slot 1 are rejected above.
      */
-    if (mgr->instance_count == 0) {
-        LOG_INFO("No sensors in database, creating default CPU temperature sensor");
+    LOG_INFO("Creating CPU temperature sensor at reserved slot %d", CPU_TEMP_SLOT);
 
-        sensor_instance_t *cpu_sensor = create_cpu_temp_sensor();
-        if (cpu_sensor) {
-            mgr->instances[mgr->instance_count++] = cpu_sensor;
+    sensor_instance_t *cpu_sensor = create_cpu_temp_sensor();
+    if (cpu_sensor) {
+        mgr->instances[mgr->instance_count++] = cpu_sensor;
 
-            /* Update slot_map for O(1) lookup */
-            if (cpu_sensor->slot >= 0 && cpu_sensor->slot <= SENSOR_MAX_SLOT) {
-                mgr->slot_map[cpu_sensor->slot] = cpu_sensor;
-            }
-
-            /* Register with PROFINET as temperature sensor module */
-            if (mgr->profinet_enabled) {
-                profinet_manager_add_module(
-                    NULL,
-                    cpu_sensor->slot,           /* slot 1 */
-                    GSDML_MOD_SENSOR_TEMP,      /* 0x00000040 */
-                    cpu_sensor->subslot,        /* from instance */
-                    GSDML_MOD_SENSOR_TEMP + 1,  /* 0x00000041 */
-                    GSDML_SENSOR_INPUT_SIZE,    /* 5 bytes: float + quality */
-                    0                           /* output_length */
-                );
-                LOG_INFO("Registered CPU temp sensor with PROFINET at slot %d", cpu_sensor->slot);
-            }
+        /* Update slot_map for O(1) lookup */
+        if (cpu_sensor->slot >= 0 && cpu_sensor->slot <= SENSOR_MAX_SLOT) {
+            mgr->slot_map[cpu_sensor->slot] = cpu_sensor;
         }
+
+        /* Register with PROFINET as temperature sensor module */
+        if (mgr->profinet_enabled) {
+            profinet_manager_add_module(
+                NULL,
+                cpu_sensor->slot,           /* slot 1 */
+                GSDML_MOD_SENSOR_TEMP,      /* 0x00000040 */
+                cpu_sensor->subslot,        /* from instance */
+                GSDML_MOD_SENSOR_TEMP + 1,  /* 0x00000041 */
+                GSDML_SENSOR_INPUT_SIZE,    /* 5 bytes: float + quality */
+                0                           /* output_length */
+            );
+            LOG_INFO("Registered CPU temp sensor with PROFINET at slot %d", cpu_sensor->slot);
+        }
+    } else {
+        LOG_WARNING("Failed to create CPU temperature sensor (no thermal zone available)");
     }
 
     pthread_mutex_unlock(&mgr->mutex);
