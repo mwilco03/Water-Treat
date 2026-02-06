@@ -4,6 +4,7 @@
  */
 
 #include "db_alarms.h"
+#include "constants.h"
 #include "utils/logger.h"
 
 /* ============================================================================
@@ -269,7 +270,7 @@ result_t db_alarm_raise(database_t *db, db_alarm_history_t *alarm, int *alarm_id
     CHECK_NULL(db); CHECK_NULL(alarm); CHECK_NULL(alarm_id);
     if (!db->db) return RESULT_NOT_INITIALIZED;
     
-    const char *sql = "INSERT INTO alarm_history (rule_id, module_id, severity, state, message, trigger_value) VALUES (?, ?, ?, 'active', ?, ?);";
+    const char *sql = "INSERT INTO alarm_history (rule_id, module_id, severity, state, message, trigger_value) VALUES (?, ?, ?, '" STATUS_ACTIVE "', ?, ?);";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -297,7 +298,7 @@ result_t db_alarm_acknowledge(database_t *db, int alarm_id, const char *acknowle
     CHECK_NULL(db);
     if (!db->db) return RESULT_NOT_INITIALIZED;
     
-    const char *sql = "UPDATE alarm_history SET state='acknowledged', acknowledged_time=datetime('now'), acknowledged_by=? WHERE id=? AND state='active';";
+    const char *sql = "UPDATE alarm_history SET state='" STATUS_ACKNOWLEDGED "', acknowledged_time=datetime('now'), acknowledged_by=? WHERE id=? AND state='" STATUS_ACTIVE "';";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -319,7 +320,7 @@ result_t db_alarm_clear(database_t *db, int alarm_id) {
     CHECK_NULL(db);
     if (!db->db) return RESULT_NOT_INITIALIZED;
     
-    const char *sql = "UPDATE alarm_history SET state='cleared', cleared_time=datetime('now') WHERE id=? AND state IN ('active', 'acknowledged');";
+    const char *sql = "UPDATE alarm_history SET state='" STATUS_CLEARED "', cleared_time=datetime('now') WHERE id=? AND state IN ('" STATUS_ACTIVE "', '" STATUS_ACKNOWLEDGED "');";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -340,7 +341,7 @@ result_t db_alarm_clear_by_rule(database_t *db, int rule_id) {
     CHECK_NULL(db);
     if (!db->db) return RESULT_NOT_INITIALIZED;
     
-    const char *sql = "UPDATE alarm_history SET state='cleared', cleared_time=datetime('now') WHERE rule_id=? AND state IN ('active', 'acknowledged');";
+    const char *sql = "UPDATE alarm_history SET state='" STATUS_CLEARED "', cleared_time=datetime('now') WHERE rule_id=? AND state IN ('" STATUS_ACTIVE "', '" STATUS_ACKNOWLEDGED "');";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -375,8 +376,8 @@ result_t db_alarm_get(database_t *db, int alarm_id, db_alarm_history_t *alarm) {
     alarm->severity = (alarm_severity_t)sqlite3_column_int(stmt, 3);
     
     const char *state_str = (const char*)sqlite3_column_text(stmt, 4);
-    if (strcmp(state_str, "active") == 0) alarm->state = ALARM_STATE_ACTIVE;
-    else if (strcmp(state_str, "acknowledged") == 0) alarm->state = ALARM_STATE_ACKNOWLEDGED;
+    if (strcmp(state_str, STATUS_ACTIVE) == 0) alarm->state = ALARM_STATE_ACTIVE;
+    else if (strcmp(state_str, STATUS_ACKNOWLEDGED) == 0) alarm->state = ALARM_STATE_ACKNOWLEDGED;
     else alarm->state = ALARM_STATE_CLEARED;
     
     SAFE_STRNCPY(alarm->message, (const char*)sqlite3_column_text(stmt, 5), sizeof(alarm->message));
@@ -397,7 +398,7 @@ result_t db_alarm_list_active(database_t *db, db_alarm_history_t **alarms, int *
     *alarms = NULL;
     *count = 0;
     
-    const char *sql = "SELECT id, rule_id, module_id, severity, state, message, trigger_value, strftime('%s', raised_time), strftime('%s', acknowledged_time), strftime('%s', cleared_time), acknowledged_by FROM alarm_history WHERE state IN ('active', 'acknowledged') ORDER BY severity DESC, raised_time DESC;";
+    const char *sql = "SELECT id, rule_id, module_id, severity, state, message, trigger_value, strftime('%s', raised_time), strftime('%s', acknowledged_time), strftime('%s', cleared_time), acknowledged_by FROM alarm_history WHERE state IN ('" STATUS_ACTIVE "', '" STATUS_ACKNOWLEDGED "') ORDER BY severity DESC, raised_time DESC;";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -425,7 +426,7 @@ result_t db_alarm_list_active(database_t *db, db_alarm_history_t **alarms, int *
         (*alarms)[idx].severity = (alarm_severity_t)sqlite3_column_int(stmt, 3);
         
         const char *state_str = (const char*)sqlite3_column_text(stmt, 4);
-        if (strcmp(state_str, "active") == 0) (*alarms)[idx].state = ALARM_STATE_ACTIVE;
+        if (strcmp(state_str, STATUS_ACTIVE) == 0) (*alarms)[idx].state = ALARM_STATE_ACTIVE;
         else (*alarms)[idx].state = ALARM_STATE_ACKNOWLEDGED;
         
         SAFE_STRNCPY((*alarms)[idx].message, (const char*)sqlite3_column_text(stmt, 5), sizeof((*alarms)[idx].message));
@@ -446,7 +447,7 @@ result_t db_alarm_count_active(database_t *db, int *count) {
     CHECK_NULL(db); CHECK_NULL(count);
     if (!db->db) return RESULT_NOT_INITIALIZED;
     
-    const char *sql = "SELECT COUNT(*) FROM alarm_history WHERE state IN ('active', 'acknowledged');";
+    const char *sql = "SELECT COUNT(*) FROM alarm_history WHERE state IN ('" STATUS_ACTIVE "', '" STATUS_ACKNOWLEDGED "');";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -461,7 +462,7 @@ result_t db_alarm_count_by_severity(database_t *db, alarm_severity_t severity, i
     CHECK_NULL(db); CHECK_NULL(count);
     if (!db->db) return RESULT_NOT_INITIALIZED;
     
-    const char *sql = "SELECT COUNT(*) FROM alarm_history WHERE state IN ('active', 'acknowledged') AND severity=?;";
+    const char *sql = "SELECT COUNT(*) FROM alarm_history WHERE state IN ('" STATUS_ACTIVE "', '" STATUS_ACKNOWLEDGED "') AND severity=?;";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -477,7 +478,7 @@ result_t db_alarm_has_active_for_rule(database_t *db, int rule_id, bool *has_act
     CHECK_NULL(db); CHECK_NULL(has_active);
     if (!db->db) return RESULT_NOT_INITIALIZED;
     
-    const char *sql = "SELECT COUNT(*) FROM alarm_history WHERE rule_id=? AND state IN ('active', 'acknowledged');";
+    const char *sql = "SELECT COUNT(*) FROM alarm_history WHERE rule_id=? AND state IN ('" STATUS_ACTIVE "', '" STATUS_ACKNOWLEDGED "');";
     sqlite3_stmt *stmt;
     
     if (sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL) != SQLITE_OK) return RESULT_ERROR;
@@ -494,7 +495,7 @@ result_t db_alarm_cleanup(database_t *db, int retention_days) {
     if (!db->db || retention_days <= 0) return RESULT_INVALID_PARAM;
     
     char sql[128];
-    snprintf(sql, sizeof(sql), "DELETE FROM alarm_history WHERE state='cleared' AND cleared_time < datetime('now', '-%d days');", retention_days);
+    snprintf(sql, sizeof(sql), "DELETE FROM alarm_history WHERE state='" STATUS_CLEARED "' AND cleared_time < datetime('now', '-%d days');", retention_days);
     
     char *err = NULL;
     int rc = sqlite3_exec(db->db, sql, NULL, NULL, &err);

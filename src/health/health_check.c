@@ -4,6 +4,7 @@
  */
 
 #include "health_check.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include "sensors/sensor_manager.h"
 #include "sensors/sensor_instance.h"
@@ -106,7 +107,7 @@ static float get_memory_usage(void) {
     /* Try to get cached memory from /proc/meminfo */
     FILE *fp = fopen("/proc/meminfo", "r");
     if (fp) {
-        char line[256];
+        char line[BUFFER_SIZE_LARGE];
         while (fgets(line, sizeof(line), fp)) {
             unsigned long cached;
             if (sscanf(line, "Cached: %lu kB", &cached) == 1) {
@@ -437,7 +438,7 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         len += snprintf(buffer + len, buffer_size - len,
             "# HELP water_treat_sensor_total_reads Total read attempts per sensor\n"
             "# TYPE water_treat_sensor_total_reads counter\n");
-        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - 256; i++) {
+        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - BUFFER_SIZE_LARGE; i++) {
             sensor_instance_t *s = g_sensor_mgr.instances[i];
             if (!s) continue;
             len += snprintf(buffer + len, buffer_size - len,
@@ -448,7 +449,7 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         len += snprintf(buffer + len, buffer_size - len,
             "# HELP water_treat_sensor_total_failures Total failed reads per sensor\n"
             "# TYPE water_treat_sensor_total_failures counter\n");
-        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - 256; i++) {
+        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - BUFFER_SIZE_LARGE; i++) {
             sensor_instance_t *s = g_sensor_mgr.instances[i];
             if (!s) continue;
             len += snprintf(buffer + len, buffer_size - len,
@@ -459,7 +460,7 @@ int health_check_to_prometheus(char *buffer, size_t buffer_size) {
         len += snprintf(buffer + len, buffer_size - len,
             "# HELP water_treat_sensor_consecutive_failures Current consecutive failures per sensor\n"
             "# TYPE water_treat_sensor_consecutive_failures gauge\n");
-        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - 256; i++) {
+        for (int i = 0; i < g_sensor_mgr.instance_count && (size_t)len < buffer_size - BUFFER_SIZE_LARGE; i++) {
             sensor_instance_t *s = g_sensor_mgr.instances[i];
             if (!s) continue;
             len += snprintf(buffer + len, buffer_size - len,
@@ -486,7 +487,7 @@ result_t health_check_write_file(const char *path) {
         return RESULT_IO_ERROR;
     }
 
-    char buffer[4096];
+    char buffer[BUFFER_SIZE_4K];
     int len = health_check_to_prometheus(buffer, sizeof(buffer));
     if (len < 0 || (size_t)len >= sizeof(buffer)) {
         fclose(fp);
@@ -643,7 +644,7 @@ static int slots_to_json(char *buffer, size_t buffer_size) {
 
     for (int i = 0; i < count; i++) {
         /* Actuator modules have bit 8 set (0x100 range) per gsdml_modules.h */
-        bool is_actuator = (modules[i].module_ident & 0x00000100) != 0;
+        bool is_actuator = (modules[i].module_ident & MODULE_IDENT_ACTUATOR_FLAG) != 0;
 
         /* Pre-check: need at least ~140 bytes for one entry + closing ]} */
         if ((size_t)pos >= buffer_size - 160) {
@@ -723,13 +724,13 @@ static void serve_gsdml_file(int client_fd) {
             LOG_WARNING("  tried: %s", paths[i]);
         }
         const char *body = "{\"error\": \"GSDML file not found\"}";
-        char resp[512];
+        char resp[BUFFER_SIZE_XLARGE];
         int len = snprintf(resp, sizeof(resp),
-            "HTTP/1.1 404 Not Found\r\n"
-            "Content-Type: application/json\r\n"
+            "HTTP/1.1 %d Not Found\r\n"
+            "Content-Type: %s\r\n"
             "Content-Length: %zu\r\n"
             "Connection: close\r\n"
-            "\r\n%s", strlen(body), body);
+            "\r\n%s", HTTP_STATUS_NOT_FOUND, CONTENT_TYPE_JSON, strlen(body), body);
         send(client_fd, resp, len, 0);
         close(client_fd);
         return;
@@ -742,18 +743,18 @@ static void serve_gsdml_file(int client_fd) {
     fseek(fp, 0, SEEK_SET);
 
     /* Send HTTP headers */
-    char header[256];
+    char header[BUFFER_SIZE_LARGE];
     int header_len = snprintf(header, sizeof(header),
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: application/xml\r\n"
+        "HTTP/1.1 %d OK\r\n"
+        "Content-Type: %s\r\n"
         "Content-Length: %ld\r\n"
         "Connection: close\r\n"
         "Access-Control-Allow-Origin: *\r\n"
-        "\r\n", file_size);
+        "\r\n", HTTP_STATUS_OK, CONTENT_TYPE_XML, file_size);
     send(client_fd, header, header_len, 0);
 
     /* Stream file contents in chunks with partial-send handling */
-    char chunk[4096];
+    char chunk[BUFFER_SIZE_4K];
     size_t n;
     while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
         size_t sent = 0;
@@ -779,7 +780,7 @@ static void serve_gsdml_file(int client_fd) {
  * ========================================================================== */
 
 static void handle_http_request(int client_fd) {
-    char request[1024];
+    char request[BUFFER_SIZE_HUGE];
     ssize_t n = recv(client_fd, request, sizeof(request) - 1, 0);
     if (n <= 0) {
         close(client_fd);
@@ -788,47 +789,47 @@ static void handle_http_request(int client_fd) {
     request[n] = '\0';
 
     /* Parse request path */
-    char method[16], path[256];
+    char method[16], path[BUFFER_SIZE_LARGE];
     if (sscanf(request, "%15s %255s", method, path) != 2) {
         close(client_fd);
         return;
     }
 
-    char response_body[8192];
-    char response[16384];
+    char response_body[BUFFER_SIZE_8K];
+    char response[BUFFER_SIZE_16K];
     const char *content_type;
-    int status_code = 200;
+    int status_code = HTTP_STATUS_OK;
 
     if (strcmp(path, "/health") == 0 || strcmp(path, "/") == 0) {
         /* JSON health endpoint */
         health_check_to_json(response_body, sizeof(response_body));
-        content_type = "application/json";
+        content_type = CONTENT_TYPE_JSON;
 
         /* Return 503 if system is critical */
         health_snapshot_t snap;
         health_check_get_snapshot(&snap);
         if (snap.overall_status == HEALTH_STATUS_CRITICAL) {
-            status_code = 503;
+            status_code = HTTP_STATUS_UNAVAILABLE;
         }
     } else if (strcmp(path, "/metrics") == 0) {
         /* Prometheus metrics endpoint */
         health_check_to_prometheus(response_body, sizeof(response_body));
-        content_type = "text/plain; version=0.0.4; charset=utf-8";
+        content_type = CONTENT_TYPE_PROMETHEUS;
     } else if (strcmp(path, "/ready") == 0 || strcmp(path, "/healthz") == 0) {
         /* Kubernetes-style readiness probe */
         health_snapshot_t snap;
         health_check_get_snapshot(&snap);
         if (snap.overall_status == HEALTH_STATUS_CRITICAL) {
             snprintf(response_body, sizeof(response_body), "{\"ready\": false}");
-            status_code = 503;
+            status_code = HTTP_STATUS_UNAVAILABLE;
         } else {
             snprintf(response_body, sizeof(response_body), "{\"ready\": true}");
         }
-        content_type = "application/json";
+        content_type = CONTENT_TYPE_JSON;
     } else if (strcmp(path, "/live") == 0 || strcmp(path, "/livez") == 0) {
         /* Kubernetes-style liveness probe (always true if server is running) */
         snprintf(response_body, sizeof(response_body), "{\"alive\": true}");
-        content_type = "application/json";
+        content_type = CONTENT_TYPE_JSON;
 #ifdef LED_SUPPORT
     } else if (strcmp(path, "/led/test") == 0) {
         /* LED test endpoint for commissioning */
@@ -842,9 +843,9 @@ static void handle_http_request(int client_fd) {
         } else {
             snprintf(response_body, sizeof(response_body),
                     "{\"success\": false, \"error\": \"LED manager not initialized\"}");
-            status_code = 503;
+            status_code = HTTP_STATUS_UNAVAILABLE;
         }
-        content_type = "application/json";
+        content_type = CONTENT_TYPE_JSON;
     } else if (strcmp(path, "/led/status") == 0) {
         /* LED status endpoint */
         extern led_status_manager_t g_led_mgr;
@@ -864,12 +865,12 @@ static void handle_http_request(int client_fd) {
             snprintf(response_body, sizeof(response_body),
                     "{\"enabled\": false, \"error\": \"LED manager not initialized\"}");
         }
-        content_type = "application/json";
+        content_type = CONTENT_TYPE_JSON;
 #endif
     } else if (strcmp(path, "/config") == 0 || strcmp(path, "/config/export") == 0) {
         /* Configuration export endpoint */
         config_to_json(response_body, sizeof(response_body));
-        content_type = "application/json";
+        content_type = CONTENT_TYPE_JSON;
         LOG_DEBUG("Config export requested via HTTP");
     } else if (strcmp(path, "/api/v1/slots") == 0) {
         /* Slot discovery for controller fallback (non-standard) */
@@ -877,9 +878,9 @@ static void handle_http_request(int client_fd) {
         if (ret < 0) {
             snprintf(response_body, sizeof(response_body),
                     "{\"error\": \"PROFINET subsystem unavailable\"}");
-            status_code = 503;
+            status_code = HTTP_STATUS_UNAVAILABLE;
         }
-        content_type = "application/json";
+        content_type = CONTENT_TYPE_JSON;
     } else if (strcmp(path, "/api/v1/gsdml") == 0) {
         /* Serve raw GSDML XML file — streamed directly due to file size */
         serve_gsdml_file(client_fd);
@@ -893,13 +894,13 @@ static void handle_http_request(int client_fd) {
                 ", \"/led/test\", \"/led/status\""
 #endif
                 "]}");
-        content_type = "application/json";
-        status_code = 404;
+        content_type = CONTENT_TYPE_JSON;
+        status_code = HTTP_STATUS_NOT_FOUND;
     }
 
-    const char *status_text = (status_code == 200) ? "OK" :
-                              (status_code == 404) ? "Not Found" :
-                              (status_code == 503) ? "Service Unavailable" : "Unknown";
+    const char *status_text = (status_code == HTTP_STATUS_OK) ? "OK" :
+                              (status_code == HTTP_STATUS_NOT_FOUND) ? "Not Found" :
+                              (status_code == HTTP_STATUS_UNAVAILABLE) ? "Service Unavailable" : "Unknown";
 
     int response_len = snprintf(response, sizeof(response),
         "HTTP/1.1 %d %s\r\n"

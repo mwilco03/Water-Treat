@@ -3,10 +3,11 @@
  * @brief Configuration sync from SCADA controller via PROFINET
  *
  * Handles configuration packets sent by controller to RTU:
- * - 0xF841: Device configuration
- * - 0xF842: Sensor configuration
- * - 0xF843: Actuator configuration
+ * - PROFINET_RECORD_DEVICE_CONFIG: Device configuration
+ * - PROFINET_RECORD_SENSOR_CONFIG: Sensor configuration
+ * - PROFINET_RECORD_ACTUATOR_CONFIG: Actuator configuration
  *
+ * Record indices defined in constants.h
  * Packet formats defined by controller team (2026-01-20).
  */
 
@@ -14,6 +15,7 @@
 #define CONFIG_SYNC_H
 
 #include "common.h"
+#include "constants.h"
 #include <stdint.h>
 
 /* ============================================================================

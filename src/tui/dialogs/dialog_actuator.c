@@ -7,6 +7,7 @@
 #include "tui/tui_common.h"
 #include "platform/board_detect.h"
 #include "db/db_actuators.h"
+#include "constants.h"
 #include <ncurses.h>
 #include <string.h>
 #include <stdlib.h>
@@ -626,7 +627,7 @@ void dialog_actuator_init_form(actuator_form_t *form) {
     form->subslot = 1;
     form->type = ACTUATOR_TYPE_RELAY;
     form->gpio_pin = 17;
-    SAFE_STRNCPY(form->gpio_chip, "gpiochip0", sizeof(form->gpio_chip));
+    SAFE_STRNCPY(form->gpio_chip, DEFAULT_GPIO_CHIP, sizeof(form->gpio_chip));
     form->active_low = false;
     form->pwm_frequency_hz = 1000;
     form->safe_state = SAFE_STATE_OFF;

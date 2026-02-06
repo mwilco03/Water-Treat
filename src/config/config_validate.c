@@ -6,6 +6,7 @@
 #include "config_validate.h"
 #include "profinet_identity.h"
 #include "config_defaults.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include <string.h>
 #include <stdio.h>
@@ -99,7 +100,7 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
     if (is_auto_station) {
         /* Not an error/warning - auto-generated names are valid for multi-RTU deployments */
         /* Only warn if it's the fallback rtu-0000 (MAC detection failed) */
-        if (strcmp(config->profinet.station_name, "rtu-0000") == 0) {
+        if (strcmp(config->profinet.station_name, FALLBACK_STATION_NAME) == 0) {
             result->flags |= CONFIG_WARN_DEFAULT_STATION_NAME;
             result->warning_count++;
             add_message(result, "WARNING: MAC-based station ID detection failed, using fallback");
@@ -115,7 +116,7 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
 
     bool is_auto_device = (strncmp(config->system.device_name, "rtu-", 4) == 0 &&
                            strlen(config->system.device_name) == 8);
-    if (is_auto_device && strcmp(config->system.device_name, "rtu-0000") == 0) {
+    if (is_auto_device && strcmp(config->system.device_name, FALLBACK_STATION_NAME) == 0) {
         result->flags |= CONFIG_WARN_DEFAULT_DEVICE_NAME;
         result->warning_count++;
         add_message(result, "WARNING: MAC-based device name detection failed, using fallback");
@@ -133,7 +134,7 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
     if (config->profinet.vendor_id != PN_VENDOR_ID) {
         result->flags |= CONFIG_WARN_IDENTITY_MISMATCH;
         result->warning_count++;
-        char msg[128];
+        char msg[BUFFER_SIZE_MEDIUM];
         snprintf(msg, sizeof(msg),
                  "WARNING: Vendor ID 0x%04X differs from GSDML (0x%04X)",
                  config->profinet.vendor_id, PN_VENDOR_ID);
@@ -142,7 +143,7 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
     if (config->profinet.device_id != PN_DEVICE_ID) {
         result->flags |= CONFIG_WARN_IDENTITY_MISMATCH;
         result->warning_count++;
-        char msg[128];
+        char msg[BUFFER_SIZE_MEDIUM];
         snprintf(msg, sizeof(msg),
                  "WARNING: Device ID 0x%04X differs from GSDML (0x%04X)",
                  config->profinet.device_id, PN_DEVICE_ID);
@@ -164,13 +165,13 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
     }
 
     /* Validate intervals */
-    if (config->logging.interval_seconds < 1 || config->logging.interval_seconds > 86400) {
+    if (config->logging.interval_seconds < 1 || config->logging.interval_seconds > LIMIT_RETENTION_MAX_DAYS) {
         result->flags |= CONFIG_ERROR_INVALID_INTERVAL;
         result->error_count++;
         add_message(result, "ERROR: Logging interval must be 1-86400 seconds");
     }
 
-    if (config->health.update_interval_seconds < 1 || config->health.update_interval_seconds > 3600) {
+    if (config->health.update_interval_seconds < 1 || config->health.update_interval_seconds > LIMIT_LOG_INTERVAL_MAX_SEC) {
         result->flags |= CONFIG_ERROR_INVALID_INTERVAL;
         result->error_count++;
         add_message(result, "ERROR: Health update interval must be 1-3600 seconds");
@@ -181,7 +182,7 @@ result_t config_validate(const app_config_t *config, config_validation_result_t 
         result->flags |= CONFIG_ERROR_INVALID_WATCHDOG;
         result->error_count++;
         add_message(result, "ERROR: command_timeout_ms too small (min 1000ms)");
-    } else if (config->watchdog.command_timeout_ms > 60000) {
+    } else if (config->watchdog.command_timeout_ms > TIMEOUT_REGISTRATION_MS) {
         result->flags |= CONFIG_ERROR_INVALID_WATCHDOG;
         result->error_count++;
         add_message(result, "ERROR: command_timeout_ms too large (max 60000ms)");
@@ -248,8 +249,8 @@ bool config_is_first_run(const app_config_t *config) {
      * - If no config file was loaded, first run
      * - Otherwise, auto-detected names are valid
      */
-    bool is_fallback_station = (strcmp(config->profinet.station_name, "rtu-0000") == 0);
-    bool is_fallback_device = (strcmp(config->system.device_name, "rtu-0000") == 0);
+    bool is_fallback_station = (strcmp(config->profinet.station_name, FALLBACK_STATION_NAME) == 0);
+    bool is_fallback_device = (strcmp(config->system.device_name, FALLBACK_STATION_NAME) == 0);
 
     /* If both are fallback (MAC detection failed), likely first run or network issue */
     return is_fallback_station && is_fallback_device;

@@ -11,6 +11,7 @@
 
 #include "rtu_registration.h"
 #include "controller_discovery.h"
+#include "constants.h"
 #include "utils/logger.h"
 #include <pthread.h>
 #include <string.h>
@@ -33,12 +34,12 @@
  * ============================================================================ */
 
 static uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
-    uint16_t crc = 0xFFFF;
+    uint16_t crc = CRC16_INIT;
     for (size_t i = 0; i < len; i++) {
         crc ^= (uint16_t)data[i] << 8;
         for (int j = 0; j < 8; j++) {
             if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021;
+                crc = (crc << 1) ^ CRC16_CCITT_POLY;
             } else {
                 crc <<= 1;
             }
@@ -307,9 +308,9 @@ static result_t do_http_registration(const char *controller_ip) {
         return RESULT_ERROR;
     }
 
-    /* Build URL - Controller REST API on port 8000 */
+    /* Build URL - Controller REST API on CONTROLLER_API_PORT */
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:8000/api/v1/rtu/register", controller_ip);
+    snprintf(url, sizeof(url), "http://%s:%d/api/v1/rtu/register", controller_ip, CONTROLLER_API_PORT);
 
     /* Build JSON payload */
     char *json = build_registration_json();
@@ -325,7 +326,7 @@ static result_t do_http_registration(const char *controller_ip) {
     /* Setup request */
     struct memory_chunk response = {NULL, 0};
     struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Content-Type: " CONTENT_TYPE_JSON);
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -404,7 +405,7 @@ static void* registration_thread(void *arg) {
 
     uint32_t retry_delay_ms = RTU_REGISTRATION_RETRY_MS;
 #if REGISTRATION_HTTP_ENABLED
-    const uint32_t max_retry_delay_ms = 300000; /* 5 minutes max */
+    const uint32_t max_retry_delay_ms = TIMEOUT_RETRY_MAX_MS; /* 5 minutes max */
 #endif
 
     while (!g_reg.stop_requested) {
@@ -460,7 +461,7 @@ static void* registration_thread(void *arg) {
                 }
 
                 uint64_t elapsed = get_time_ms() - wait_start;
-                if (elapsed > 60000) { /* 60 second timeout */
+                if (elapsed > TIMEOUT_REGISTRATION_MS) { /* 60 second timeout */
                     LOG_WARNING("PROFINET binding timeout, registration still valid");
                     set_state(RTU_REG_STATE_REGISTERED);
                     break;

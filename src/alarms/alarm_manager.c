@@ -4,6 +4,7 @@
  */
 
 #include "alarm_manager.h"
+#include "constants.h"
 #include "db/db_alarms.h"
 #include "db/db_events.h"
 #include "db/db_modules.h"
@@ -359,7 +360,7 @@ static void* alarm_check_thread(void *arg) {
             float value;
             char status[16];
             if (db_sensor_status_get(g_alarm_mgr.db, rule->module_id, &value, status, sizeof(status)) == RESULT_OK) {
-                if (strcmp(status, "ok") == 0 || strcmp(status, "unknown") == 0) {
+                if (strcmp(status, STATUS_OK) == 0 || strcmp(status, STATUS_UNKNOWN) == 0) {
                     check_rule(rule, value);
                     g_alarm_mgr.total_checks++;
                 }

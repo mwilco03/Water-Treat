@@ -1,5 +1,6 @@
 #include "config.h"
 #include "config_defaults.h"
+#include "constants.h"
 #include "platform/board_detect.h"
 #include "platform/hw_discover.h"
 #include "utils/logger.h"
@@ -485,7 +486,7 @@ void config_get_defaults(app_config_t *c) {
     /* System defaults */
     detect_station_id(c->system.device_name, sizeof(c->system.device_name));
     SAFE_STRNCPY(c->system.log_level,"info",sizeof(c->system.log_level));
-    SAFE_STRNCPY(c->system.log_file,"/var/log/water-treat/monitor.log",sizeof(c->system.log_file));
+    SAFE_STRNCPY(c->system.log_file,PATH_LOG_DIR "/monitor.log",sizeof(c->system.log_file));
     c->system.daemon_mode=false;
 
     /* Network defaults - auto-detect interface */
@@ -504,12 +505,12 @@ void config_get_defaults(app_config_t *c) {
     c->profinet.controller_ip[0]='\0';
     c->profinet.controller_name[0]='\0';
     /* p-net NV storage - derived from data directory, overridable via config */
-    SAFE_STRNCPY(c->profinet.data_dir,"/var/lib/water-treat/pnet",sizeof(c->profinet.data_dir));
+    SAFE_STRNCPY(c->profinet.data_dir,PATH_PROFINET_DATA,sizeof(c->profinet.data_dir));
 
     /* Database defaults */
-    SAFE_STRNCPY(c->database.path,"/var/lib/water-treat/data.db",sizeof(c->database.path));
+    SAFE_STRNCPY(c->database.path,PATH_DATABASE,sizeof(c->database.path));
     c->database.create_if_missing=true;
-    c->database.busy_timeout_ms=5000;
+    c->database.busy_timeout_ms=DEFAULT_DB_BUSY_TIMEOUT_MS;
 
     /* Logging defaults */
     c->logging.enabled=true;
@@ -522,7 +523,7 @@ void config_get_defaults(app_config_t *c) {
     c->health.enabled=true;
     c->health.http_enabled=true;
     c->health.http_port=WT_HTTP_PORT_DEFAULT;
-    SAFE_STRNCPY(c->health.file_path,"/var/lib/water-treat/health.prom",sizeof(c->health.file_path));
+    SAFE_STRNCPY(c->health.file_path,PATH_DATA_DIR "/health.prom",sizeof(c->health.file_path));
     c->health.update_interval_seconds=10;
 
     /* LED indicator defaults (disabled by default)

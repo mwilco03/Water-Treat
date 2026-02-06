@@ -4,14 +4,15 @@
  */
 
 #include "db_actuators.h"
+#include "constants.h"
 #include "utils/logger.h"
 
 const char* actuator_type_to_string(actuator_type_t type) {
     switch (type) {
-        case ACTUATOR_TYPE_RELAY: return "relay";
-        case ACTUATOR_TYPE_PWM: return "pwm";
-        case ACTUATOR_TYPE_LATCHING: return "latching";
-        case ACTUATOR_TYPE_MOMENTARY: return "momentary";
+        case ACTUATOR_TYPE_RELAY: return ACTUATOR_TYPE_RELAY_STR;
+        case ACTUATOR_TYPE_PWM: return ACTUATOR_TYPE_PWM_STR;
+        case ACTUATOR_TYPE_LATCHING: return ACTUATOR_TYPE_LATCHING_STR;
+        case ACTUATOR_TYPE_MOMENTARY: return ACTUATOR_TYPE_MOMENTARY_STR;
         default: return "unknown";
     }
 }
@@ -27,9 +28,9 @@ const char* safe_state_to_string(safe_state_t state) {
 
 static actuator_type_t string_to_actuator_type(const char *str) {
     if (!str) return ACTUATOR_TYPE_RELAY;
-    if (strcmp(str, "pwm") == 0) return ACTUATOR_TYPE_PWM;
-    if (strcmp(str, "latching") == 0) return ACTUATOR_TYPE_LATCHING;
-    if (strcmp(str, "momentary") == 0) return ACTUATOR_TYPE_MOMENTARY;
+    if (strcmp(str, ACTUATOR_TYPE_PWM_STR) == 0) return ACTUATOR_TYPE_PWM;
+    if (strcmp(str, ACTUATOR_TYPE_LATCHING_STR) == 0) return ACTUATOR_TYPE_LATCHING;
+    if (strcmp(str, ACTUATOR_TYPE_MOMENTARY_STR) == 0) return ACTUATOR_TYPE_MOMENTARY;
     return ACTUATOR_TYPE_RELAY;
 }
 
@@ -381,7 +382,7 @@ result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
     memset(conflict, 0, sizeof(*conflict));
     conflict->has_conflict = false;
 
-    const char *chip = gpio_chip && gpio_chip[0] ? gpio_chip : "gpiochip0";
+    const char *chip = gpio_chip && gpio_chip[0] ? gpio_chip : DEFAULT_GPIO_CHIP;
     char gpio_str[16];
     snprintf(gpio_str, sizeof(gpio_str), "%d", gpio_pin);
 

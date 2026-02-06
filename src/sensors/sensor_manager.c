@@ -5,6 +5,7 @@
 #include "db/db_events.h"
 #include "utils/logger.h"
 #include "gsdml_modules.h"
+#include "constants.h"
 
 #ifdef LED_SUPPORT
 #include "hal/led_status.h"
@@ -90,13 +91,13 @@ static sensor_instance_t* create_cpu_temp_sensor(void) {
 
     /* Quality settings */
     instance->quality = QUALITY_GOOD;
-    instance->stale_timeout_ms = 5000;
+    instance->stale_timeout_ms = TIMEOUT_SENSOR_STALE_MS;
     instance->failure_threshold = 3;
     instance->range_min = -40.0f;   /* Valid CPU temp range */
     instance->range_max = 125.0f;
 
     /* Timing */
-    instance->poll_rate_ms = 1000;  /* Read every second */
+    instance->poll_rate_ms = INTERVAL_SENSOR_POLL_MS;  /* Read every second */
     instance->timeout_ms = 500;
 
     pthread_mutex_init(&instance->mutex, NULL);
@@ -405,7 +406,7 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
         db_module_t *module = &modules[i];
         
         // Skip disabled modules
-        if (strcmp(module->status, "disabled") == 0) {
+        if (strcmp(module->status, STATUS_DISABLED) == 0) {
             continue;
         }
         
@@ -430,13 +431,13 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
                 uint32_t mod_ident = GSDML_MOD_SENSOR_GENERIC;
                 uint32_t submod_ident = GSDML_SUBMOD_SENSOR_GENERIC;
 
-                if (strcmp(module->module_type, "physical") == 0) {
+                if (strcmp(module->module_type, MODULE_TYPE_PHYSICAL) == 0) {
                     db_physical_sensor_t phys;
                     if (db_physical_sensor_get(mgr->db, module->id, &phys) == RESULT_OK) {
                         mod_ident = gsdml_sensor_module_from_string(phys.sensor_type);
                         submod_ident = mod_ident + 1;
                     }
-                } else if (strcmp(module->module_type, "adc") == 0) {
+                } else if (strcmp(module->module_type, MODULE_TYPE_ADC) == 0) {
                     db_adc_sensor_t adc;
                     if (db_adc_sensor_get(mgr->db, module->id, &adc) == RESULT_OK) {
                         /* Map ADC unit to sensor type */

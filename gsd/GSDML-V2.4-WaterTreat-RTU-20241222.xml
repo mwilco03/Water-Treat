@@ -9,8 +9,8 @@
 
     For use with p-net stack on SBC #2 communicating with SBC #1 (OpenPLC)
 
-    Vendor ID: 0x0493 (example - should be registered with PI)
-    Device ID: 0x0001
+    Vendor ID: 0x0272 (Phoenix Guardians)
+    Device ID: 0x0DC0 (Defensive Cyber Operations)
 
     CHANGE LOG:
     2026-01-23: Expanded to 247 slots (0..246) for parity with controller Modbus capacity.
