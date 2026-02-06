@@ -30,7 +30,7 @@
 
 /* Derived from shared profinet_identity.h via config_defaults.h */
 #define PROFINET_TICK_INTERVAL_US   WT_PROFINET_TICK_INTERVAL_US
-#define MAX_PROFINET_SLOTS          WT_PROFINET_MAX_SLOTS
+/* MAX_PROFINET_SLOTS already defined in constants.h */
 #define PROFINET_DATA_SIZE          WT_PROFINET_DATA_SIZE
 
 /* Stuck state detection timeouts (milliseconds) */
