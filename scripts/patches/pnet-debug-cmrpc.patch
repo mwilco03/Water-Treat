@@ -1,0 +1,30 @@
+diff --git a/src/device/pf_cmrpc.c b/src/device/pf_cmrpc.c
+index cb7ad34..f1b160d 100644
+--- a/src/device/pf_cmrpc.c
++++ b/src/device/pf_cmrpc.c
+@@ -1273,6 +1273,12 @@ static int pf_cmrpc_rm_connect_interpret_ind (
+ 
+                if (p_ar->ar_param.ar_properties.device_access == true)
+                {
++                  LOG_ERROR (
++                     PF_RPC_LOG,
++                     "CMRPC(%d): REJECTING IOCRBlockReq - device_access=%s (should "
++                     "be false for IO Controller AR)\n",
++                     __LINE__,
++                     p_ar->ar_param.ar_properties.device_access ? "TRUE" : "FALSE");
+                   pf_set_error (
+                      &p_sess->rpc_result,
+                      PNET_ERROR_CODE_CONNECT,
+@@ -1317,6 +1323,12 @@ static int pf_cmrpc_rm_connect_interpret_ind (
+             case PF_PARSE_OK:
+                if (p_ar->ar_param.ar_properties.device_access == true)
+                {
++                  LOG_ERROR (
++                     PF_RPC_LOG,
++                     "CMRPC(%d): REJECTING ExpectedSubmoduleBlockReq - "
++                     "device_access=%s (should be false for IO Controller AR)\n",
++                     __LINE__,
++                     p_ar->ar_param.ar_properties.device_access ? "TRUE" : "FALSE");
+                   pf_set_error (
+                      &p_sess->rpc_result,
+                      PNET_ERROR_CODE_CONNECT,

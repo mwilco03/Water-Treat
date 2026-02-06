@@ -534,19 +534,29 @@ verify_binary_has_profinet() {
 
     # Check if the binary has p-net symbols (pnet_init, pnet_handle_periodic)
     # If compiled without HAVE_PNET, these symbols won't be present
-    if nm "$binary" 2>/dev/null | grep -q "pnet_init"; then
-        log_info "Binary verified: PROFINET support enabled"
+    local nm_check
+    nm_check=$(nm "$binary" 2>/dev/null | grep "pnet_init" || true)
+    if [[ -n "$nm_check" ]]; then
+        log_info "Binary verified: PROFINET support enabled (nm check)"
+        log_verbose "Symbol found: $nm_check"
         return 0
     fi
 
     # Also check with strings for version info
-    if strings "$binary" 2>/dev/null | grep -qE "p-net|PROFINET.*connected"; then
-        log_info "Binary verified: PROFINET support enabled"
+    local strings_check
+    strings_check=$(strings "$binary" 2>/dev/null | grep -E "p-net|PROFINET.*connected" | head -1 || true)
+    if [[ -n "$strings_check" ]]; then
+        log_info "Binary verified: PROFINET support enabled (strings check)"
+        log_verbose "String found: $strings_check"
         return 0
     fi
 
     log_error "=============================================="
     log_error "CRITICAL: Binary compiled WITHOUT PROFINET"
+    log_error ""
+    log_error "Debug info:"
+    log_error "  nm check result: '$(nm "$binary" 2>/dev/null | grep -c "pnet" || echo 0)' pnet symbols"
+    log_error "  strings check result: '$(strings "$binary" 2>/dev/null | grep -c "PROFINET" || echo 0)' PROFINET strings"
     log_error "=============================================="
     log_error ""
     log_error "The water-treat binary does not have p-net linked."
@@ -1171,7 +1181,7 @@ build_from_source() {
     fi
 
     # Positive confirmation: CMake should report finding p-net
-    if ! echo "$cmake_output" | grep -qiE "pnet.*found|HAVE_PNET"; then
+    if ! echo "$cmake_output" | grep -qiE "p-?net.*found|HAVE_PNET"; then
         log_warn "CMake output does not confirm p-net was found"
         log_warn "Build will proceed but may not have PROFINET support"
         log_warn "The binary verification step will catch this if so"
