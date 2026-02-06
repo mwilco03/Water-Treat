@@ -299,6 +299,7 @@ if(HAVE_PNET)
     target_compile_definitions(water-treat PRIVATE HAVE_PNET=1)
     target_include_directories(water-treat PRIVATE ${PNET_INCLUDE_DIR})
     target_link_libraries(water-treat ${PNET_LIBRARY})
+    message(STATUS "p-net will be linked: ${PNET_LIBRARY}")
 endif()
 
 if(TINYEXPR_LIBRARY)
