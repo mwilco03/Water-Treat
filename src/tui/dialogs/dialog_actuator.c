@@ -454,9 +454,15 @@ static void commit_edit(void) {
         case FIELD_NAME:
             SAFE_STRNCPY(g_dlg.form->name, g_dlg.edit_buffer, sizeof(g_dlg.form->name));
             break;
-        case FIELD_SLOT:
-            g_dlg.form->slot = atoi(g_dlg.edit_buffer);
+        case FIELD_SLOT: {
+            int slot = atoi(g_dlg.edit_buffer);
+            if (slot < 2) {
+                tui_set_status("ERROR: Slot must be >= 2 (Slot 1 reserved for CPU temp sensor)");
+                slot = 2;  /* Auto-correct to minimum valid slot */
+            }
+            g_dlg.form->slot = slot;
             break;
+        }
         case FIELD_SUBSLOT:
             g_dlg.form->subslot = atoi(g_dlg.edit_buffer);
             break;
