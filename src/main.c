@@ -362,9 +362,7 @@ static result_t start_profinet(void) {
         return r;
     }
 
-    LOG_INFO("PROFINET stack started on %s (with %d application modules)",
-             g_app_config.network.interface,
-             /* Slot count will be logged by profinet_manager_start() */);
+    LOG_INFO("PROFINET stack started on %s", g_app_config.network.interface);
     return RESULT_OK;
 }
 
