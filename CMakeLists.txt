@@ -282,9 +282,10 @@ find_path(PNET_INCLUDE_DIR pnet_api.h HINTS /usr/local/include)
 
 if(PNET_LIBRARY AND PNET_INCLUDE_DIR)
     set(HAVE_PNET TRUE)
+    message(STATUS "p-net found - PROFINET support enabled")
 else()
     set(HAVE_PNET FALSE)
-    message(WARNING "p-net not found")
+    message(WARNING "p-net not found - PROFINET support disabled")
 endif()
 
 find_library(TINYEXPR_LIBRARY tinyexpr HINTS /usr/local/lib)
