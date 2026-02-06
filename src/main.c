@@ -309,11 +309,7 @@ static result_t init_profinet(void) {
         return r;
     }
 
-    r = profinet_manager_start(g_app_config.network.interface);
-    if (r != RESULT_OK) {
-        LOG_ERROR("Failed to start PROFINET stack - RTU cannot communicate");
-        return r;
-    }
+    LOG_INFO("PROFINET manager initialized (stack will start after sensor init)");
 
     /* Initialize RTU registration subsystem */
     r = rtu_registration_init(&g_app_config);
@@ -352,6 +348,23 @@ static result_t init_sensors(void) {
     }
 
     LOG_INFO("Sensor manager started");
+    return RESULT_OK;
+}
+
+static result_t start_profinet(void) {
+    if (!g_app_config.profinet.enabled) {
+        return RESULT_OK;  /* Already marked disabled in init_profinet() */
+    }
+
+    result_t r = profinet_manager_start(g_app_config.network.interface);
+    if (r != RESULT_OK) {
+        LOG_ERROR("Failed to start PROFINET stack - RTU cannot communicate");
+        return r;
+    }
+
+    LOG_INFO("PROFINET stack started on %s (with %d application modules)",
+             g_app_config.network.interface,
+             /* Slot count will be logged by profinet_manager_start() */);
     return RESULT_OK;
 }
 
@@ -852,6 +865,14 @@ int main(int argc, char *argv[]) {
     // Initialize sensors
     if (init_sensors() != RESULT_OK) {
         LOG_ERROR("Sensor manager initialization failed");
+        shutdown_subsystems();
+        logger_shutdown();
+        return 1;
+    }
+
+    // Start PROFINET stack (now that sensors are loaded, including CPU temp)
+    if (start_profinet() != RESULT_OK) {
+        LOG_ERROR("PROFINET stack failed to start - RTU cannot communicate");
         shutdown_subsystems();
         logger_shutdown();
         return 1;
