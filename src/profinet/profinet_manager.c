@@ -1464,6 +1464,42 @@ result_t profinet_manager_get_stats(profinet_stats_t *stats) {
     return RESULT_OK;
 }
 
+result_t profinet_manager_get_slot_list(profinet_slot_info_t **slots, int *count) {
+    CHECK_NULL(slots);
+    CHECK_NULL(count);
+
+    if (!g_pn.initialized) {
+        *slots = NULL;
+        *count = 0;
+        return RESULT_NOT_INITIALIZED;
+    }
+
+    pthread_mutex_lock(&g_pn.mutex);
+
+    /* Allocate array for slot info */
+    profinet_slot_info_t *slot_array = calloc(g_pn.slot_count, sizeof(profinet_slot_info_t));
+    if (!slot_array) {
+        pthread_mutex_unlock(&g_pn.mutex);
+        return RESULT_ERROR;
+    }
+
+    /* Copy slot information (all slots, including DAP at slot 0 if present) */
+    for (int i = 0; i < g_pn.slot_count; i++) {
+        slot_array[i].slot = g_pn.slots[i].slot;
+        slot_array[i].subslot = g_pn.slots[i].subslot;
+        slot_array[i].module_ident = g_pn.slots[i].module_ident;
+        slot_array[i].submodule_ident = g_pn.slots[i].submodule_ident;
+        slot_array[i].input_size = g_pn.slots[i].input_size;
+        slot_array[i].output_size = g_pn.slots[i].output_size;
+    }
+
+    *slots = slot_array;
+    *count = g_pn.slot_count;
+
+    pthread_mutex_unlock(&g_pn.mutex);
+    return RESULT_OK;
+}
+
 int profinet_manager_build_slot_map(uint8_t *buffer, size_t buffer_size) {
     if (!buffer || buffer_size < 2) return -1;
 

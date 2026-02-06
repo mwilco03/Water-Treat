@@ -107,7 +107,7 @@ void led_config_defaults(led_config_t *config) {
     memset(config, 0, sizeof(*config));
 
     config->backend = LED_BACKEND_AUTO;
-    config->led_count = 8;           /* Conservative default */
+    config->led_count = 0;           /* Installation-specific - user must configure */
     config->brightness = 64;         /* 25% brightness - safe for testing */
 
     /* SPI and GPIO defaults - use board detection for board-agnosticism */

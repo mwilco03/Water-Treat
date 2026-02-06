@@ -527,9 +527,10 @@ void config_get_defaults(app_config_t *c) {
     c->health.update_interval_seconds=10;
 
     /* LED indicator defaults (disabled by default)
+     * LED count varies by installation - user MUST configure if enabling LEDs
      * Use board detection for SPI device and GPIO pin - board agnostic */
     c->led.enabled=false;
-    c->led.led_count=8;
+    c->led.led_count=0;  /* Must be configured by user (installation-specific) */
     c->led.brightness=64;  /* 25% - safe default */
     SAFE_STRNCPY(c->led.backend,"auto",sizeof(c->led.backend));
     c->led.spi_speed_hz=2400000;
