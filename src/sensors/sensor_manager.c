@@ -418,11 +418,11 @@ result_t sensor_manager_reload_sensors(sensor_manager_t *mgr) {
         
         result = sensor_instance_create_from_db(instance, module, mgr->db);
         if (result == RESULT_OK) {
-            /* Reject sensors trying to use reserved slot 1 (CPU temperature) */
+            /* Defensive check: Reject sensors at reserved slot 1 (CPU temperature)
+             * TUI prevents this, but check in case database was manually edited */
             if (instance->slot == CPU_TEMP_SLOT) {
-                LOG_ERROR("Sensor '%s' (id=%d) assigned to reserved slot %d - skipping",
+                LOG_ERROR("Sensor '%s' (id=%d) at reserved slot %d - skipping (database manually edited?)",
                          instance->name, instance->id, CPU_TEMP_SLOT);
-                LOG_ERROR("Slot 1 is reserved for CPU temperature sensor. Reassign to slot 2 or higher.");
                 free(instance);
                 continue;
             }
