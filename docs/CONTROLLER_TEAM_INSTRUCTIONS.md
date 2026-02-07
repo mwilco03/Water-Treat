@@ -335,7 +335,7 @@ The GSDML defines these module types as usable in slots 1-246:
 | Generic DO | 0x00000120 | 288 | 0x00000121 | 289 | OUTPUT | 4 bytes |
 
 **Note**: Hex values are used in C code (`gsdml_modules.h` defines) and GSDML.
-Decimal values appear in the HTTP `/api/v1/slots` JSON response and the SQLite
+Decimal values appear in the HTTP `/slots` JSON response and the SQLite
 database. They are the same numbers: `0x10 == 16`, `0x100 == 256`.
 
 ### Building ExpectedSubmoduleBlockReq
@@ -419,18 +419,18 @@ connect response handler. Map each diff entry to the slot manager.
 ### Architecture
 
 Two HTTP endpoints are available on the RTU (both implemented in
-`health_check.c`). Neither is standard PROFINET, but `/api/v1/gsdml`
+`health_check.c`). Neither is standard PROFINET, but `/gsdml`
 delivers the standard device description — only the transport is non-standard.
 
 | Endpoint | Returns | Priority | Why |
 |----------|---------|----------|-----|
-| `/api/v1/gsdml` | Raw GSDML XML | Fallback #2 | Standard data, non-standard transport. Cache locally → becomes fallback #1 next time. |
-| `/api/v1/slots` | JSON slot list | Fallback #4 | Proprietary format. Only current config, not full module catalog. |
+| `/gsdml` | Raw GSDML XML | Fallback #2 | Standard data, non-standard transport. Cache locally → becomes fallback #1 next time. |
+| `/slots` | JSON slot list | Fallback #4 | Proprietary format. Only current config, not full module catalog. |
 
-### `/api/v1/gsdml` — Preferred HTTP fallback
+### `/gsdml` — Preferred HTTP fallback
 
 ```
-GET http://<rtu_ip>:9081/api/v1/gsdml
+GET http://<rtu_ip>:9081/gsdml
 Content-Type: application/xml
 ```
 
@@ -446,13 +446,13 @@ Returns HTTP 404 if GSDML file not found on RTU filesystem.
 This is the recommended HTTP fallback because it gives the full module
 catalog, not just what's currently plugged.
 
-### `/api/v1/slots` — Last HTTP fallback
+### `/slots` — Last HTTP fallback
 
 The RTU team document (RTU_TEAM_INSTRUCTIONS.md, Section 2.2) contains the
 full API contract. Both documents reference the same spec. Key points:
 
 ```
-GET http://<rtu_ip>:9081/api/v1/slots
+GET http://<rtu_ip>:9081/slots
 Content-Type: application/json
 ```
 
@@ -470,7 +470,7 @@ Content-Type: application/json
 ```
 
 **Contract details** (see RTU doc for full field definitions):
-- **Path**: `/api/v1/slots` (versioned, not `/slots`)
+- **Path**: `/slots` (versioned, not `/slots`)
 - **Idents**: Integer (decimal). 16 = pH sensor (0x10), 256 = Pump (0x100)
 - **DAP**: NOT included. Slot 0 is always DAP — controller knows this from GSDML.
 - **Source**: Database (`db_module_list()`), available before PROFINET init.
@@ -480,18 +480,18 @@ Content-Type: application/json
 ### Controller-side implementation
 
 **`web/api/app/api/v1/discover.py`** — The `probe-ip` endpoint (line 902)
-already calls RTU HTTP. Extend it to fetch `/api/v1/gsdml` first, then
-`/api/v1/slots` as fallback.
+already calls RTU HTTP. Extend it to fetch `/gsdml` first, then
+`/slots` as fallback.
 
 **GSDML fetch path:**
 ```c
-http_get(rtu_ip, 9081, "/api/v1/gsdml", &response);
+http_get(rtu_ip, 9081, "/gsdml", &response);
 if (response.status == 200) {
     save_to_cache(station_name, response.body);  // local file for next time
     parse_gsdml(response.body);                   // same path as local file
     return;                                       // → Phase 2
 }
-// 404 or unreachable → fall through to /api/v1/slots
+// 404 or unreachable → fall through to /slots
 ```
 
 **Slot JSON path** — Build ExpectedSubmoduleBlockReq from JSON response:
@@ -513,7 +513,7 @@ for each slot in response.slots:
    NO  → Continue
 
 2. Can we fetch GSDML from RTU HTTP?
-   GET /api/v1/gsdml
+   GET /gsdml
    200 → Save to local cache, parse GSDML → Phase 2
    404 or unreachable → Continue
 
@@ -522,7 +522,7 @@ for each slot in response.slots:
    NO  → Continue
 
 4. Can we fetch slot list from RTU HTTP?
-   GET /api/v1/slots
+   GET /slots
    200 with data → Build ExpectedSubmoduleBlockReq from JSON → Phase 2
    503 or empty  → Continue
 

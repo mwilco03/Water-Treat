@@ -43,7 +43,7 @@ git checkout b0b58ee
 
 - [ ] Check RTU logs for errors after startup
 - [x] Verify PROFINET stack initializes (UDP 34964 listening) — **CONFIRMED**
-- [x] Check if HTTP API responds (curl http://localhost:9081/api/v1/slots) — **CONFIRMED**
+- [x] Check if HTTP API responds (curl http://localhost:9081/slots) — **CONFIRMED**
 - [ ] Check if diagnosis alarm code path has null pointer issues
 - [ ] Check if liveness supervision is prematurely disconnecting
 
@@ -52,7 +52,7 @@ git checkout b0b58ee
 | Frame | Time | Direction | Protocol | Result |
 |-------|------|-----------|----------|--------|
 | 1 | 0.00s | Controller → RTU | PNIO Connect | **NO RESPONSE** |
-| 2-10 | 5.00s | Both | HTTP/TCP | Works (GET /api/v1/slots) |
+| 2-10 | 5.00s | Both | HTTP/TCP | Works (GET /slots) |
 | 11 | 5.01s | Controller → RTU | PNIO Connect | **NO RESPONSE** |
 | 13-16 | 20+s | Controller → RTU | PNIO Connect/Control | **NO RESPONSE** |
 
@@ -183,12 +183,12 @@ The RTU exposes an HTTP API on port **9081** (configurable via `[health] http_po
 
 | Endpoint | Method | Content-Type | Purpose |
 |----------|--------|-------------|---------|
-| `/api/v1/slots` | GET | `application/json` | Current PROFINET slot configuration |
-| `/api/v1/gsdml` | GET | `application/xml` | Raw GSDML XML file |
+| `/slots` | GET | `application/json` | Current PROFINET slot configuration |
+| `/gsdml` | GET | `application/xml` | Raw GSDML XML file |
 
 These endpoints answer: "what application modules are plugged in slots 1-246?" DAP (slot 0) is NOT included -- its configuration is fixed and defined in the GSDML.
 
-### `/api/v1/slots` Response Format
+### `/slots` Response Format
 
 ```json
 {
@@ -219,19 +219,19 @@ Returns **503** if PROFINET subsystem is unavailable.
 1. Data source: `db_module_list()` (database), NOT p-net runtime state. Available before `pnet_init()`.
 2. DAP is NOT included. GSDML is the single source of truth for DAP.
 3. Module ident values are integers matching the GSDML (`include/gsdml_modules.h`)
-4. `/api/v1/gsdml` serves the file from `gsd/` directory
+4. `/gsdml` serves the file from `gsd/` directory
 5. Six fields per slot only: `slot`, `subslot`, `module_ident`, `submodule_ident`, `direction`, `data_size`
 
 ### Controller Discovery Priority
 
-The controller's discovery chain has 5 steps. `/api/v1/gsdml` is preferred
-over `/api/v1/slots` because GSDML is the standard device description (only
+The controller's discovery chain has 5 steps. `/gsdml` is preferred
+over `/slots` because GSDML is the standard device description (only
 the HTTP transport is non-standard), and once cached it becomes step 1.
 
 1. Local GSDML file on disk (standard, offline)
-2. `GET /api/v1/gsdml` -- fetch GSDML via HTTP, cache locally (non-standard transport)
+2. `GET /gsdml` -- fetch GSDML via HTTP, cache locally (non-standard transport)
 3. Cached config from previous successful connection
-4. `GET /api/v1/slots` -- proprietary JSON slot list (non-standard)
+4. `GET /slots` -- proprietary JSON slot list (non-standard)
 5. DAP-only connect + Record Read 0xF844 (standard PROFINET)
 
 ### PROFINET Record Index Allocation
