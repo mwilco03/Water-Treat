@@ -26,7 +26,7 @@ You must discover the RTU's application modules before building a Connect Reques
 ```
 1. GSDML file      -- parse locally if you have the file (standard PROFINET)
 2. Cached config   -- from a previous successful connection to this station_name
-3. HTTP query      -- GET http://{rtu_ip}:9081/api/v1/slots (non-standard fallback)
+3. HTTP query      -- GET http://{rtu_ip}:9081/slots (non-standard fallback)
 4. DAP-only + Read -- PROFINET Record Read 0xF844 after DAP-only connect
 ```
 
@@ -47,7 +47,7 @@ Implement this exact state machine. Every transition is described.
 [RESOLVE_SLOTS] ----------> try sources 1-4 in order:
   |                           1. local GSDML parse
   |                           2. cached config for this station_name
-  |                           3. HTTP GET /api/v1/slots
+  |                           3. HTTP GET /slots
   |                           4. DAP-only connect + Record Read 0xF844
   |
   | Got application slot list (may be empty)
@@ -99,7 +99,7 @@ If you have previously connected to this `station_name` and stored its slot conf
 ### Source 3: HTTP Query (Fallback)
 
 ```
-GET /api/v1/slots HTTP/1.1
+GET /slots HTTP/1.1
 Host: {rtu_ip}:9081
 Accept: application/json
 ```
@@ -158,7 +158,7 @@ Accept: application/json
 ### GSDML Fetch (Do Once, Cache)
 
 ```
-GET /api/v1/gsdml HTTP/1.1
+GET /gsdml HTTP/1.1
 Host: {rtu_ip}:9081
 Accept: application/xml
 ```
@@ -402,7 +402,7 @@ If the response contains a PNIO error status, the fields tell you exactly what w
 |---------------|---------|-----|
 | ErrorDecode=0x80, ErrorCode1=0x.. containing "BlockLength" | DREP mismatch | Fix your byte order encoding to match DREP declaration |
 | ErrorDecode=0x80, ErrorCode1 referencing "ARBlockReq" | ARBlockReq structure invalid | Check ARType, ARUUID format, station name encoding |
-| ErrorDecode=0x80, ErrorCode1 referencing "ExpectedSubmodule" | Module ident mismatch | Slots don't match RTU -- re-query /api/v1/slots |
+| ErrorDecode=0x80, ErrorCode1 referencing "ExpectedSubmodule" | Module ident mismatch | Slots don't match RTU -- re-query /slots |
 | ErrorCode=0xCF | Application error in write callback | Record write payload was malformed |
 
 ### ModuleDiffBlock in Response
@@ -645,7 +645,7 @@ This is what a fresh, unconfigured RTU looks like. It auto-creates one CPU tempe
 
 ### Discovery Result (from any source)
 
-From HTTP `/api/v1/slots`:
+From HTTP `/slots`:
 ```json
 {
   "slot_count": 1,
@@ -720,7 +720,7 @@ Hex: 80
 
 ### Discovery Result
 
-From HTTP `/api/v1/slots`:
+From HTTP `/slots`:
 ```json
 {
   "slot_count": 3,
@@ -848,7 +848,7 @@ The current controller sends ExpectedSubmoduleBlockReq with 16 hardcoded slots (
 
 - [ ] Source 1: Parse local GSDML `UseableModules` for module type menu
 - [ ] Source 2: Cache slot config per `station_name` after each successful connection
-- [ ] Source 3: HTTP GET `http://{rtu_ip}:9081/api/v1/slots`, timeout 5 seconds
+- [ ] Source 3: HTTP GET `http://{rtu_ip}:9081/slots`, timeout 5 seconds
   - [ ] Handle HTTP 503: wait 2s, retry, max 5 retries
   - [ ] Handle connection refused / timeout: try source 4
   - [ ] Parse JSON: `module_ident` and `submodule_ident` are integers (not hex strings)
@@ -881,7 +881,7 @@ The current controller sends ExpectedSubmoduleBlockReq with 16 hardcoded slots (
 - [ ] Send Connect Request
 - [ ] Parse Connect Response for error blocks
 - [ ] On success: cache this slot config for source 2 next time
-- [ ] Optional: HTTP GET `/api/v1/gsdml` once, cache the XML by station_name
+- [ ] Optional: HTTP GET `/gsdml` once, cache the XML by station_name
 
 ### Phase 3: ModuleDiff Tolerance (Implement for Robustness)
 

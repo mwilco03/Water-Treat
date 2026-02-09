@@ -927,7 +927,7 @@ static void* http_thread_func(void *arg) {
     g_health.http_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_health.http_socket < 0) {
         LOG_ERROR("Failed to create HTTP socket: %s", strerror(errno));
-        LOG_ERROR("Controller discovery via /api/v1/slots and /api/v1/gsdml will be unavailable");
+        LOG_ERROR("Controller discovery via /slots and /gsdml will be unavailable");
         return NULL;
     }
 
@@ -1053,7 +1053,7 @@ result_t health_check_init(database_t *db, const health_config_t *config) {
         }
     }
     if (!gsdml_found) {
-        LOG_WARNING("GSDML file not found — /api/v1/gsdml endpoint will return 404");
+        LOG_WARNING("GSDML file not found — /gsdml endpoint will return 404");
         LOG_WARNING("Controller discovery step 2 (HTTP GSDML fetch) will be unavailable");
         LOG_WARNING("Expected file: %s", GSDML_FILENAME);
     }

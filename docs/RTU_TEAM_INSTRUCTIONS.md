@@ -15,7 +15,7 @@ failures originate from the controller's wire encoding (documented separately).
 
 This document covers:
 1. Items the RTU team must verify/maintain for connection success
-2. The `/api/v1/slots` HTTP endpoint (fallback mechanism, lowest priority)
+2. The `/slots` HTTP endpoint (fallback mechanism, lowest priority)
 3. GSDML consistency checks
 4. Operational concerns
 
@@ -168,8 +168,8 @@ handling.
 ### Status
 
 Both endpoints are **implemented** in `src/health/health_check.c`:
-- `/api/v1/slots` — `slots_to_json()` at line 615
-- `/api/v1/gsdml` — `serve_gsdml_file()` at line 660
+- `/slots` — `slots_to_json()` at line 615
+- `/gsdml` — `serve_gsdml_file()` at line 660
 - Route handler at line 811, after `/config`, before 404
 
 ### Context
@@ -181,20 +181,20 @@ standard discovery mechanisms have failed.
 
 The controller team's fallback chain (both documents agree on this order):
 1. Local GSDML file on disk (standard, offline)
-2. **GET /api/v1/gsdml from RTU HTTP** — fetch the standard device description
+2. **GET /gsdml from RTU HTTP** — fetch the standard device description
 3. Cached config from a previous successful connection
-4. **GET /api/v1/slots from RTU HTTP** — proprietary slot list
+4. **GET /slots from RTU HTTP** — proprietary slot list
 5. DAP-only connect + Record Read 0xF844 (standard PROFINET)
 
-### 2.1 `/api/v1/gsdml` — Device Description (Fallback #2)
+### 2.1 `/gsdml` — Device Description (Fallback #2)
 
 Serves the raw GSDML XML file. This is architecturally preferred over
-`/api/v1/slots` because the GSDML IS the standard device description — only
+`/slots` because the GSDML IS the standard device description — only
 the transport (HTTP vs. file) is non-standard. The controller can cache it
 locally, making future connections use fallback #1.
 
 ```
-GET /api/v1/gsdml
+GET /gsdml
 Content-Type: application/xml
 ```
 
@@ -211,23 +211,23 @@ Content-Type: application/xml
 4. Build ExpectedSubmoduleBlockReq from parsed module catalog
 5. Next connection uses cached file (fallback #1), no HTTP needed
 
-### 2.2 `/api/v1/slots` — Slot Configuration (Fallback #4)
+### 2.2 `/slots` — Slot Configuration (Fallback #4)
 
 ```
-GET /api/v1/slots
+GET /slots
 Content-Type: application/json
 ```
 
 ### API Contract (agreed between both teams)
 
-This is the single source of truth for the `/api/v1/slots` contract.
+This is the single source of truth for the `/slots` contract.
 Both the controller and RTU implementations must conform to this spec.
 
 **Design decisions and rationale:**
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Path | `/api/v1/slots` | Versioned path separates API from health endpoints. Matches controller's `/api/v1/` convention. |
+| Path | `/slots` | Versioned path separates API from health endpoints. Matches controller's `/api/v1/` convention. |
 | Ident encoding | Integer (decimal) | JSON-native. No string parsing needed. DB stores integers. C compares work: `json_val == 0x10` since 0x10 == 16. Hex is for documentation only. |
 | DAP included | No | DAP is always present with fixed config defined in GSDML. Controller already knows DAP. Including it creates a redundant source of truth that could contradict GSDML. |
 | Data source | Database (`db_module_list()`) | Available before `pnet_init()` completes. Represents configured intent, not just runtime state. Answers "what should be plugged?" not "what is the stack doing right now?" |
@@ -475,14 +475,14 @@ the cyclic handler writes/reads.
 
 ### For HTTP endpoints
 
-- [x] `GET /api/v1/slots` returns correct JSON per contract in Section 2.2
+- [x] `GET /slots` returns correct JSON per contract in Section 2.2
 - [x] Response uses integer idents (16, not "0x00000010")
 - [x] DAP (slot 0) is NOT included in response
 - [x] Returns HTTP 200 with `{"slot_count": 0, "slots": []}` when no modules configured
 - [x] Returns HTTP 503 when database unavailable
 - [x] Direction derived from `(module_ident & 0x100) != 0`
-- [x] `GET /api/v1/gsdml` returns raw XML with `Content-Type: application/xml`
-- [x] `GET /api/v1/gsdml` returns HTTP 404 when GSDML file missing
+- [x] `GET /gsdml` returns raw XML with `Content-Type: application/xml`
+- [x] `GET /gsdml` returns HTTP 404 when GSDML file missing
       Verified: serve_gsdml_file() at health_check.c:660 sends 404 JSON if fopen fails.
 - [x] GSDML file exists at `/opt/water-treat/gsd/` (installed) or `gsd/` (dev)
       Verified: gsd/ directory in source tree, bootstrap.sh copies to INSTALL_DIR.

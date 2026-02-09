@@ -107,7 +107,7 @@ Controller                          RTU
     |--- DCP Identify ------------->|  (already works, gives RTU IP)
     |<-- DCP Identify Response -----|
     |                                |
-    |--- HTTP GET /api/v1/slots --->|  JSON query over TCP
+    |--- HTTP GET /slots --->|  JSON query over TCP
     |<-- 200 OK + JSON slot map ----|
     |                                |
     |--- Connect(full layout) ----->|  ExpectedSubmoduleBlockReq = actual slots
@@ -120,7 +120,7 @@ Controller                          RTU
 
 | File | Change | Detail |
 |------|--------|--------|
-| `src/health/health_check.c:684-698` | Add `/api/v1/slots` route in `handle_http_request()` | New `else if` branch that calls `slots_to_json()` and returns the result. Insert before the 404 handler. Also update the 404 endpoint list. |
+| `src/health/health_check.c:684-698` | Add `/slots` route in `handle_http_request()` | New `else if` branch that calls `slots_to_json()` and returns the result. Insert before the 404 handler. Also update the 404 endpoint list. |
 | `src/health/health_check.c` (new function) | Add `slots_to_json()` | Builds JSON: `{"station_name":"rtu-XXXX","slot_count":N,"slots":[{"slot":1,"subslot":1,"module_ident":"0x00000040","submodule_ident":"0x00000041","direction":"input","input_size":5,"output_size":0}, ...]}`. Reads from `g_pn.slots[]` via a manager accessor. |
 | `src/profinet/profinet_manager.c` | Add `profinet_manager_get_slots()` accessor | Public function returning `const profinet_slot_t*` array and count. Provides read-only access to `g_pn.slots[]` under mutex. |
 | `src/profinet/profinet_manager.h` | Add accessor prototype and public slot struct | `typedef struct { int slot; int subslot; uint32_t module_ident; uint32_t submodule_ident; size_t input_size; size_t output_size; } profinet_slot_info_t;` + `int profinet_manager_get_slots(profinet_slot_info_t *out, int max);` |
@@ -137,7 +137,7 @@ Controller                          RTU
 
 | File | Change | Detail |
 |------|--------|--------|
-| RTU discovery/connect | HTTP GET after DCP | After DCP gives RTU IP, issue `GET http://{rtu_ip}:{port}/api/v1/slots` before calling Connect. |
+| RTU discovery/connect | HTTP GET after DCP | After DCP gives RTU IP, issue `GET http://{rtu_ip}:{port}/slots` before calling Connect. |
 | JSON parser | Parse slot array | Extract slot entries from JSON response. Map `module_ident` values to GSDML module types. |
 | ExpectedSubmodule builder | Dynamic construction | Build ExpectedSubmoduleBlockReq from parsed JSON slots. |
 | Registration handler | Parse extended registration | If RTU sends slots in registration POST, cache them -- skip separate GET. |
@@ -184,7 +184,7 @@ Controller                          RTU
 5. **DCP gives RTU's IP** -- controller already knows where to HTTP GET after DCP Identify
 6. **Fast** -- HTTP roundtrip is typically <100ms on a local network
 7. **Doesn't stress p-net** -- slot query happens outside the PROFINET stack entirely
-8. **Debugging** -- `curl http://rtu-ip:8080/api/v1/slots` from any laptop on the network
+8. **Debugging** -- `curl http://rtu-ip:8080/slots` from any laptop on the network
 
 ### Cons
 
@@ -192,7 +192,7 @@ Controller                          RTU
 2. **HTTP server must be running** -- if health_check HTTP thread hasn't started yet (startup ordering), no slot data available
 3. **Port/firewall** -- health check HTTP port (configurable, default varies) must be reachable from controller
 4. **Not pure PROFINET** -- some industrial environments restrict IP traffic on PROFINET networks
-5. **Race condition** -- RTU HTTP server may start before PROFINET modules are loaded from database (slots may be incomplete). Need to ensure `/api/v1/slots` is only served after `profinet_manager_start()` completes.
+5. **Race condition** -- RTU HTTP server may start before PROFINET modules are loaded from database (slots may be incomplete). Need to ensure `/slots` is only served after `profinet_manager_start()` completes.
 6. **If HTTP is down but PROFINET L2 is up** -- slot discovery fails. Need fallback.
 
 ### Risk Assessment
@@ -333,7 +333,7 @@ Controller                          RTU
     |--- DCP Identify ------------->|
     |<-- DCP Response (IP=x.x.x.x)-|
     |                                |
-    |--- HTTP GET /api/v1/slots --->|  Option 2 (primary)
+    |--- HTTP GET /slots --->|  Option 2 (primary)
     |<-- 200 OK + JSON             -|
     |                                |
     |   Build ExpectedSubmoduleBlockReq from JSON
@@ -349,7 +349,7 @@ Controller                          RTU
 
 If HTTP fails:
 ```
-    |--- HTTP GET /api/v1/slots --->|  TIMEOUT / connection refused
+    |--- HTTP GET /slots --->|  TIMEOUT / connection refused
     |                                |
     |--- Connect(DAP only) -------->|  Option 1 (fallback)
     |<-- Connect OK + ModuleDiff ---|
