@@ -80,17 +80,30 @@ typedef struct {
 } gpio_conflict_t;
 
 /**
- * Check if GPIO pin is already used by another actuator
- * @param db Database handle
- * @param gpio_pin GPIO pin number
- * @param gpio_chip GPIO chip name
- * @param exclude_actuator_id Actuator ID to exclude from check (0 for new)
- * @param conflict Output conflict information
+ * Check if a GPIO pin is already in use by another actuator OR another sensor.
+ *
+ * Despite the function's name, it checks BOTH the actuators table AND the
+ * physical_sensors table for any module that has claimed the requested
+ * (gpio_pin, gpio_chip) tuple. The conflict_type field on the output
+ * distinguishes the two: 0 = actuator, 1 = sensor.
+ *
+ * @param db                  Database handle
+ * @param gpio_pin            GPIO pin number being checked
+ * @param gpio_chip           libgpiod chip name (e.g. "gpiochip0")
+ * @param exclude_actuator_id Actuator ID to exclude from the check (0 = no exclude).
+ *                            Used by the actuator edit dialog so a sensor
+ *                            saving its existing pin doesn't conflict with itself.
+ * @param exclude_sensor_id   Sensor (module) ID to exclude from the check
+ *                            (0 = no exclude). Used by the sensor edit dialog
+ *                            so a sensor saving its existing pin doesn't
+ *                            conflict with itself.
+ * @param conflict            Output conflict information
  * @return RESULT_OK on success
  */
 result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
                                          const char *gpio_chip,
                                          int exclude_actuator_id,
+                                         int exclude_sensor_id,
                                          gpio_conflict_t *conflict);
 
 // Utility

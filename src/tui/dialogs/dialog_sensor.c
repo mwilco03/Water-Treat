@@ -39,7 +39,27 @@ typedef struct {
     int poll_rate_ms;
 } sensor_form_t;
 
-static const char *sensor_types[] = {"physical", "adc", "web_poll", "calculated", "static"};
+/* Sensor types currently supported by THIS dialog's save/edit paths.
+ *
+ * The DB schema supports five sensor types (physical, adc, web_poll,
+ * calculated, static — see src/db/database.c) but the simple form-based
+ * dialog below only knows how to fill out the field set for "physical"
+ * and "adc". The other three need URL/method/headers/json_path,
+ * formula/input_sensors, or value/writable form fields plus a save
+ * branch that writes the matching sub-record.
+ *
+ * Until the dialog grows progressive disclosure for those types, we
+ * hide them here so the picker cannot lead a user to a save path that
+ * silently drops the configuration (T2-T3 in the verification campaign).
+ *
+ * To add web_poll/calculated/static: extend sensor_form_t with the
+ * type-specific fields, gate the new fields in draw_form() / edit_field()
+ * by form->module_type, and add the matching save branches in
+ * save_sensor() and the edit save block. The DB layer is already done
+ * (db_modules.c has CRUD for all five sub-tables). */
+static const char *sensor_types[] = {"physical", "adc"};
+static const int sensor_types_count = 2;
+
 static const char *interface_types[] = {"i2c", "spi", "gpio", "1wire", "uart"};
 static const char *hardware_types[] = {
     "ADS1115", "MCP3008", "DS18B20", "DHT22", "BME280", "HX711",
@@ -60,9 +80,49 @@ static const char *physical_hardware_types[] = {
 };
 static const int physical_hardware_types_count = 12;
 
+/* Find the lowest free PROFINET slot starting at SLOT_MIN.
+ * Returns SLOT_MIN if the DB is unavailable or every slot is empty;
+ * returns the first slot not present in the modules or actuators tables
+ * otherwise. The CPU temperature sensor lives at slot 1 and is REJECTED
+ * by sensor_manager_add() (sensor_manager.c:421), so we start at slot 2. */
+#define SENSOR_DEFAULT_SLOT_MIN 2
+#define SENSOR_DEFAULT_SLOT_MAX 246
+
+static int find_next_free_slot(void) {
+    database_t *db = tui_get_database();
+    if (!db) return SENSOR_DEFAULT_SLOT_MIN;
+
+    db_module_t *modules = NULL;
+    int module_count = 0;
+    db_module_list(db, &modules, &module_count);
+
+    db_actuator_t *actuators = NULL;
+    int actuator_count = 0;
+    db_actuator_list(db, &actuators, &actuator_count);
+
+    for (int slot = SENSOR_DEFAULT_SLOT_MIN; slot <= SENSOR_DEFAULT_SLOT_MAX; slot++) {
+        bool used = false;
+        for (int i = 0; i < module_count && !used; i++) {
+            if (modules[i].slot == slot) used = true;
+        }
+        for (int i = 0; i < actuator_count && !used; i++) {
+            if (actuators[i].slot == slot) used = true;
+        }
+        if (!used) {
+            if (modules) free(modules);
+            if (actuators) db_actuator_free_list(actuators);
+            return slot;
+        }
+    }
+
+    if (modules) free(modules);
+    if (actuators) db_actuator_free_list(actuators);
+    return SENSOR_DEFAULT_SLOT_MIN;
+}
+
 static void init_form(sensor_form_t *form) {
     memset(form, 0, sizeof(*form));
-    form->slot = 1;
+    form->slot = find_next_free_slot();  /* T2-T5: avoid colliding with reserved slot 1 */
     form->subslot = 1;
     form->module_ident = GSDML_MOD_SENSOR_GENERIC;
     form->submodule_ident = GSDML_SUBMOD_SENSOR_GENERIC;
@@ -131,11 +191,21 @@ static bool edit_field(WINDOW *dialog, sensor_form_t *form, int field) {
                 return true;
             }
             break;
-        case 1: return tui_get_int(dialog, row, col, &form->slot, 1, 63);
-        case 2: return tui_get_int(dialog, row, col, &form->subslot, 1, 63);
+        case 1:
+            /* T2-T6: PROFINET application slot range is 2..246. Slot 1 is
+             * reserved for the runtime CPU temperature sensor; slot 0 is
+             * the DAP. The previous range 1..63 locked users out of slots
+             * 64..246 and silently let them pick reserved slot 1. */
+            return tui_get_int(dialog, row, col, &form->slot,
+                               SENSOR_DEFAULT_SLOT_MIN, SENSOR_DEFAULT_SLOT_MAX);
+        case 2:
+            /* PROFINET subslot range is 1..0x7FFF. Common values are 1..15
+             * but the spec is wider; do not artificially constrain. */
+            return tui_get_int(dialog, row, col, &form->subslot, 1, 32767);
         case 3:
             {
-                int sel = dialog_select("Select Type", sensor_types, 5, 0);
+                int sel = dialog_select("Select Type", sensor_types,
+                                        sensor_types_count, 0);
                 if (sel >= 0) { strncpy(form->module_type, sensor_types[sel], 31); return true; }
             }
             break;
@@ -217,16 +287,14 @@ static result_t check_gpio_conflict(database_t *db, sensor_form_t *form, int exc
         chip = board.pins.gpio_chip;
     }
 
-    /* Use the actuator GPIO conflict check which also checks sensors */
+    /* Conflict check covers both actuators and sensors. Pass exclude_sensor_id
+     * so the edit path does NOT find the row being edited as its own conflict
+     * (T2-T2 — without this, every edit of a GPIO sensor failed with a
+     * self-conflict and the user could not save). */
     gpio_conflict_t conflict;
-    result_t r = db_actuator_gpio_conflict_check(db, gpio_pin, chip, 0, &conflict);
+    result_t r = db_actuator_gpio_conflict_check(db, gpio_pin, chip,
+                                                 0, exclude_sensor_id, &conflict);
     if (r == RESULT_OK && conflict.has_conflict) {
-        /* Check if the conflict is with ourselves (when editing) */
-        if (exclude_sensor_id > 0 && conflict.conflict_type == 1) {
-            /* conflict_type 1 = sensor - ignore if it's the same sensor */
-            /* We can't easily check this without knowing the conflicting sensor ID */
-        }
-
         char msg[256];
         snprintf(msg, sizeof(msg), "GPIO %d is already in use by %s '%s'",
                  gpio_pin,
@@ -260,7 +328,15 @@ static result_t save_sensor(sensor_form_t *form, int *sensor_id) {
 
     r = db_module_create(db, &module, sensor_id);
     if (r != RESULT_OK) return r;
-    
+
+    /* T2-T4: roll the parent module row back if the sub-record insert
+     * fails. Without this, a partial insert leaves an orphan modules row
+     * that the manager will try to load and crash on (no companion
+     * physical_sensors / adc_sensors row to read from). The sub-record
+     * insert can fail for normal reasons (disk full, NOT NULL violation
+     * on a missing form field, schema migration in progress) so a clean
+     * rollback is essential, not paranoia. */
+    result_t sub_r = RESULT_OK;
     if (strcmp(form->module_type, "physical") == 0) {
         db_physical_sensor_t phys = {0};
         phys.module_id = *sensor_id;
@@ -274,7 +350,7 @@ static result_t save_sensor(sensor_form_t *form, int *sensor_id) {
         phys.min_value = form->min_value;
         phys.max_value = form->max_value;
         phys.poll_rate_ms = form->poll_rate_ms;
-        db_physical_sensor_create(db, &phys);
+        sub_r = db_physical_sensor_create(db, &phys);
     } else if (strcmp(form->module_type, "adc") == 0) {
         db_adc_sensor_t adc = {0};
         adc.module_id = *sensor_id;
@@ -289,9 +365,19 @@ static result_t save_sensor(sensor_form_t *form, int *sensor_id) {
         adc.eng_min = form->min_value;
         adc.eng_max = form->max_value;
         adc.poll_rate_ms = form->poll_rate_ms;
-        db_adc_sensor_create(db, &adc);
+        sub_r = db_adc_sensor_create(db, &adc);
+    } else {
+        /* Unknown module_type — should be impossible because the picker
+         * is restricted to sensor_types[]. Defensive: roll back. */
+        sub_r = RESULT_ERROR;
     }
-    
+
+    if (sub_r != RESULT_OK) {
+        db_module_delete(db, *sensor_id);
+        *sensor_id = 0;
+        return sub_r;
+    }
+
     return RESULT_OK;
 }
 
@@ -442,7 +528,15 @@ bool dialog_sensor_edit(int sensor_id) {
                             break;
                         }
 
-                        /* Write sub-record data based on module type */
+                        /* Write sub-record data based on module type. Check
+                         * the sub-record update return value (T2-T4): if it
+                         * fails the parent module row is now out of sync
+                         * with the sub-record, which will manifest later as
+                         * a sensor that loads fine but reads garbage. We do
+                         * NOT roll back the parent on edit because the
+                         * parent update is harmless on its own — but we do
+                         * surface the failure to the user. */
+                        result_t sub_r = RESULT_OK;
                         if (strcmp(form.module_type, "physical") == 0) {
                             db_physical_sensor_t phys = {0};
                             phys.module_id = sensor_id;
@@ -456,7 +550,7 @@ bool dialog_sensor_edit(int sensor_id) {
                             phys.min_value = form.min_value;
                             phys.max_value = form.max_value;
                             phys.poll_rate_ms = form.poll_rate_ms;
-                            db_physical_sensor_update(db, &phys);
+                            sub_r = db_physical_sensor_update(db, &phys);
                         } else if (strcmp(form.module_type, "adc") == 0) {
                             db_adc_sensor_t adc = {0};
                             adc.module_id = sensor_id;
@@ -471,7 +565,11 @@ bool dialog_sensor_edit(int sensor_id) {
                             adc.eng_min = form.min_value;
                             adc.eng_max = form.max_value;
                             adc.poll_rate_ms = form.poll_rate_ms;
-                            db_adc_sensor_update(db, &adc);
+                            sub_r = db_adc_sensor_update(db, &adc);
+                        }
+                        if (sub_r != RESULT_OK) {
+                            dialog_error("Sensor update saved module but failed to update sub-record");
+                            break;
                         }
 
                         /* Reload sensors so worker thread picks up changes */
@@ -499,18 +597,30 @@ bool dialog_sensor_edit(int sensor_id) {
 bool dialog_sensor_delete(int sensor_id) {
     database_t *db = tui_get_database();
     if (!db) return false;
-    
+
     db_module_t module;
     if (db_module_get(db, sensor_id, &module) != RESULT_OK) {
         dialog_error("Sensor not found");
         return false;
     }
-    
-    char msg[128];
-    snprintf(msg, sizeof(msg), "Delete '%s' (slot %d)?", module.name, module.slot);
-    
+
+    char msg[160];
+    snprintf(msg, sizeof(msg),
+             "Delete sensor '%s' (slot %d)?\n\n"
+             "Held bus and GPIO resources will be released. This cannot be undone.",
+             module.name, module.slot);
+
     if (dialog_confirm("Confirm Delete", msg)) {
-        if (db_module_delete(db, sensor_id) == RESULT_OK) return true;
+        if (db_module_delete(db, sensor_id) == RESULT_OK) {
+            /* T2-T8: reload the sensor manager so the running worker
+             * thread releases the deleted sensor's hardware handles
+             * (open i2c fd, claimed gpiochip line, w1 slave handle).
+             * Without this, the row disappears from the list but the
+             * driver instance keeps running until process restart. */
+            sensor_manager_t *smgr = tui_get_sensor_manager();
+            if (smgr) sensor_manager_reload_sensors(smgr);
+            return true;
+        }
         dialog_error("Failed to delete");
     }
     return false;

@@ -298,6 +298,8 @@
 #define ACTUATOR_TYPE_PWM_STR       "pwm"
 #define ACTUATOR_TYPE_LATCHING_STR  "latching"
 #define ACTUATOR_TYPE_MOMENTARY_STR "momentary"
+#define ACTUATOR_TYPE_PUMP_STR      "pump"
+#define ACTUATOR_TYPE_VALVE_STR     "valve"
 
 /* ============================================================================
  * Status/State Identifiers

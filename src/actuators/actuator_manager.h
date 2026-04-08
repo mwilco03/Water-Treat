@@ -67,6 +67,11 @@ typedef struct {
 
     // GPIO configuration
     int gpio_pin;
+    char gpio_chip[32];         // libgpiod chip name (e.g. "gpiochip0", "gpiochip4")
+                                // Required for cross-platform support: different
+                                // SBCs expose header pins on different chip indices.
+                                // Sourced from db_actuator.gpio_chip with a fallback
+                                // to board_detect's pin_config.gpio_chip when empty.
     bool active_low;
 
     // PWM settings (for pumps with variable speed)
@@ -76,6 +81,11 @@ typedef struct {
     // Safety limits
     int max_on_time_sec;        // Auto-shutoff (0=disabled)
     int min_cycle_time_ms;      // Prevent rapid cycling
+
+    // Failure behavior — what to do when the controller disconnects past the
+    // safe_state timeout. Loaded from db_actuator.safe_state. Honored in
+    // apply_safe_state(); ignored values silently default to SAFE_STATE_OFF.
+    safe_state_t safe_state;
 
 } actuator_config_t;
 

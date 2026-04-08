@@ -10,6 +10,7 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <sched.h>
+#include <pthread.h>   /* T2-C3: per-thread scheduling, not per-process */
 
 #define DHT22_TIMEOUT_US    100
 #define DHT22_MIN_INTERVAL  2000  // Minimum 2 seconds between reads
@@ -118,10 +119,28 @@ result_t dht22_read(dht22_t *dev, float *temperature, float *humidity) {
         return RESULT_OK;
     }
     
-    // Set high priority for timing-critical section
+    /* T2-C3: elevate THIS THREAD only, not the whole process.
+     * The previous code called sched_setscheduler(0, ...) which operates
+     * on the calling process — that elevated every other thread (PROFINET
+     * cyclic worker, alarm manager, watchdog, TUI) to SCHED_FIFO 50 for
+     * the duration of the read, then on exit dropped them all to
+     * SCHED_OTHER 0, clearing any priority an init script set. Per-thread
+     * keeps the cyclic worker on its own schedule. */
+    int saved_policy = SCHED_OTHER;
+    struct sched_param saved_param = {.sched_priority = 0};
+    pthread_getschedparam(pthread_self(), &saved_policy, &saved_param);
     struct sched_param sp = {.sched_priority = 50};
-    sched_setscheduler(0, SCHED_FIFO, &sp);
-    
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+        /* No CAP_SYS_NICE — proceed without elevation. The bit-bang will
+         * be jittery; the user gets a warning the first time. */
+        static bool warned = false;
+        if (!warned) {
+            LOG_WARNING("DHT22: pthread_setschedparam(SCHED_FIFO) failed; "
+                        "reads may be unreliable without CAP_SYS_NICE");
+            warned = true;
+        }
+    }
+
     uint8_t data[5] = {0};
     int pin = dev->gpio_pin;
     volatile uint32_t *gpio = dev->gpio_base;
@@ -164,10 +183,12 @@ result_t dht22_read(dht22_t *dev, float *temperature, float *humidity) {
         }
     }
     
-    // Restore normal priority
-    sp.sched_priority = 0;
-    sched_setscheduler(0, SCHED_OTHER, &sp);
-    
+    /* T2-C3: restore THIS thread's prior policy (saved at function entry).
+     * Critical: do NOT use sched_setscheduler(0, SCHED_OTHER, ...) here —
+     * that would clobber every other thread back to OTHER/0, undoing any
+     * priority operator/init scripts set on the cyclic worker. */
+    pthread_setschedparam(pthread_self(), saved_policy, &saved_param);
+
     // Verify checksum
     uint8_t checksum = data[0] + data[1] + data[2] + data[3];
     if (checksum != data[4]) {

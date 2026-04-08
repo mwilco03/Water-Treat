@@ -4,11 +4,13 @@
  */
 
 #include "dialog_actuator.h"
+#include "dialog_helpers.h"          /* dialog_confirm() for confirm_delete */
 #include "tui/tui_common.h"
 #include "platform/board_detect.h"
 #include "db/db_actuators.h"
 #include "constants.h"
 #include <ncurses.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -121,13 +123,16 @@ static int show_pin_selector(int current_pin, const char *gpio_chip, int exclude
         pins[pin_count++] = (pin_option_t){25, "GPIO 25", false};
     }
 
-    /* Check which pins are already in use */
+    /* Check which pins are already in use. exclude_id is the current actuator
+     * being edited (so it doesn't show its own pin as in-use). No sensor
+     * exclusion here — we're picking a pin for an actuator, so any sensor
+     * holding the pin is a real conflict. */
     database_t *db = tui_get_database();
     if (db) {
         for (int i = 0; i < pin_count; i++) {
             gpio_conflict_t conflict;
             if (db_actuator_gpio_conflict_check(db, pins[i].pin, gpio_chip,
-                    exclude_id, &conflict) == RESULT_OK) {
+                    exclude_id, 0, &conflict) == RESULT_OK) {
                 pins[i].in_use = conflict.has_conflict;
             }
         }
@@ -690,43 +695,19 @@ bool dialog_actuator_show(actuator_dialog_mode_t mode, actuator_form_t *form) {
 }
 
 bool dialog_actuator_confirm_delete(const char *actuator_name) {
-    int dialog_h = 7;
-    int dialog_w = 50;
-    int dialog_y = (LINES - dialog_h) / 2;
-    int dialog_x = (COLS - dialog_w) / 2;
-
-    /* Draw confirmation box */
-    attron(COLOR_PAIR(3));  /* Warning color */
-    for (int y = 0; y < dialog_h; y++) {
-        mvhline(dialog_y + y, dialog_x, ' ', dialog_w);
-    }
-
-    /* Border */
-    mvhline(dialog_y, dialog_x, ACS_HLINE, dialog_w);
-    mvhline(dialog_y + dialog_h - 1, dialog_x, ACS_HLINE, dialog_w);
-    mvvline(dialog_y, dialog_x, ACS_VLINE, dialog_h);
-    mvvline(dialog_y, dialog_x + dialog_w - 1, ACS_VLINE, dialog_h);
-    mvaddch(dialog_y, dialog_x, ACS_ULCORNER);
-    mvaddch(dialog_y, dialog_x + dialog_w - 1, ACS_URCORNER);
-    mvaddch(dialog_y + dialog_h - 1, dialog_x, ACS_LLCORNER);
-    mvaddch(dialog_y + dialog_h - 1, dialog_x + dialog_w - 1, ACS_LRCORNER);
-
-    mvprintw(dialog_y, dialog_x + (dialog_w - 18) / 2, "[ Confirm Delete ]");
-    attroff(COLOR_PAIR(3));
-
-    mvprintw(dialog_y + 2, dialog_x + 2, "Delete actuator '%s'?", actuator_name);
-    mvprintw(dialog_y + 4, dialog_x + 2, "Press Y to confirm, N or Esc to cancel");
-
-    refresh();
-
-    /* Wait for response */
-    while (1) {
-        int ch = getch();
-        if (ch == 'y' || ch == 'Y') {
-            return true;
-        }
-        if (ch == 'n' || ch == 'N' || ch == 27) {
-            return false;
-        }
-    }
+    /* Delegate to the shared dialog_confirm helper. That helper:
+     *   - draws a proper bordered dialog
+     *   - defaults selection to "No" (safe default for destructive actions)
+     *   - accepts Enter on the highlighted button (so a reflexive Enter
+     *     after the popup does NOT delete)
+     *   - accepts Esc as cancel
+     * Replaces a hand-rolled getch() loop that ignored Enter entirely and
+     * accepted any 'y' keystroke, regardless of the user's intent. */
+    char message[160];
+    snprintf(message, sizeof(message),
+             "Delete actuator '%s'?\n\n"
+             "Any GPIO line, PWM channel, or interlock claim held by this "
+             "actuator will be released. This cannot be undone.",
+             actuator_name ? actuator_name : "?");
+    return dialog_confirm("Confirm Delete", message);
 }

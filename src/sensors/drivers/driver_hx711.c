@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sched.h>
+#include <pthread.h>   /* T2-C3: per-thread scheduling, not per-process */
 
 #define HX711_GAIN_128_A    1   // Channel A, gain 128
 #define HX711_GAIN_32_B     2   // Channel B, gain 32
@@ -109,10 +110,22 @@ result_t hx711_read_raw(hx711_t *dev, int32_t *raw) {
     }
     if (timeout <= 0) return RESULT_TIMEOUT;
     
-    // Set high priority
+    /* T2-C3: elevate THIS thread only (see driver_dht22.c for full
+     * justification). pthread_setschedparam targets the caller; the
+     * old sched_setscheduler(0, ...) targeted the entire process. */
+    int saved_policy = SCHED_OTHER;
+    struct sched_param saved_param = {.sched_priority = 0};
+    pthread_getschedparam(pthread_self(), &saved_policy, &saved_param);
     struct sched_param sp = {.sched_priority = 50};
-    sched_setscheduler(0, SCHED_FIFO, &sp);
-    
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+        static bool warned = false;
+        if (!warned) {
+            LOG_WARNING("HX711: pthread_setschedparam(SCHED_FIFO) failed; "
+                        "reads may be jittery without CAP_SYS_NICE");
+            warned = true;
+        }
+    }
+
     int32_t value = 0;
     
     // Read 24 bits
@@ -132,10 +145,9 @@ result_t hx711_read_raw(hx711_t *dev, int32_t *raw) {
         delay_us(1);
     }
     
-    // Restore priority
-    sp.sched_priority = 0;
-    sched_setscheduler(0, SCHED_OTHER, &sp);
-    
+    /* T2-C3: restore this thread's prior policy without touching others. */
+    pthread_setschedparam(pthread_self(), saved_policy, &saved_param);
+
     // Sign extend 24-bit to 32-bit
     if (value & 0x800000) {
         value |= 0xFF000000;

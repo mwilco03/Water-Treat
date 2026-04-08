@@ -164,28 +164,38 @@ result_t web_poll_fetch(web_poll_device_t *dev, float *value) {
     if (res != CURLE_OK) {
         LOG_ERROR("curl_easy_perform() failed: %s", curl_easy_strerror(res));
         free(chunk.memory);
-        
+
+        /* T2-C2: never report a cached value as a fresh successful read.
+         * The cyclic update path already handles "use last value with
+         * IOPS=BAD" semantics when a sensor read fails — that is the
+         * correct way to surface a failed read while still emitting a
+         * value byte to the controller. Returning RESULT_OK here would
+         * mark the read as fresh GOOD and let the controller act on a
+         * stale (or first-call zero) value with full confidence. */
         if (dev->cache_on_error) {
             *value = dev->last_value;
-            return RESULT_OK;
         }
-        
         return RESULT_ERROR;
     }
-    
+
     // Parse JSON response
     result_t result = parse_json_value(chunk.memory, dev->json_path, value);
-    
+
     free(chunk.memory);
-    
+
     if (result == RESULT_OK) {
         dev->last_value = *value;
         dev->last_fetch = time(NULL);
-    } else if (dev->cache_on_error) {
-        *value = dev->last_value;
-        result = RESULT_OK;
+        return RESULT_OK;
     }
-    
+
+    /* Parse failed — same reasoning as the curl-failure branch above.
+     * Hand the cached value back via *value if cache_on_error is set,
+     * but always return RESULT_ERROR so the cyclic path knows the read
+     * was not fresh. */
+    if (dev->cache_on_error) {
+        *value = dev->last_value;
+    }
     return result;
 }
 

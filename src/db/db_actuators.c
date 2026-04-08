@@ -9,11 +9,13 @@
 
 const char* actuator_type_to_string(actuator_type_t type) {
     switch (type) {
-        case ACTUATOR_TYPE_RELAY: return ACTUATOR_TYPE_RELAY_STR;
-        case ACTUATOR_TYPE_PWM: return ACTUATOR_TYPE_PWM_STR;
-        case ACTUATOR_TYPE_LATCHING: return ACTUATOR_TYPE_LATCHING_STR;
+        case ACTUATOR_TYPE_RELAY:     return ACTUATOR_TYPE_RELAY_STR;
+        case ACTUATOR_TYPE_PWM:       return ACTUATOR_TYPE_PWM_STR;
+        case ACTUATOR_TYPE_LATCHING:  return ACTUATOR_TYPE_LATCHING_STR;
         case ACTUATOR_TYPE_MOMENTARY: return ACTUATOR_TYPE_MOMENTARY_STR;
-        default: return "unknown";
+        case ACTUATOR_TYPE_PUMP:      return ACTUATOR_TYPE_PUMP_STR;
+        case ACTUATOR_TYPE_VALVE:     return ACTUATOR_TYPE_VALVE_STR;
+        default:                      return "unknown";
     }
 }
 
@@ -28,9 +30,11 @@ const char* safe_state_to_string(safe_state_t state) {
 
 static actuator_type_t string_to_actuator_type(const char *str) {
     if (!str) return ACTUATOR_TYPE_RELAY;
-    if (strcmp(str, ACTUATOR_TYPE_PWM_STR) == 0) return ACTUATOR_TYPE_PWM;
-    if (strcmp(str, ACTUATOR_TYPE_LATCHING_STR) == 0) return ACTUATOR_TYPE_LATCHING;
+    if (strcmp(str, ACTUATOR_TYPE_PWM_STR) == 0)       return ACTUATOR_TYPE_PWM;
+    if (strcmp(str, ACTUATOR_TYPE_LATCHING_STR) == 0)  return ACTUATOR_TYPE_LATCHING;
     if (strcmp(str, ACTUATOR_TYPE_MOMENTARY_STR) == 0) return ACTUATOR_TYPE_MOMENTARY;
+    if (strcmp(str, ACTUATOR_TYPE_PUMP_STR) == 0)      return ACTUATOR_TYPE_PUMP;
+    if (strcmp(str, ACTUATOR_TYPE_VALVE_STR) == 0)     return ACTUATOR_TYPE_VALVE;
     return ACTUATOR_TYPE_RELAY;
 }
 
@@ -375,6 +379,7 @@ void db_actuator_free_list(db_actuator_t *actuators) {
 result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
                                          const char *gpio_chip,
                                          int exclude_actuator_id,
+                                         int exclude_sensor_id,
                                          gpio_conflict_t *conflict) {
     CHECK_NULL(db); CHECK_NULL(conflict);
     if (!db->db) return RESULT_NOT_INITIALIZED;
@@ -386,7 +391,8 @@ result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
     char gpio_str[16];
     snprintf(gpio_str, sizeof(gpio_str), "%d", gpio_pin);
 
-    /* Query for any actuator using this GPIO pin on the same chip */
+    /* Query for any actuator using this GPIO pin on the same chip,
+     * excluding the actuator being edited (if any). */
     const char *sql = "SELECT id, name FROM actuators "
                       "WHERE gpio_pin = ? AND gpio_chip = ? AND id != ?;";
     sqlite3_stmt *stmt;
@@ -401,7 +407,6 @@ result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
     sqlite3_bind_int(stmt, 3, exclude_actuator_id);
 
     if (sqlite3_step(stmt) == SQLITE_ROW) {
-        /* Found a conflict with actuator */
         conflict->has_conflict = true;
         conflict->conflict_type = 0;  /* actuator */
         conflict->conflicting_actuator_id = sqlite3_column_int(stmt, 0);
@@ -416,22 +421,38 @@ result_t db_actuator_gpio_conflict_check(database_t *db, int gpio_pin,
     }
     sqlite3_finalize(stmt);
 
-    /* Also check sensors that use GPIO (DHT22, float switches, etc.)
-     * Sensors store GPIO pin in 'address' field when interface is GPIO-based */
+    /*
+     * Also check sensors that use GPIO (DHT22, float switches, etc.).
+     * Sensors store the GPIO pin number in physical_sensors.address as text.
+     *
+     * Case/separator drift hardening: the dialog historically writes
+     * sensor_type values like "Float Switch", "DHT22", "FLOAT_SWITCH",
+     * "Generic", etc. — there is no canonical case enforcement at the
+     * write site (T2-A6 in the verification campaign). Until that is
+     * fixed at the dialog layer, normalize on read by upper-casing and
+     * collapsing spaces to underscores so a sensor saved as
+     * "Float Switch" still matches the canonical "FLOAT_SWITCH".
+     *
+     * The exclude_sensor_id parameter lets the sensor edit dialog avoid
+     * finding itself when it re-saves an unchanged GPIO pin.
+     */
     const char *sensor_sql =
-        "SELECT m.name FROM physical_sensors ps "
+        "SELECT m.id, m.name FROM physical_sensors ps "
         "JOIN modules m ON ps.module_id = m.id "
-        "WHERE ps.address = ? AND ps.sensor_type IN ('DHT22', 'DHT11', 'FLOAT_SWITCH', 'GPIO');";
+        "WHERE ps.address = ? "
+        "  AND m.id != ? "
+        "  AND UPPER(REPLACE(ps.sensor_type, ' ', '_')) "
+        "      IN ('DHT22','DHT11','FLOAT_SWITCH','GPIO');";
 
     if (sqlite3_prepare_v2(db->db, sensor_sql, -1, &stmt, NULL) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, gpio_str, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, exclude_sensor_id);
 
         if (sqlite3_step(stmt) == SQLITE_ROW) {
-            /* Found a conflict with sensor */
             conflict->has_conflict = true;
             conflict->conflict_type = 1;  /* sensor */
-            conflict->conflicting_actuator_id = -1;  /* Indicate sensor conflict */
-            const char *name = (const char*)sqlite3_column_text(stmt, 0);
+            conflict->conflicting_actuator_id = -1;  /* sentinel: not an actuator */
+            const char *name = (const char*)sqlite3_column_text(stmt, 1);
             if (name) {
                 SAFE_STRNCPY(conflict->conflicting_name, name, sizeof(conflict->conflicting_name));
             }

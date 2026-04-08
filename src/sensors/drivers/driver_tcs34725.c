@@ -115,14 +115,28 @@ result_t tcs34725_read_raw(tcs34725_device_t *dev, tcs34725_data_t *data) {
     
     // Read all color data
     uint16_t c, r, g, b;
-    
+
     if (i2c_read_word(&dev->i2c, TCS34725_COMMAND_BIT | TCS34725_CDATAL, &c) != RESULT_OK ||
         i2c_read_word(&dev->i2c, TCS34725_COMMAND_BIT | TCS34725_RDATAL, &r) != RESULT_OK ||
         i2c_read_word(&dev->i2c, TCS34725_COMMAND_BIT | TCS34725_GDATAL, &g) != RESULT_OK ||
         i2c_read_word(&dev->i2c, TCS34725_COMMAND_BIT | TCS34725_BDATAL, &b) != RESULT_OK) {
         return RESULT_ERROR;
     }
-    
+
+    /* T2-C6: TCS34725 is a little-endian device — the *DATAL register holds
+     * the LOW byte and *DATAH the HIGH byte. The shared `i2c_read_word()`
+     * helper assumes big-endian word order ((buffer[0] << 8) | buffer[1])
+     * because most I2C devices are big-endian; for TCS34725 that returns
+     * the bytes swapped. Swap them back here so downstream lux/CCT math
+     * gets the correct raw values.
+     *
+     * Datasheet ref: AMS TCS34725 datasheet rev 1-0, §"Color Data
+     * Registers" — CDATAL/CDATAH word at 0x14/0x15, low byte first. */
+    c = (uint16_t)((c << 8) | (c >> 8));
+    r = (uint16_t)((r << 8) | (r >> 8));
+    g = (uint16_t)((g << 8) | (g >> 8));
+    b = (uint16_t)((b << 8) | (b >> 8));
+
     data->c = c;
     data->r = r;
     data->g = g;

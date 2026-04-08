@@ -390,8 +390,13 @@ static int find_next_slot(bool for_sensor) {
     int min_slot = for_sensor ? SENSOR_SLOT_MIN : ACTUATOR_SLOT_MIN;
     int max_slot = for_sensor ? SENSOR_SLOT_MAX : ACTUATOR_SLOT_MAX;
 
-    /* Get list of used slots */
-    bool used[17] = {false};
+    /* T2-A4: array must be large enough to index every PROFINET slot.
+     * The previous size was bool used[17] but the loops below index up
+     * to SENSOR_SLOT_MAX (246) — every slot ≥ 17 was a stack-buffer
+     * overrun. Use SENSOR_SLOT_MAX+1 (== 247) so [0..246] is in bounds.
+     * SENSOR_SLOT_MAX and ACTUATOR_SLOT_MAX are both 246, so a single
+     * 247-entry array covers both directions. */
+    bool used[SENSOR_SLOT_MAX + 1] = {false};
 
     if (for_sensor) {
         db_module_t *modules = NULL;
@@ -433,8 +438,9 @@ static bool check_gpio_conflict(int gpio_pin, char *used_by, size_t used_by_size
     if (!db) return false;
 
     gpio_conflict_t conflict;
+    /* Wizard is the add path; no exclude_actuator_id, no exclude_sensor_id. */
     if (db_actuator_gpio_conflict_check(db, gpio_pin, g_wiz.board.pins.gpio_chip,
-                                        0, &conflict) == RESULT_OK) {
+                                        0, 0, &conflict) == RESULT_OK) {
         if (conflict.has_conflict) {
             if (used_by) {
                 snprintf(used_by, used_by_size, "%s", conflict.conflicting_name);

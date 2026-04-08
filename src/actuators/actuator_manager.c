@@ -11,6 +11,7 @@
 #include "db/db_events.h"
 #include "db/db_modules.h"
 #include "drivers/digital/relay_output.h"
+#include "platform/board_detect.h"  /* Cross-platform gpio_chip fallback in reload */
 #include "utils/logger.h"
 #include "gsdml_modules.h"
 #include <pthread.h>
@@ -88,6 +89,9 @@ static result_t init_actuator_driver(actuator_instance_t *act) {
 
     SAFE_STRNCPY(cfg.name, act->config.name, sizeof(cfg.name));
     cfg.gpio_pin = act->config.gpio_pin;
+    /* Cross-platform: pass the gpio_chip name through to the output driver
+     * so it can request lines from the correct libgpiod chip on each board. */
+    SAFE_STRNCPY(cfg.gpio_chip, act->config.gpio_chip, sizeof(cfg.gpio_chip));
     cfg.active_low = act->config.active_low;
 
     switch (act->config.type) {
@@ -222,33 +226,74 @@ static void check_safety_limits(actuator_manager_t *mgr) {
 }
 
 /**
- * @brief Apply safe state (OFF) to all actuators after prolonged disconnect
+ * @brief Apply per-actuator safe state after prolonged controller disconnect
  *
  * Called when the RTU has been in degraded mode longer than safe_state_timeout_ms.
- * This prevents actuators from running indefinitely on stale commands.
+ * Each actuator's behavior is determined by its configured `safe_state` field
+ * (loaded from `actuators.safe_state` in the database):
  *
- * Safe state is OFF for all actuators (pumps stop, valves close).
+ *   - SAFE_STATE_OFF  : drive output OFF (default for safety-critical loads)
+ *   - SAFE_STATE_ON   : drive output ON (fail-energized loads)
+ *   - SAFE_STATE_HOLD : leave the actuator in its last commanded state
+ *                       (last-state-saved behavior)
+ *
+ * This honors the `safe_state` column the operator picks in the TUI dialog.
+ * Prior to Wave 1, this function unconditionally forced every actuator OFF
+ * regardless of configuration.
  */
 static void apply_safe_state(actuator_manager_t *mgr) {
     if (mgr->safe_state_applied) return;  // Already done
 
-    LOG_WARNING("SAFE STATE: Applying safe state to all actuators after %d ms disconnect",
+    LOG_WARNING("SAFE STATE: Applying configured safe state to actuators after %d ms disconnect",
                 g_safe_state_timeout_ms);
 
-    int stopped_count = 0;
+    int off_count = 0;
+    int on_count = 0;
+    int hold_count = 0;
+
     for (int i = 0; i < mgr->actuator_count; i++) {
         actuator_instance_t *act = &mgr->actuators[i];
+        const safe_state_t target = act->config.safe_state;
 
-        if (act->state == ACTUATOR_STATE_ON) {
-            LOG_WARNING("SAFE STATE: Stopping actuator '%s' (slot %d) - was ON for %" PRIu64 " ms",
-                        act->config.name,
-                        act->config.profinet_slot,
-                        get_time_ms() - act->last_state_change_ms);
+        switch (target) {
+        case SAFE_STATE_OFF:
+            if (act->state == ACTUATOR_STATE_ON) {
+                LOG_WARNING("SAFE STATE: Driving '%s' (slot %d) OFF - was ON for %" PRIu64 " ms",
+                            act->config.name,
+                            act->config.profinet_slot,
+                            get_time_ms() - act->last_state_change_ms);
+                act->state = ACTUATOR_STATE_OFF;
+                act->pwm_duty = 0;
+                apply_actuator_state(act);
+            }
+            off_count++;
+            break;
 
-            act->state = ACTUATOR_STATE_OFF;
-            act->pwm_duty = 0;
-            apply_actuator_state(act);
-            stopped_count++;
+        case SAFE_STATE_ON:
+            if (act->state != ACTUATOR_STATE_ON) {
+                LOG_WARNING("SAFE STATE: Driving '%s' (slot %d) ON - was %s",
+                            act->config.name,
+                            act->config.profinet_slot,
+                            act->state == ACTUATOR_STATE_OFF ? "OFF" : "FAULT");
+                act->state = ACTUATOR_STATE_ON;
+                act->pwm_duty = 100;
+                apply_actuator_state(act);
+            }
+            on_count++;
+            break;
+
+        case SAFE_STATE_HOLD:
+            /* Last-state-saved: leave state and pwm_duty untouched. Do NOT
+             * call apply_actuator_state() — that would re-issue the GPIO
+             * write, and for active_low + sysfs paths the re-issue can
+             * cause a transient pulse (see T2-C5). The whole point of
+             * HOLD is to make no change. */
+            LOG_INFO("SAFE STATE: Holding '%s' (slot %d) at %s",
+                     act->config.name,
+                     act->config.profinet_slot,
+                     act->state == ACTUATOR_STATE_ON ? "ON" : "OFF");
+            hold_count++;
+            break;
         }
     }
 
@@ -257,12 +302,14 @@ static void apply_safe_state(actuator_manager_t *mgr) {
     if (mgr->db) {
         char msg[256];
         snprintf(msg, sizeof(msg),
-                 "SAFE STATE APPLIED: %d actuators stopped after %d ms disconnect timeout",
-                 stopped_count, g_safe_state_timeout_ms);
+                 "SAFE STATE APPLIED after %d ms disconnect timeout: "
+                 "OFF=%d ON=%d HOLD=%d",
+                 g_safe_state_timeout_ms, off_count, on_count, hold_count);
         DB_EVENT_WARNING(mgr->db, "safe_state", msg);
     }
 
-    LOG_WARNING("SAFE STATE: %d actuators stopped", stopped_count);
+    LOG_WARNING("SAFE STATE: applied (OFF=%d ON=%d HOLD=%d)",
+                off_count, on_count, hold_count);
 }
 
 static void* watchdog_thread(void *arg) {
@@ -872,6 +919,28 @@ result_t actuator_manager_reload(actuator_manager_t *mgr) {
         config.profinet_slot = db_act->slot;
         config.profinet_subslot = db_act->subslot > 0 ? db_act->subslot : 1;
         config.gpio_pin = db_act->gpio_pin;
+        /* Cross-platform gpio_chip: copy the per-actuator value if the
+         * operator set one in the TUI; otherwise fall back to the
+         * board-detected default (different SBCs expose header pins on
+         * different chip indices, so a hard-coded "gpiochip0" default in
+         * the DB schema is wrong on most non-Pi boards). */
+        if (db_act->gpio_chip[0] != '\0') {
+            SAFE_STRNCPY(config.gpio_chip, db_act->gpio_chip, sizeof(config.gpio_chip));
+        } else {
+            board_info_t board;
+            if (board_detect(&board) == RESULT_OK && board.pins.gpio_chip[0] != '\0') {
+                SAFE_STRNCPY(config.gpio_chip, board.pins.gpio_chip,
+                             sizeof(config.gpio_chip));
+            } else {
+                /* Last-resort fallback. Logged so the operator sees the gap. */
+                SAFE_STRNCPY(config.gpio_chip, "gpiochip0", sizeof(config.gpio_chip));
+                LOG_WARNING("Actuator '%s' has no gpio_chip and board_detect "
+                            "returned no default; using legacy 'gpiochip0'. "
+                            "Set [defaults] gpio_chip in water-treat.conf or "
+                            "specify per-actuator in the TUI.",
+                            db_act->name);
+            }
+        }
         config.active_low = db_act->active_low;
         config.pwm_capable = (db_act->type == ACTUATOR_TYPE_PWM ||
                               db_act->type == ACTUATOR_TYPE_PUMP);
@@ -879,6 +948,9 @@ result_t actuator_manager_reload(actuator_manager_t *mgr) {
         /* Round up to avoid truncation: 1500ms -> 2sec instead of 1sec */
         config.max_on_time_sec = (db_act->max_on_time_ms + 999) / 1000;
         config.min_cycle_time_ms = db_act->min_on_time_ms;
+        /* Failure behavior — copy the configured safe_state so
+         * apply_safe_state() can branch on OFF / ON / HOLD per-actuator. */
+        config.safe_state = db_act->safe_state;
 
         /* Add the actuator */
         r = actuator_manager_add(mgr, &config);

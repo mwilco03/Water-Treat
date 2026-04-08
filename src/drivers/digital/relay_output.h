@@ -44,6 +44,10 @@ typedef struct {
 
     // GPIO settings
     int gpio_pin;
+    char gpio_chip[32];           // libgpiod chip name (e.g. "gpiochip0", "gpiochip4")
+                                  // Cross-platform: required because different SBCs
+                                  // expose header pins on different chip indices.
+                                  // Used by the libgpiod backend (Wave 4 migration).
     bool active_low;              // Inverted logic
 
     // PWM settings (if type == OUTPUT_TYPE_PWM)

@@ -348,6 +348,12 @@ void page_actuators_input(WINDOW *win, int ch) {
                 if (dialog_io_wizard_add_actuator(&result)) {
                     tui_set_status("Actuator '%s' created at slot %d",
                                    result.name, result.assigned_slot);
+                    /* T2-T1: reload the running actuator manager so it
+                     * picks up the new actuator's GPIO line claim and
+                     * starts honoring SPACE-toggle from this list. Without
+                     * this, the list shows the new actuator but g_actuator_mgr
+                     * has no instance for it and toggles silently no-op. */
+                    actuator_manager_reload(&g_actuator_mgr);
                     load_actuators();
 
                     /* Select the newly added actuator */
@@ -374,10 +380,12 @@ void page_actuators_input(WINDOW *win, int ch) {
                         actuator_form_t form;
                         dialog_actuator_load(&form, &db_act);
                         if (dialog_actuator_show(ACTUATOR_DIALOG_EDIT, &form)) {
-                            /* Check for GPIO pin conflict (excluding this actuator) */
+                            /* Check for GPIO pin conflict (excluding this actuator).
+                             * exclude_sensor_id=0 — we're editing an actuator, so
+                             * any sensor on the same pin is a real conflict. */
                             gpio_conflict_t conflict;
                             if (db_actuator_gpio_conflict_check(db, form.gpio_pin,
-                                    form.gpio_chip, form.id, &conflict) == RESULT_OK &&
+                                    form.gpio_chip, form.id, 0, &conflict) == RESULT_OK &&
                                 conflict.has_conflict) {
                                 show_gpio_conflict_dialog(form.gpio_pin, conflict.conflicting_name);
                                 tui_set_status("GPIO pin %d already in use by '%s'",
@@ -388,6 +396,12 @@ void page_actuators_input(WINDOW *win, int ch) {
                             dialog_actuator_save(&form, &db_act);
                             if (db_actuator_update(db, &db_act) == RESULT_OK) {
                                 tui_set_status("Actuator '%s' updated", form.name);
+                                /* T2-T1: reload so the running manager
+                                 * sees the new gpio_pin / gpio_chip /
+                                 * safe_state / max_on_time settings
+                                 * instead of continuing on the stale
+                                 * in-memory copy. */
+                                actuator_manager_reload(&g_actuator_mgr);
                                 load_actuators();
                             } else {
                                 tui_set_status("Failed to update actuator");
@@ -408,6 +422,15 @@ void page_actuators_input(WINDOW *win, int ch) {
                     if (dialog_actuator_confirm_delete(item->name)) {
                         if (db_actuator_delete(db, item->id) == RESULT_OK) {
                             tui_set_status("Actuator '%s' deleted", item->name);
+                            /* T2-T1: reload BEFORE refreshing the list so
+                             * the manager releases the GPIO line, PWM
+                             * channel, and interlock claim of the deleted
+                             * actuator. Without this, deleting an
+                             * energized relay leaves the GPIO line
+                             * claimed AND the relay physically held in
+                             * its last commanded state until process
+                             * restart. */
+                            actuator_manager_reload(&g_actuator_mgr);
                             load_actuators();
                             /* tui_list_set_count() in load_actuators() adjusts selection */
                         } else {
