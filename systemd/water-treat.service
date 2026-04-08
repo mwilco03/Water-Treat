@@ -43,8 +43,16 @@ MemoryMax=256M
 CPUQuota=80%
 
 # Security hardening (optional - comment out if causing issues)
+#
+# ProtectSystem=strict makes /usr, /boot, /efi, AND /etc read-only.
+# /etc/water-treat must be in ReadWritePaths because the daemon may
+# rewrite water-treat.env and water-treat.conf at runtime when the
+# operator changes settings via the TUI or via PROFINET acyclic
+# record writes (see config_sync.c). Without /etc/water-treat in
+# ReadWritePaths, those writes fail with EROFS — silently if the
+# error path doesn't surface it. Add it explicitly.
 ProtectSystem=strict
-ReadWritePaths=/var/lib/water-treat /var/log/water-treat
+ReadWritePaths=/var/lib/water-treat /var/log/water-treat /etc/water-treat
 
 # Runtime directory for volatile logs (tmpfs - avoids SD card wear)
 RuntimeDirectory=water-treat

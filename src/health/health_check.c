@@ -873,13 +873,19 @@ static void handle_http_request(int client_fd) {
         }
         content_type = CONTENT_TYPE_JSON;
 #endif
-    } else if (strcmp(path, "/config") == 0 || strcmp(path, "/config/export") == 0) {
-        /* Configuration export endpoint */
+    } else if (strcmp(path, "/config") == 0 || strcmp(path, "/config/export") == 0
+               || strcmp(path, "/api/v1/config") == 0
+               || strcmp(path, "/api/v1/config/export") == 0) {
+        /* Configuration export endpoint. Both prefix-free and /api/v1/...
+         * paths are accepted; the /api/v1/ form is the published contract in
+         * CLAUDE.md "RTU HTTP API Contract" and the prefix-free form is the
+         * historical default kept for backwards compatibility. */
         config_to_json(response_body, sizeof(response_body));
         content_type = CONTENT_TYPE_JSON;
         LOG_DEBUG("Config export requested via HTTP");
-    } else if (strcmp(path, "/slots") == 0) {
-        /* Slot discovery for controller fallback (non-standard) */
+    } else if (strcmp(path, "/slots") == 0 || strcmp(path, "/api/v1/slots") == 0) {
+        /* Slot discovery for controller fallback (non-standard).
+         * /api/v1/slots is the published contract, /slots is the legacy alias. */
         int ret = slots_to_json(response_body, sizeof(response_body));
         if (ret < 0) {
             snprintf(response_body, sizeof(response_body),
@@ -887,15 +893,20 @@ static void handle_http_request(int client_fd) {
             status_code = HTTP_STATUS_UNAVAILABLE;
         }
         content_type = CONTENT_TYPE_JSON;
-    } else if (strcmp(path, "/gsdml") == 0) {
-        /* Serve raw GSDML XML file — streamed directly due to file size */
+    } else if (strcmp(path, "/gsdml") == 0 || strcmp(path, "/api/v1/gsdml") == 0) {
+        /* Serve raw GSDML XML file — streamed directly due to file size.
+         * /api/v1/gsdml is the published contract, /gsdml is the legacy alias. */
         serve_gsdml_file(client_fd);
         return;  /* Response already sent and fd closed */
     } else {
-        /* 404 Not Found */
+        /* 404 Not Found — list both the published /api/v1/... paths and the
+         * prefix-free aliases so operators troubleshooting from either side
+         * see what is actually accepted by the router. */
         snprintf(response_body, sizeof(response_body),
-                "{\"error\": \"Not Found\", \"endpoints\": [\"/health\", \"/metrics\", \"/ready\", \"/live\", \"/config\""
-                ", \"/slots\", \"/gsdml\""
+                "{\"error\": \"Not Found\", \"endpoints\": ["
+                "\"/health\", \"/metrics\", \"/ready\", \"/live\", "
+                "\"/config\", \"/slots\", \"/gsdml\", "
+                "\"/api/v1/config\", \"/api/v1/slots\", \"/api/v1/gsdml\""
 #ifdef LED_SUPPORT
                 ", \"/led/test\", \"/led/status\""
 #endif

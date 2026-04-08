@@ -17,3 +17,4 @@ compile_commands.json
 *.deb
 *.rpm
 *.tar.gz
+.claude-memory/

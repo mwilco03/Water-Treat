@@ -167,18 +167,22 @@ check_libraries() {
         return 1
     fi
 
-    # Special check for libgpiod version
+    # Special check for libgpiod version - accept v1 or v2.
+    # CMakeLists.txt auto-detects which API to use via HAVE_GPIOD / HAVE_GPIOD_V2,
+    # and scripts/install-deps.sh handle_libgpiod() supports both. Debian 13 (trixie)
+    # ships libgpiod 2.x in-box, so this script must accept it or every fresh trixie
+    # target fails out of the gate.
     local gpiod_ver
     gpiod_ver="$(pkg-config --modversion libgpiod 2>/dev/null || echo "0")"
     case "${gpiod_ver}" in
-        1.*)
-            # Good
+        1.*|2.*)
+            # Good - both APIs are supported
             ;;
         *)
-            breaking "libgpiod ${gpiod_ver} found but v1.x required"
+            breaking "libgpiod ${gpiod_ver} found but v1.x or v2.x required"
             echo ""
             error "Run: sudo ./scripts/install-deps.sh"
-            error "This will build libgpiod v1 from source"
+            error "This will install libgpiod v1 or accept the v2 already present"
             return 1
             ;;
     esac

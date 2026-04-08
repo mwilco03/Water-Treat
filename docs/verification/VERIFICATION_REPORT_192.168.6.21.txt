@@ -1,0 +1,102 @@
+
+[1m[0;36m╔═══════════════════════════════════════════════════════╗[0m
+[1m[0;36m║  water-treat deployment validation                   ║[0m
+[1m[0;36m║  Target: rtu@192.168.6.21                                [0m
+[1m[0;36m╚═══════════════════════════════════════════════════════╝[0m
+
+[1m[0;36m━━━ Pre-flight ━━━[0m
+  [0;32m[PASS][0m SSH to rtu@192.168.6.21 reachable
+         [2m│[0m [2mLinux rtu-ec3b 6.6.113-current-odroidxu4 #1 SMP PREEMPT Mon Dec 30 15:59:39 UTC 2024 armv7l GNU/Linux[0m
+
+[1m[0;36m━━━ Tier 1 — Build & install controls (F1-F5, Wave 5) ━━━[0m
+  [0;32m[PASS][0m F1: build.sh accepts both libgpiod v1 and v2
+         [2m│[0m [2m178:        1.*|2.*)[0m
+  [0;32m[PASS][0m F2: GSDML XML installed to a binary search path
+         [2m│[0m [2m-rw-r--r-- 1 root root 32466 Apr  8 14:53 GSDML-V2.4-WaterTreat-RTU-20241222.xml[0m
+         [2m│[0m [2m-rw-r--r--  1 root root 32466 Feb  6 20:37 GSDML-V2.4-WaterTreat-RTU-20241222.xml[0m
+  [0;32m[PASS][0m F2: water-treat.env and water-treat.conf.example installed in /etc/water-treat/
+         [2m│[0m [2m-rw-r--r--  1 root root  988 Feb  6 20:37 water-treat.conf[0m
+         [2m│[0m [2m-rw-r--r--  1 root root 1449 Apr  8 14:53 water-treat.conf.example[0m
+         [2m│[0m [2m-rw-r--r--  1 root root  143 Feb  6 20:37 water-treat.env[0m
+  [0;32m[PASS][0m F3: water-treat.service enabled for boot
+         [2m│[0m [2menabled[0m
+  [0;32m[PASS][0m F4: FIRMWARE path in manifest has no double-slash
+         [2m│[0m [2mFIRMWARE_DIR=/usr/local/share/water-treat/firmware[0m
+  [0;32m[PASS][0m F5: every HTTP route (legacy + /api/v1/) returns 200
+         [2m│[0m [2m    /slots → 200[0m
+         [2m│[0m [2m    /api/v1/slots → 200[0m
+         [2m│[0m [2m    /gsdml → 200[0m
+         [2m│[0m [2m    /api/v1/gsdml → 200[0m
+         [2m│[0m [2m    /config → 200[0m
+         [2m│[0m [2m    /api/v1/config → 200[0m
+         [2m│[0m [2m[0m
+  [0;32m[PASS][0m Wave 5: /etc/modules-load.d/water-treat.conf installed with required modules
+         [2m│[0m [2mspidev[0m
+         [2m│[0m [2mi2c-dev[0m
+         [2m│[0m [2mw1-gpio[0m
+         [2m│[0m [2mw1-therm[0m
+  [0;32m[PASS][0m Wave 5: kernel modules loaded right now (3 of {spidev,w1_gpio,w1_therm,i2c_dev})
+         [2m│[0m [2mw1_therm               20480  0[0m
+         [2m│[0m [2mw1_gpio                12288  0[0m
+         [2m│[0m [2mspidev                 16384  0[0m
+  [0;32m[PASS][0m Wave 5: set_network_parameters helper installed and executable
+         [2m│[0m [2m-rwxr-xr-x 1 root root 849 Apr  8 14:53 /usr/local/bin/set_network_parameters[0m
+         [2m│[0m [2m/usr/local/bin/set_network_parameters: POSIX shell script, Unicode text, UTF-8 text executable[0m
+  [0;32m[PASS][0m Wave 5: ProtectSystem ReadWritePaths includes /etc/water-treat
+         [2m│[0m [2m# /etc/water-treat must be in ReadWritePaths because the daemon may[0m
+         [2m│[0m [2m# ReadWritePaths, those writes fail with EROFS — silently if the[0m
+         [2m│[0m [2mReadWritePaths=/var/lib/water-treat /var/log/water-treat /etc/water-treat[0m
+
+[1m[0;36m━━━ Tier 2 — Runtime correctness controls (Wave 1-3a) ━━━[0m
+  [0;32m[PASS][0m Wave 1 T2-C1: binary has per-actuator safe_state branching (OFF/ON/HOLD)
+         [2m│[0m [2mSAFE STATE: Driving '%s' (slot %d) OFF - was ON for %llu ms[0m
+         [2m│[0m [2mSAFE STATE: Driving '%s' (slot %d) ON - was %s[0m
+         [2m│[0m [2mSAFE STATE: Holding '%s' (slot %d) at %s[0m
+  [0;32m[PASS][0m Wave 1 T2-A3: binary contains pump/valve string constants for round-trip
+         [2m│[0m [2mlatching[0m
+         [2m│[0m [2mmomentary[0m
+         [2m│[0m [2mpump[0m
+         [2m│[0m [2mrelay[0m
+         [2m│[0m [2mvalve[0m
+  [0;32m[PASS][0m Wave 2 T2-T1: actuator_manager_reload symbol/log present in binary
+         [2m│[0m [2mLoading actuators from database...[0m
+  [0;32m[PASS][0m Wave 3a T2-C2: web_poll error log path present (RESULT_ERROR path)
+         [2m│[0m [2mcurl_easy_perform() failed: %s[0m
+  [0;32m[PASS][0m Wave 3a T2-C3: binary imports pthread_setschedparam (per-thread scheduling)
+         [2m│[0m [2m         U pthread_getschedparam@GLIBC_2.4[0m
+         [2m│[0m [2m         U pthread_setschedparam@GLIBC_2.4[0m
+
+[1m[0;36m━━━ Tier 3 — Service runtime controls ━━━[0m
+  [0;32m[PASS][0m Service: water-treat.service is active
+         [2m│[0m [2mactive[0m
+  [0;32m[PASS][0m Service: PROFINET UDP 34964 listening
+         [2m│[0m [2mUNCONN 0      0                           0.0.0.0:34964      0.0.0.0:*    users:(("water-treat",pid=11698,fd=9))   [0m
+  [0;32m[PASS][0m Service: HTTP TCP 9081 listening
+         [2m│[0m [2mLISTEN 0      5            0.0.0.0:9081      0.0.0.0:*    users:(("water-treat",pid=11698,fd=10))  [0m
+  [0;32m[PASS][0m Service: /health endpoint returns JSON
+         [2m│[0m [2m{[0m
+         [2m│[0m [2m  "status": "degraded",[0m
+         [2m│[0m [2m  "timestamp": 1775674830,[0m
+         [2m│[0m [2m  "uptime_seconds": 370,[0m
+         [2m│[0m [2m  "subsystems": {[0m
+         [2m│[0m [2m    "profinet": {"status": "degraded", "message": "Waiting for controller connection"},[0m
+         [2m│[0m [2m    "sensors": {"status": "ok", "message": "All sensors operational"},[0m
+  [0;32m[PASS][0m DB: all required tables present at /var/lib/water-treat/water-treat.db
+         [2m│[0m [2mactuator_state      alarm_rules         modules             static_sensors    [0m
+         [2m│[0m [2mactuators           calculated_sensors  physical_sensors    users             [0m
+         [2m│[0m [2madc_sensors         events              sensor_data_log     web_poll_sensors  [0m
+         [2m│[0m [2malarm_history       logging_config      sensor_status     [0m
+  [0;32m[PASS][0m DB: actuators schema has safe_state AND gpio_chip columns
+         [2m│[0m [2mCREATE TABLE actuators (id INTEGER PRIMARY KEY AUTOINCREMENT, slot INTEGER NOT NULL UNIQUE, subslot INTEGER DEFAULT 0, name TEXT NOT NULL, type TEXT DEFAULT 'relay', gpio_pin INTEGER NOT NULL, gpio_chip TEXT DEFAULT 'gpiochip0', active_low INTEGER DEFAULT 0, safe_state TEXT DEFAULT 'hold', min_on_time_ms INTEGER DEFAULT 0, max_on_time_ms INTEGER DEFAULT 0, pwm_frequency_hz INTEGER DEFAULT 1000, status TEXT DEFAULT 'inactive', enabled INTEGER DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);[0m
+
+[1m[0;36m━━━ Summary ━━━[0m
+
+  Target:  rtu@192.168.6.21
+  Date:    2026-04-08T19:00:50Z
+
+  [1mTotal checks:[0m 22
+  [0;32mPASS[0m:        22
+  [0;31mFAIL[0m:        0
+  [1;33mSKIP[0m:        0
+
+  [0;32m[1mDEPLOY VALIDATION PASSED[0m

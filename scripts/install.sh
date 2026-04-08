@@ -97,6 +97,8 @@ read_project_name() {
     LOG_DIR="/var/log/${PROJECT_NAME}"
     SERVICE_FILE="/etc/systemd/system/${PROJECT_NAME}.service"
     MANIFEST_FILE="${ETC_DIR}/.install-manifest"
+    GSDML_INSTALL_DIR="/usr/share/${PROJECT_NAME}/gsd"
+    FIRMWARE_SHARE_DIR="/usr/local/share/${PROJECT_NAME}/firmware"
 
     return 0
 }
@@ -291,7 +293,222 @@ install_service_file() {
         non_breaking "systemctl daemon-reload failed"
     }
 
+    # Enable the service so it survives reboot. New RTUs deployed to the field
+    # need to come back online after a power cycle without a tech doing
+    # `systemctl enable` by hand. Set INSTALL_NO_ENABLE=1 to opt out.
+    if [[ "${INSTALL_NO_ENABLE:-0}" != "1" ]]; then
+        if systemctl enable "${PROJECT_NAME}.service" >/dev/null 2>&1; then
+            detail "Enabled ${PROJECT_NAME}.service for boot"
+        else
+            non_breaking "systemctl enable ${PROJECT_NAME}.service failed (run manually)"
+        fi
+    else
+        detail "Skipping systemctl enable (INSTALL_NO_ENABLE=1)"
+    fi
+
     success "Service installed"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Install Data Files (GSDML, env, config example)
+# ------------------------------------------------------------------------------
+# What: Copy non-binary runtime artifacts the daemon needs to find at startup
+# Why: The binary searches /usr/share/${PROJECT_NAME}/gsd/ for the GSDML XML and
+#      /etc/${PROJECT_NAME}/water-treat.env for the systemd environment overrides.
+#      Without these, GSDML HTTP fetch returns 404 and the operator has no
+#      discoverable sample config on the deployed system.
+# Edge cases:
+#   - GSDML may be missing from source tree (failure)
+#   - water-treat.env may already exist (preserve operator edits)
+#   - water-treat.conf.example always overwrites (it is a reference, not config)
+#
+install_data_files() {
+    action "Installing data files (GSDML, config samples)"
+
+    # 1. GSDML XML — required for /gsdml HTTP endpoint and controller discovery
+    local gsdml_src
+    gsdml_src="$(find "${PROJECT_ROOT}/gsd" -maxdepth 1 -name 'GSDML-*.xml' -print -quit 2>/dev/null)"
+    if [[ -z "${gsdml_src}" ]]; then
+        breaking "GSDML file not found in ${PROJECT_ROOT}/gsd/"
+        return 1
+    fi
+
+    install -d -m 755 "${GSDML_INSTALL_DIR}" || {
+        breaking "Failed to create ${GSDML_INSTALL_DIR}"
+        return 1
+    }
+    install -m 644 "${gsdml_src}" "${GSDML_INSTALL_DIR}/" || {
+        breaking "Failed to install GSDML to ${GSDML_INSTALL_DIR}"
+        return 1
+    }
+    detail "${GSDML_INSTALL_DIR}/$(basename "${gsdml_src}")"
+
+    # 2. Environment file — referenced by the systemd unit (EnvironmentFile=-...).
+    #    Do NOT overwrite an existing file; operators may have set WT_HTTP_PORT etc.
+    local env_src="${PROJECT_ROOT}/etc/water-treat.env"
+    local env_dst="${ETC_DIR}/water-treat.env"
+    if [[ -f "${env_src}" ]]; then
+        if [[ -f "${env_dst}" ]]; then
+            detail "${env_dst} (preserved existing)"
+        else
+            install -m 644 "${env_src}" "${env_dst}" || {
+                non_breaking "Failed to install ${env_dst}"
+            }
+            detail "${env_dst}"
+        fi
+    fi
+
+    # 3. Sample config — reference for the operator. Always refresh on install
+    #    so the example matches the installed binary's expected schema.
+    local conf_src="${PROJECT_ROOT}/etc/water-treat.conf.example"
+    local conf_dst="${ETC_DIR}/water-treat.conf.example"
+    if [[ -f "${conf_src}" ]]; then
+        install -m 644 "${conf_src}" "${conf_dst}" || {
+            non_breaking "Failed to install ${conf_dst}"
+        }
+        detail "${conf_dst}"
+    fi
+
+    success "Data files installed"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Install Kernel Module Auto-Load Configuration
+# ------------------------------------------------------------------------------
+# What: Write /etc/modules-load.d/water-treat.conf so the kernel modules
+#       water-treat sensor/actuator drivers depend on are loaded at boot.
+#
+# Why: HIL recon proved that on a fresh deploy of Armbian / Debian / Raspberry
+#      Pi OS, the spidev, w1-gpio, w1-therm, and i2c-dev modules are NOT
+#      loaded by default. Drivers that need them (MCP3008 SPI ADC, DS18B20
+#      1-wire temperature, ADS1115/BME280 I2C) silently fail at sensor-add
+#      time with cryptic open() errors. Operators have no in-product hint
+#      that a kmod is missing.
+#
+# Cross-platform: this is needed on Odroid-XU4 (Exynos 5422), Le Potato
+#       (Amlogic S905X), Raspberry Pi (BCM2835/2711), and any libgpiod-based
+#       Linux. Different boards expose different default loaded modules and
+#       it's safer to declare what we need than to assume.
+#
+# Edge cases:
+#   - Modules already loaded → modules-load.d is a no-op
+#   - Module unavailable on this kernel → systemd-modules-load.service logs
+#     a warning at boot but does not block water-treat startup
+#   - Existing /etc/modules-load.d/water-treat.conf → overwritten (we own it)
+#
+install_kernel_modules_conf() {
+    action "Configuring kernel module auto-load"
+
+    local modload_dir="/etc/modules-load.d"
+    local modload_file="${modload_dir}/${PROJECT_NAME}.conf"
+
+    install -d -m 755 "${modload_dir}" || {
+        non_breaking "Failed to create ${modload_dir}"
+        return 0
+    }
+
+    cat > "${modload_file}" << 'KMODEOF'
+# Kernel modules required by water-treat sensor and actuator drivers.
+# Installed by water-treat install.sh. Loaded at boot by systemd-modules-load.
+#
+# spidev    : MCP3008 (SPI ADC) — opens /dev/spidev*.0
+# i2c-dev   : ADS1115, BME280, TCS34725, etc — opens /dev/i2c-N
+# w1-gpio   : DS18B20 1-wire bit-banging master driver
+# w1-therm  : DS18B20 temperature device class (consumes w1-gpio)
+#
+# i2c-dev is built-in on most kernels but listing it is harmless.
+# If a module isn't available on this kernel, systemd-modules-load
+# will log a warning and continue — it does NOT block water-treat.
+spidev
+i2c-dev
+w1-gpio
+w1-therm
+KMODEOF
+
+    chmod 644 "${modload_file}" || true
+    detail "${modload_file}"
+
+    # Also try to load them now so the operator doesn't have to reboot
+    # to test sensors that depend on these modules. Failures are non-fatal:
+    # the modules-load.d entry will pick up at the next boot regardless.
+    if command -v modprobe &>/dev/null; then
+        local loaded=0 failed=0
+        for mod in spidev w1-gpio w1-therm; do
+            if modprobe "${mod}" 2>/dev/null; then
+                loaded=$((loaded + 1))
+            else
+                failed=$((failed + 1))
+            fi
+        done
+        if [[ ${failed} -gt 0 ]]; then
+            non_breaking "Loaded ${loaded}/3 kernel modules now (${failed} failed); will retry at boot"
+        else
+            detail "Loaded ${loaded}/3 kernel modules now"
+        fi
+    fi
+
+    success "Kernel module auto-load configured"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Install set_network_parameters Helper for p-net DCP Set
+# ------------------------------------------------------------------------------
+# What: Ship a no-op /usr/local/bin/set_network_parameters script that p-net
+#       PNAL invokes when the controller sends a DCP Set frame to change
+#       the device's IP address or station name.
+#
+# Why: p-net PNAL Linux OSAL shells out to a script of this name on every
+#      DCP Set frame. Without the script, p-net logs a fork-failed warning
+#      at startup and silently rejects subsequent DCP Set requests from the
+#      controller. The PNAL fork is hardwired into p-net itself; we can
+#      either patch p-net (upstream change) or ship the script (deploy fix).
+#      Shipping the script is the smaller change.
+#
+# Behavior: This script logs the requested change to the journal and exits 0.
+#       It does NOT actually reconfigure the network — that path is owned by
+#       the bootstrap-time station name detection from MAC. We accept the
+#       p-net DCP Set request to keep the controller happy, but the actual
+#       station identity comes from the MAC-derived name.
+#
+#       Operators who WANT the controller to be able to change the station
+#       name dynamically can replace this script with one that calls
+#       hostnamectl + writes water-treat.conf + restarts the daemon.
+#
+install_network_helper() {
+    action "Installing set_network_parameters helper"
+
+    local helper="${BIN_DIR}/set_network_parameters"
+    cat > "${helper}" << 'HELPEREOF'
+#!/bin/sh
+# set_network_parameters — invoked by p-net PNAL on DCP Set frames.
+#
+# Arguments (per p-net pnal_linux.c):
+#   $1 = network interface (e.g. "enx001e0639ec3b")
+#   $2 = IP address       (dotted decimal)
+#   $3 = netmask          (dotted decimal)
+#   $4 = gateway          (dotted decimal)
+#   $5 = host/station name
+#   $6 = permanent flag   ("1" for nv-store, "0" for runtime-only)
+#
+# Default behavior: log to journal and exit 0. The water-treat daemon
+# derives its station name from the interface MAC at startup; this script
+# satisfies p-net's PNAL contract without actually reconfiguring the
+# network. To opt in to dynamic reconfiguration, replace this script with
+# one that calls `ip addr`, `hostnamectl`, etc.
+logger -t set_network_parameters \
+  "DCP Set received: iface=$1 ip=$2 mask=$3 gw=$4 station=$5 permanent=$6"
+exit 0
+HELPEREOF
+
+    chmod 755 "${helper}" || {
+        non_breaking "Failed to chmod ${helper}"
+        return 0
+    }
+    detail "${helper}"
+    success "set_network_parameters helper installed"
     return 0
 }
 
@@ -305,7 +522,9 @@ install_service_file() {
 #
 
 FIRMWARE_DIR="${PROJECT_ROOT}/firmware/rp2040_led_controller"
-FIRMWARE_SHARE_DIR="/usr/local/share/${PROJECT_NAME}/firmware"
+# NOTE: FIRMWARE_SHARE_DIR is set inside read_project_name() because it depends on
+# PROJECT_NAME, which is read from the CMake cache at runtime. Defining it at module
+# scope here would expand PROJECT_NAME="" and produce "/usr/local/share//firmware".
 
 find_pico_sdk() {
     # Check explicit environment variable first
@@ -474,6 +693,9 @@ main() {
     create_directories || exit 1
     install_binary "${binary}" || exit 1
     install_service_file || exit 1
+    install_data_files || exit 1
+    install_kernel_modules_conf || exit 1
+    install_network_helper || exit 1
 
     # Optional: Build and install RP2040 firmware
     header "RP2040 LED Controller (Optional)"
